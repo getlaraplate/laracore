@@ -32,6 +32,10 @@ final class ActiveVersionSet
 
     private bool $version_written = false;
 
+    private bool $root_row_written = false;
+
+    private bool $translation_row_written = false;
+
     public function __construct(
         private readonly VersionSetRoot $root,
         private readonly string $connection_name,
@@ -107,6 +111,27 @@ final class ActiveVersionSet
         $this->sequence_allocated = true;
 
         return $this->sequence + 1;
+    }
+
+    /**
+     * Notes which stream a written row belongs to: the root's own columns, or a translation of it.
+     */
+    public function noteStream(?string $relationPath): void
+    {
+        if ($relationPath === null) {
+            $this->root_row_written = true;
+        } elseif ($relationPath === 'translations') {
+            $this->translation_row_written = true;
+        }
+    }
+
+    /**
+     * Whether the revision changed the root's translations but not its own row: the form's lock version covers the
+     * translations, so it must rise once all the same (D23). Membership changes do not count.
+     */
+    public function changedOnlyTranslations(): bool
+    {
+        return $this->translation_row_written && ! $this->root_row_written;
     }
 
     public function markVersionWritten(): void

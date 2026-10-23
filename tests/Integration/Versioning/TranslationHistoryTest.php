@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionStrategy;
+use Modules\Core\Locking\Exceptions\StaleModelLockingException;
 use Modules\Core\Models\Version;
 use Modules\Core\Models\VersionSet;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocument;
@@ -145,4 +146,35 @@ it('opens the owner scope for a translation deleted on its own', function (): vo
     $this->document->translations()->where('locale', 'it')->firstOrFail()->delete();
 
     expect(VersionSet::query()->where('id', '>', $before)->sole()->capture)->toBe(VersionCaptureQuality::Atomic);
+});
+
+it('raises the owner lock version once for a revision of translations only (D23)', function (): void {
+    $version = $this->document->currentLockVersion();
+
+    $this->document->withinRevision(function (): void {
+        $this->document->setTranslation('it', ['title' => 'Titolo']);
+        $this->document->setTranslation('de', ['title' => 'Titel']);
+    });
+
+    expect($this->document->currentLockVersion())->toBe($version + 1)
+        ->and(TranslatedDocument::query()->withoutGlobalScopes()->findOrFail($this->document->getKey())->currentLockVersion())->toBe($version + 1);
+});
+
+it('refuses the save of a form that loaded the owner before a translation-only change', function (): void {
+    $form = TranslatedDocument::query()->withoutGlobalScopes()->findOrFail($this->document->getKey());
+
+    $this->document->setTranslation('it', ['title' => 'Titolo']);
+    $form->code = 'from the stale form';
+
+    expect(fn () => $form->save())->toThrow(StaleModelLockingException::class);
+});
+
+it('raises the lock version once when the root and its translations change together', function (): void {
+    $version = $this->document->currentLockVersion();
+
+    $this->document->code = 'changed';
+    $this->document->title = 'Title';
+    $this->document->save();
+
+    expect(TranslatedDocument::query()->withoutGlobalScopes()->findOrFail($this->document->getKey())->currentLockVersion())->toBe($version + 1);
 });

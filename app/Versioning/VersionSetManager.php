@@ -123,6 +123,10 @@ final class VersionSetManager implements VersionSetManagerInterface
                 $this->enlist($root->connectionName());
 
                 foreach ($this->activeScope()->sets() as $set) {
+                    if ($set->changedOnlyTranslations()) {
+                        $this->raiseLockVersion($set->root()->model());
+                    }
+
                     $set->finish();
                 }
 
@@ -195,6 +199,23 @@ final class VersionSetManager implements VersionSetManagerInterface
         } finally {
             $scope->leave();
         }
+    }
+
+    /**
+     * Raises the optimistic lock version of a root whose revision changed only its translations, with a direct update
+     * of that column and no model event, and keeps the instance in step (D23).
+     */
+    private function raiseLockVersion(Model $root): void
+    {
+        if (! $root instanceof IOptimisticLockableModel || $root->currentLockVersion() === null) {
+            return;
+        }
+
+        $column = $root::lockVersionColumn();
+        $raised = $root->currentLockVersion() + 1;
+        $root->newQueryWithoutScopes()->whereKey($root->getKey())->toBase()->update([$column => $raised]);
+        $root->setAttribute($column, $raised);
+        $root->syncOriginalAttribute($column);
     }
 
     private function activeScope(): VersionScope

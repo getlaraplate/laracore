@@ -87,6 +87,7 @@ final readonly class VersionWriter implements VersionWriterInterface
 
         $version->saveOrFail();
         $active->markVersionWritten();
+        $active->noteStream($change->relationPath);
 
         return $version;
     }
