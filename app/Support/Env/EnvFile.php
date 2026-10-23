@@ -37,7 +37,9 @@ final class EnvFile
     {
         $content = is_file($path) && is_readable($path) ? file_get_contents($path) : false;
 
-        throw_if($content === false, RuntimeException::class, "The file {$path} cannot be read.");
+        if ($content === false) {
+            throw new RuntimeException("The file {$path} cannot be read.");
+        }
 
         return new self($path, $content);
     }
@@ -55,7 +57,7 @@ final class EnvFile
 
         foreach (preg_split('/\r\n|\n|\r/', $this->content) ?: [] as $line) {
             if (preg_match(self::ACTIVE_PATTERN, $line, $match) === 1) {
-                $raw = mb_trim($match[2]);
+                $raw = self::singleLineRaw(mb_trim($match[2]));
                 $entries[] = new EnvEntry($match[1], self::unquote($raw), $raw, false, implode(' ', $comment));
                 $comment = [];
 
@@ -63,7 +65,8 @@ final class EnvFile
             }
 
             if (preg_match(self::COMMENTED_PATTERN, $line, $match) === 1) {
-                $entries[] = new EnvEntry($match[1], self::unquote($match[2]), $match[2], true, implode(' ', $comment));
+                $raw = self::singleLineRaw($match[2]);
+                $entries[] = new EnvEntry($match[1], self::unquote($raw), $raw, true, implode(' ', $comment));
                 $comment = [];
 
                 continue;
@@ -155,6 +158,19 @@ final class EnvFile
         $this->write($name, $text);
     }
 
+    /**
+     * A value that opens a quote it does not close on its line runs over several lines (a PEM key): this reads one
+     * line at a time, so it offers no value rather than a text with a stray quote.
+     */
+    private static function singleLineRaw(string $raw): string
+    {
+        if ($raw !== '' && in_array($raw[0], ['"', "'"], true) && (mb_strlen($raw) < 2 || ! str_ends_with($raw, $raw[0]))) {
+            return '';
+        }
+
+        return $raw;
+    }
+
     private static function unquote(string $value): string
     {
         if (mb_strlen($value) >= 2 && in_array($value[0], ['"', "'"], true) && str_ends_with($value, $value[0])) {
@@ -176,17 +192,26 @@ final class EnvFile
      */
     private function write(string $name, string $text): void
     {
-        throw_if(preg_match(self::NAME_PATTERN, $name) !== 1, InvalidArgumentException::class, 'A variable name is upper case letters, digits and underscores, and starts with a letter.');
+        if (preg_match(self::NAME_PATTERN, $name) !== 1) {
+            throw new InvalidArgumentException('A variable name is upper case letters, digits and underscores, and starts with a letter.');
+        }
 
         $target = realpath($this->path) ?: $this->path;
         $directory = dirname($target);
 
-        throw_unless(is_file($target) && is_writable($target) && is_writable($directory), RuntimeException::class, "The file {$this->path} cannot be written.");
+        if (! is_file($target) || ! is_writable($target) || ! is_writable($directory)) {
+            throw new RuntimeException("The file {$this->path} cannot be written.");
+        }
 
         $current = @file_get_contents($target);
 
-        throw_if($current === false, RuntimeException::class, "The file {$this->path} cannot be read.");
-        throw_if(in_array($name, $this->namesDefinedIn($current), true), InvalidArgumentException::class, "{$name} is already defined in the file.");
+        if ($current === false) {
+            throw new RuntimeException("The file {$this->path} cannot be read.");
+        }
+
+        if (in_array($name, $this->namesDefinedIn($current), true)) {
+            throw new InvalidArgumentException("{$name} is already defined in the file.");
+        }
 
         $eol = str_contains($current, "\r\n") ? "\r\n" : "\n";
         $content = $current;
@@ -199,10 +224,12 @@ final class EnvFile
 
         $temporary = @tempnam($directory, '.env.');
 
-        throw_if($temporary === false, RuntimeException::class, "The file {$this->path} cannot be written.");
+        if ($temporary === false) {
+            throw new RuntimeException("The file {$this->path} cannot be written.");
+        }
 
         $mode = @fileperms($target);
-        $written = @file_put_contents($temporary, $content) === mb_strlen($content)
+        $written = $this->writeDurably($temporary, $content)
             && @chmod($temporary, $mode === false ? 0o600 : $mode & 0o777)
             && $this->keepOwner($temporary, $target)
             && @rename($temporary, $target);
@@ -214,6 +241,28 @@ final class EnvFile
         }
 
         $this->content = $content;
+    }
+
+    /**
+     * Writes `$content` and flushes it to the disk before the rename that publishes it: a power loss right after the
+     * rename must not leave an empty `.env`, where the filesystem supports it. The length compared is the one in bytes, which is what is written.
+     */
+    private function writeDurably(string $path, string $content): bool
+    {
+        $handle = @fopen($path, 'wb');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        $ok = @fwrite($handle, $content) === mb_strlen($content, '8bit') && @fflush($handle);
+
+        // Only a plain file can be fsynced: a stream wrapper (a test double, a virtual filesystem) cannot, and that is not a failed write.
+        if ($ok && function_exists('fsync') && (stream_get_meta_data($handle)['wrapper_type'] ?? null) === 'plainfile') {
+            @fsync($handle);
+        }
+
+        return @fclose($handle) && $ok;
     }
 
     /**

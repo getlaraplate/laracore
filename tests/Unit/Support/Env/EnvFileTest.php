@@ -258,3 +258,25 @@ it('never lets a failed write raise a PHP warning or leave a temporary file', fu
 
     expect(glob($this->envDir . '/.env.*'))->toBe([]);
 });
+
+it('offers no default for a quoted example value that runs over several lines', function (): void {
+    $path = envFileFixture($this->envDir, "# PRIVATE_KEY=\"-----BEGIN\n# MORE=1\n");
+
+    $entry = EnvFile::read($path)->entry('PRIVATE_KEY');
+
+    expect($entry?->value)->toBe('')->and($entry?->raw)->toBe('');
+});
+
+it('reads an export line of the example as a variable', function (): void {
+    $path = envFileFixture($this->envDir, "export REGION=eu\n");
+
+    expect(EnvFile::read($path)->entry('REGION')?->value)->toBe('eu');
+});
+
+it('appends a value with multibyte characters', function (): void {
+    $path = envFileFixture($this->envDir, "A=1\n");
+
+    EnvFile::read($path)->append('APP_NAME', 'Città 日本');
+
+    expect(Dotenv::parse((string) file_get_contents($path))['APP_NAME'])->toBe('Città 日本');
+});

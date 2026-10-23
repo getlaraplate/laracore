@@ -48,6 +48,12 @@ final class EnvFillCommand extends Command
             return BaseCommand::FAILURE;
         }
 
+        if (! is_writable($target)) {
+            $this->components->error("The file {$target} cannot be written.");
+
+            return BaseCommand::FAILURE;
+        }
+
         if ($missing === []) {
             $this->components->info('Nothing missing: the .env defines every variable of .env.example.');
 
@@ -58,12 +64,6 @@ final class EnvFillCommand extends Command
 
         if (! $this->canAsk()) {
             $this->components->error('Run the command interactively: every variable needs an answer, and there is no terminal to ask on (use ssh -t, or run it in a terminal).');
-
-            return BaseCommand::FAILURE;
-        }
-
-        if (! is_writable($target)) {
-            $this->components->error("The file {$target} cannot be written.");
 
             return BaseCommand::FAILURE;
         }
@@ -109,8 +109,13 @@ final class EnvFillCommand extends Command
             default: $this->refreshesCacheByDefault(),
             hint: 'Do not leave a cached configuration on a machine that runs the test suite.',
         )) {
-            $refresher->refresh();
-            $this->components->info('The configuration cache was rebuilt.');
+            try {
+                $refresher->refresh();
+                $this->components->info('The configuration cache was rebuilt.');
+            } catch (RuntimeException $exception) {
+                $this->components->error('The configuration cache was not rebuilt: ' . $exception->getMessage() . '. Run config:clear and config:cache yourself.');
+                $status = BaseCommand::FAILURE;
+            }
         }
 
         return $status;
