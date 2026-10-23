@@ -441,14 +441,15 @@ trait HasVersions
     }
 
     /**
-     * Groups several writes of this root in one revision: the importers, a loop over locales (D28).
+     * Groups several writes of this root in one revision: the importers, a loop over locales (D28). The options name
+     * the revision's reason and actor; by default the actor is the record's own author.
      */
-    public function withinRevision(Closure $operation, ?string $reason = null): mixed
+    public function withinRevision(Closure $operation, ?VersionSetOptions $options = null): mixed
     {
         return app(VersionSetManagerInterface::class)->run(
             VersionSetRoot::forModel($this),
             $operation,
-            new VersionSetOptions(reason: $reason, actor: $this->getVersionUserId()),
+            $options ?? new VersionSetOptions(actor: $this->getVersionUserId()),
         );
     }
 
