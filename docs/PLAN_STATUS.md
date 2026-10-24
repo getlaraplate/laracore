@@ -32,8 +32,8 @@ Every plan has `date`, from its file name, and `updated`, the date of the last c
 
 | Field | Meaning |
 |---|---|
-| `started` | The first commit that added a ticked step (`- [x]` or `- [X]`) to the plan. |
-| `finished` | The last commit that added a ticked step, set only when the plan state is `done`; `null` while the plan is open. |
+| `started` | The first commit that added a ticked step (`- [x]`, `- [X]` or `* [x]`) to the plan. |
+| `finished` | The last commit that added a ticked step, set only when the plan state is `done`; `null` otherwise. |
 | `updated` | The last commit that touched the plan, ticked or not. This is the last activity. |
 
 `started` and `finished` are `null` when git does not know the file (a plan written and never committed), and also when no commit has ticked a step yet. The history is read with `git log -p` in the repository that owns the plan, so a plan inside a module submodule (`Modules/SAO/docs/plans/x.md`) is read from the module's own repository. A step unticked and ticked again keeps the first tick as `started` and moves `finished` to the last one.
@@ -44,7 +44,7 @@ One caveat: `finished` is the last commit that added a `- [x]` line. A later com
 
 Every plan in the JSON carries `modules`, a non-empty list of lowercase slugs (`core`, `cms`, `ai`, `erp`, `mes`, `sao`, `platform`, ...). The first rule that matches wins:
 
-1. The front-matter `module:`, one slug or a comma list (`module: ai, core`). Entries are trimmed and lowercased; a slug that is not a known module is kept as written.
+1. The front-matter `module:`, one slug or a comma list (`module: ai, core`). A flow-style list (`module: [ai, core]`) works too: brackets and quotes around an entry are dropped. A block-style YAML list (`module:` followed by `- ai` lines) is not read, so the plan falls through to the next rule. Entries are trimmed and lowercased; a slug that is not a known module is kept as written.
 2. The plan's own location, `Modules/<Name>/docs/plans/`.
 3. The `Modules/<Name>/` paths named by the files of its tasks, ranked by how many files name each module, ties by first appearance.
 4. `platform`, when none of the above shows a module.
@@ -53,4 +53,4 @@ Set `module:` in the front matter when a plan's files do not show its module, ot
 
 ## Public website
 
-The roadmap of the public website groups plans by module and shows when each one started and finished. It reads `php scripts/plan-status.php --format=json --git-dates`, so the field names above (`modules`, `started`, `finished`, `updated`, `state`) are a contract: renaming one breaks the site.
+The roadmap of the public website groups plans by module and shows when each one started and finished. It reads `php scripts/plan-status.php --format=json --git-dates`, so the field names are a contract: renaming one breaks the site. Besides `modules`, `started`, `finished`, `updated` and `state`, it reads `updated_source`, `checked_steps`, `total_steps`, `tasks`, `path`, `repo` and `title`.
