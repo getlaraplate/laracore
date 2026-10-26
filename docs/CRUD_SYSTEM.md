@@ -21,74 +21,27 @@ The CRUD system provides a **dynamic, entity-agnostic** API for Create, Read, Up
 
 ### Service Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    CrudController                                │
-│  Routes HTTP requests to CrudService                            │
-│  ├── list()    → ListRequest    → ListRequestData               │
-│  ├── detail()  → DetailRequest  → DetailRequestData             │
-│  ├── insert()  → ModifyRequest  → ModifyRequestData             │
-│  ├── update()  → ModifyRequest  → ModifyRequestData             │
-│  ├── delete()  → ModifyRequest  → ModifyRequestData             │
-│  ├── history() → HistoryRequest → HistoryRequestData            │
-│  └── tree()    → TreeRequest    → TreeRequestData               │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    CrudService                                   │
-│  Orchestrates CRUD operations                                   │
-│  ├── Uses AuthorizationService for permissions + ACL            │
-│  ├── Uses QueryBuilder for query preparation                    │
-│  └── Returns CrudResult with data + metadata                    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-┌─────────────────────────┐    ┌─────────────────────────┐
-│  AuthorizationService   │    │      QueryBuilder       │
-│  ├── ensurePermission() │    │  ├── prepareQuery()     │
-│  ├── injectAclFilters() │    │  └── applyFilters()     │
-│  └── applyAclFilters..  │    └─────────────────────────┘
-└─────────────────────────┘
+```mermaid
+flowchart TD
+    controller["CrudController<br/>routes HTTP requests to CrudService<br/>list(): ListRequest → ListRequestData<br/>detail(): DetailRequest → DetailRequestData<br/>insert(): ModifyRequest → ModifyRequestData<br/>update(): ModifyRequest → ModifyRequestData<br/>delete(): ModifyRequest → ModifyRequestData<br/>history(): HistoryRequest → HistoryRequestData<br/>tree(): TreeRequest → TreeRequestData"]
+    service["CrudService<br/>orchestrates CRUD operations<br/>uses AuthorizationService for permissions and ACL<br/>uses QueryBuilder for query preparation<br/>returns CrudResult with data and metadata"]
+    auth["AuthorizationService<br/>ensurePermission()<br/>injectAclFilters()<br/>applyAclFiltersToQuery()"]
+    qb["QueryBuilder<br/>prepareQuery()<br/>applyFilters()"]
+    controller --> service
+    service --> auth
+    service --> qb
 ```
 
 ### Request Flow
 
-```
-HTTP Request
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  1. FormRequest (ListRequest, DetailRequest, etc.)              │
-│     - Validates input                                           │
-│     - Calls parsed() to create RequestData                      │
-└─────────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  2. RequestData (ListRequestData, DetailRequestData, etc.)      │
-│     - Resolves entity via DynamicEntity                         │
-│     - Normalizes columns, filters, sorts, relations             │
-└─────────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  3. CrudService                                                 │
-│     - Checks permission (AuthorizationService)                  │
-│     - Injects ACL filters into RequestData                      │
-│     - Builds query (QueryBuilder)                               │
-│     - Executes query                                            │
-│     - Returns CrudResult                                        │
-└─────────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  4. ResponseBuilder                                             │
-│     - Formats response (JSON/XML)                               │
-│     - Applies caching                                           │
-│     - Returns HTTP Response                                     │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    http(["HTTP request"])
+    form["1. FormRequest (ListRequest, DetailRequest, ...)<br/>validates input<br/>calls parsed() to create RequestData"]
+    data["2. RequestData (ListRequestData, DetailRequestData, ...)<br/>resolves the entity via DynamicEntity<br/>normalizes columns, filters, sorts, relations"]
+    service["3. CrudService<br/>checks permission (AuthorizationService)<br/>injects ACL filters into RequestData<br/>builds the query (QueryBuilder)<br/>executes the query<br/>returns CrudResult"]
+    response["4. ResponseBuilder<br/>formats the response (JSON/XML)<br/>applies caching<br/>returns the HTTP response"]
+    http --> form --> data --> service --> response
 ```
 
 ## API Endpoints

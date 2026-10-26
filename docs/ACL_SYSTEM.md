@@ -27,55 +27,29 @@ ACL attached to permission:
 
 ### Service Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    AuthorizationService                          │
-│  ├── checkPermission()      → Can user do this operation?       │
-│  ├── ensurePermission()     → Check or throw exception          │
-│  ├── getAclFilters()        → Get ACL filters for permission    │
-│  ├── injectAclFilters()     → Inject ACL into request filters   │
-│  └── applyAclFiltersToQuery() → Apply ACL directly to query     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    AclResolverService                            │
-│  ├── getEffectiveAcls()     → Resolve ACLs for user/permission  │
-│  ├── getCombinedFilters()   → Combine ACLs with OR logic        │
-│  └── hasUnrestrictedAccess() → Check if user has no restrictions│
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    QueryBuilder                                  │
-│  ├── prepareQuery()         → Build query from request data     │
-│  └── applyFilters()         → Apply FiltersGroup to query       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    CrudService                                   │
-│  Orchestrates: AuthorizationService + QueryBuilder               │
-│  1. ensurePermission()      → Check permission                  │
-│  2. injectAclFilters()      → Inject ACL into request           │
-│  3. prepareQuery()          → Build the query                   │
-│  4. Execute and return      → Run query, return result          │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    auth["AuthorizationService<br/>checkPermission(): can the user do this operation?<br/>ensurePermission(): check or throw an exception<br/>getAclFilters(): get the ACL filters for a permission<br/>injectAclFilters(): inject ACL into the request filters<br/>applyAclFiltersToQuery(): apply ACL directly to the query"]
+    resolver["AclResolverService<br/>getEffectiveAcls(): resolve ACLs for user and permission<br/>getCombinedFilters(): combine ACLs with OR logic<br/>hasUnrestrictedAccess(): check whether the user has no restrictions"]
+    qb["QueryBuilder<br/>prepareQuery(): build the query from request data<br/>applyFilters(): apply a FiltersGroup to the query"]
+    crud["CrudService<br/>orchestrates AuthorizationService and QueryBuilder<br/>1. ensurePermission(): check permission<br/>2. injectAclFilters(): inject ACL into the request<br/>3. prepareQuery(): build the query<br/>4. execute and return: run the query, return the result"]
+    auth --> resolver --> qb --> crud
 ```
 
 ### Data Model
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         USER                                     │
-│  └── roles[] (hierarchical via parent_id)                       │
-│        └── permissions[] (inherited from parent roles)          │
-│              └── acls[] (row-level filters)                     │
-│                    ├── filters (JSON query builder)             │
-│                    ├── unrestricted (bool)                      │
-│                    ├── priority (int)                           │
-│                    └── enabled (bool)                           │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+erDiagram
+    USER }o--o{ ROLE : "has roles"
+    ROLE |o--o{ ROLE : "parent_id hierarchy"
+    ROLE }o--o{ PERMISSION : "grants, inherited from parent roles"
+    PERMISSION ||--o{ ACL : "row-level filters"
+    ACL {
+        json filters "JSON query builder"
+        boolean unrestricted
+        smallint priority
+        boolean enabled
+    }
 ```
 
 ### Database Schema

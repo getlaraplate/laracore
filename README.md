@@ -40,6 +40,7 @@ The Core Module contains all the necessary functionalities to build a new Larave
 -   [CRUD system](docs/CRUD_SYSTEM.md): generic CRUD pipeline and API behavior, including the facets and the aggregate route.
 -   [API access control](docs/rag/API_ACCESS_CONTROL.md): guards, the `expose_api` switch, token authentication, default roles, related-record visibility, media projection, personal tokens and service accounts.
 -   [Module import framework](docs/IMPORT_FRAMEWORK.md): abstract command and neutral services for module-owned external importers.
+-   [Plan status](docs/PLAN_STATUS.md): the `plan-status` script, its options, the git dates and the module rules.
 
 ## Installation
 
@@ -854,6 +855,17 @@ Releases are run from the application, not from the module. From the `laraplate`
 ```bash
 composer run version:minor Core   # or version:major / version:patch, see docs/releasing.md
 ```
+
+### Plan status
+
+Lists the development plans of a repository, or of a whole workspace, with their progress, their modules and, with `--git-dates`, when their work started and finished. Run it from the application root:
+
+```bash
+composer run plan-status -- --open                  # plans still open
+php scripts/plan-status.php --format=json --git-dates
+```
+
+Options, date rules and module rules are in [`docs/PLAN_STATUS.md`](docs/PLAN_STATUS.md).
 
 ### Third-party code
 
