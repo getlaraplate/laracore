@@ -10,12 +10,14 @@ use Modules\Core\Enums\RelationOwnership;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersionedRelations;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Versioning\Data\RelationDescriptor;
 
 final class VersionedRelationRoot extends Model
 {
     use HasVersionedRelations;
     use HasVersions;
+    use ReturnsVersionedRelations;
 
     public const string TABLE = 'core_test_versioned_relation_roots';
 

@@ -10,6 +10,7 @@ use Modules\Core\Contracts\ISoftDeletableModel;
 use Modules\Core\Models\Concerns\HasPrefixedTableName;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\SoftDeletes\SoftDeletes;
 
 /**
@@ -21,6 +22,7 @@ abstract class Model extends BaseModel implements ISoftDeletableModel
     use HasPrefixedTableName;
     use HasValidations;
     use HasVersions;
+    use ReturnsVersionedRelations;
     use SoftDeletes;
 
     // /**

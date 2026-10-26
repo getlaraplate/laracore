@@ -44,13 +44,13 @@ it('restores scalars and reference membership to a revision in one Revert set', 
     $b = VersionedRelationSubject::query()->create(['name' => 'B']);
     $c = VersionedRelationSubject::query()->create(['name' => 'C']);
 
-    $root->attachVersioned('categories', $a->getKey(), ['position' => 1]);
-    $root->attachVersioned('categories', $b->getKey(), ['position' => 2]);
+    $root->categories()->attach($a->getKey(), ['position' => 1]);
+    $root->categories()->attach($b->getKey(), ['position' => 2]);
     $target = $root->currentRevision();
 
     $root->update(['title' => 'Second']);
-    $root->detachVersioned('categories', $a->getKey());
-    $root->attachVersioned('categories', $c->getKey(), ['position' => 3]);
+    $root->categories()->detach($a->getKey());
+    $root->categories()->attach($c->getKey(), ['position' => 3]);
     $expected = $root->currentRevision();
 
     $report = $root->restoreToRevision($target, $expected);
@@ -71,7 +71,7 @@ it('restores scalars and reference membership to a revision in one Revert set', 
 it('rejects a restore when the aggregate changed since the expected revision', function (): void {
     $root = VersionedRelationRoot::query()->create(['title' => 'First']);
     $a = VersionedRelationSubject::query()->create(['name' => 'A']);
-    $root->attachVersioned('categories', $a->getKey());
+    $root->categories()->attach($a->getKey());
     $stale = $root->currentRevision();
 
     $root->update(['title' => 'Changed']);
@@ -86,8 +86,8 @@ it('fails on a missing reference subject unless forced', function (): void {
     $root = VersionedRelationRoot::query()->create(['title' => 'First']);
     $a = VersionedRelationSubject::query()->create(['name' => 'A']);
     $b = VersionedRelationSubject::query()->create(['name' => 'B']);
-    $root->attachVersioned('categories', $a->getKey(), ['position' => 1]);
-    $root->attachVersioned('categories', $b->getKey(), ['position' => 2]);
+    $root->categories()->attach($a->getKey(), ['position' => 1]);
+    $root->categories()->attach($b->getKey(), ['position' => 2]);
     $target = $root->currentRevision();
 
     $a->delete();

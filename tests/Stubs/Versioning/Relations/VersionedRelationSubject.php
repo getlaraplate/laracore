@@ -6,9 +6,12 @@ namespace Modules\Core\Tests\Stubs\Versioning\Relations;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 
 final class VersionedRelationSubject extends Model
 {
+    use ReturnsVersionedRelations;
+
     public const string TABLE = 'core_test_versioned_relation_subjects';
 
     protected $table = self::TABLE;

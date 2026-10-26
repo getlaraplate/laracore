@@ -34,41 +34,6 @@ trait HasVersionedRelations
     }
 
     /**
-     * @param  array<string, mixed>  $pivot
-     */
-    public function attachVersioned(string $relation, int|string $subjectId, array $pivot = []): void
-    {
-        $this->recordRelationMembership($relation, $subjectId, VersionChangeType::Created, $pivot, function () use ($relation, $subjectId, $pivot): void {
-            // Idempotent: a re-attach updates the pivot in place instead of inserting a duplicate row,
-            // keeping the live relation in step with the reconstructed membership.
-            $this->{$relation}()->syncWithoutDetaching([$subjectId => $pivot]);
-        });
-    }
-
-    public function detachVersioned(string $relation, int|string $subjectId): void
-    {
-        $this->recordRelationMembership($relation, $subjectId, VersionChangeType::Deleted, [], function () use ($relation, $subjectId): void {
-            $this->{$relation}()->detach($subjectId);
-        });
-    }
-
-    /**
-     * Replace the whole membership of a versioned relation with a target set, as a single revision:
-     * every detach and upsert joins one version set. The target accepts either a list of subject ids
-     * or a `[subjectId => pivotAttributes]` map.
-     *
-     * @param  array<int|string, array<string, mixed>>|list<int|string>  $target
-     */
-    public function syncVersioned(string $relation, array $target): void
-    {
-        $this->assertVersionedRelation($relation);
-
-        $normalized = $this->normalizeSyncTarget($target);
-
-        $this->runInMembershipScope(fn () => $this->applyMembershipTarget($relation, $normalized));
-    }
-
-    /**
      * The registered relation stored in a pivot table with this root on the given pivot column, which the pivot's
      * events record on this root (D42).
      */
@@ -204,37 +169,6 @@ trait HasVersionedRelations
         return $descriptors;
     }
 
-    /**
-     * One supported membership mutation = one version set = one revision. The mutation and its
-     * history row commit together; the membership row identifies the subject only by `subjectKey`,
-     * so it is stored as a self-contained SNAPSHOT.
-     *
-     * @param  array<string, mixed>  $pivot
-     */
-    private function recordRelationMembership(string $relation, int|string $subjectId, VersionChangeType $type, array $pivot, Closure $mutation): void
-    {
-        $this->assertVersionedRelation($relation);
-
-        // The pivot's events write the membership row (D42); the scope groups them in one revision.
-        $this->runInMembershipScope($mutation);
-    }
-
-    private function assertVersionedRelation(string $relation): void
-    {
-        if ($this->versionedRelationDescriptor($relation) === null) {
-            throw new InvalidArgumentException("Relation '{$relation}' is not a declared versioned relation.");
-        }
-    }
-
-    private function runInMembershipScope(Closure $operation): void
-    {
-        app(VersionSetManagerInterface::class)->run(
-            VersionSetRoot::forModel($this),
-            $operation,
-            new VersionSetOptions(actor: $this->versionActor()),
-        );
-    }
-
     private function versionActor(): ?int
     {
         if (! method_exists($this, 'getVersionUserId')) {
@@ -244,27 +178,6 @@ trait HasVersionedRelations
         $actor = $this->getVersionUserId();
 
         return is_numeric($actor) ? (int) $actor : null;
-    }
-
-    /**
-     * @param  array<int|string, array<string, mixed>>|list<int|string>  $target
-     * @return array<int|string, array<string, mixed>>
-     */
-    private function normalizeSyncTarget(array $target): array
-    {
-        $normalized = [];
-
-        foreach ($target as $key => $value) {
-            if (is_int($key) && ! is_array($value)) {
-                $normalized[$value] = [];
-
-                continue;
-            }
-
-            $normalized[$key] = is_array($value) ? $value : [];
-        }
-
-        return $normalized;
     }
 
     /**
@@ -306,8 +219,8 @@ trait HasVersionedRelations
     }
 
     /**
-     * Bring the live relation into line with a target membership, writing one membership version row per
-     * change. Assumes an active version-set scope; detaches members absent from the target and upserts the rest.
+     * Bring the live relation into line with a target membership; the pivot's events write one membership row per
+     * change (D42). Assumes an active version-set scope; detaches members absent from the target and upserts the rest.
      *
      * @param  array<int|string, array<string, mixed>>  $normalized
      */

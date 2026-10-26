@@ -39,9 +39,9 @@ it('reconstructs membership by replaying attach and detach events', function ():
     $a = VersionedRelationSubject::query()->create(['name' => 'A']);
     $b = VersionedRelationSubject::query()->create(['name' => 'B']);
 
-    $root->attachVersioned('categories', $a->getKey(), ['position' => 1]);
-    $root->attachVersioned('categories', $b->getKey(), ['position' => 2]);
-    $root->detachVersioned('categories', $a->getKey());
+    $root->categories()->attach($a->getKey(), ['position' => 1]);
+    $root->categories()->attach($b->getKey(), ['position' => 2]);
+    $root->categories()->detach($a->getKey());
 
     $membership = $root->versionedRelationMembership('categories');
 
