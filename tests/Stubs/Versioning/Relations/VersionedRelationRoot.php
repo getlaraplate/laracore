@@ -21,6 +21,8 @@ final class VersionedRelationRoot extends Model
 
     public const string PIVOT_TABLE = 'core_test_versioned_relation_pivot';
 
+    public const string UNREGISTERED_PIVOT_TABLE = 'core_test_unregistered_relation_pivot';
+
     protected $table = self::TABLE;
 
     protected $guarded = [];
@@ -39,7 +41,22 @@ final class VersionedRelationRoot extends Model
             self::PIVOT_TABLE,
             'root_id',
             'subject_id',
-        )->withPivot('position');
+        )->using(VersionedRelationPivot::class)->withPivot('position');
+    }
+
+    /**
+     * A relation the root does not register: its links are not part of the history.
+     *
+     * @return BelongsToMany<VersionedRelationSubject, $this>
+     */
+    public function labels(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            VersionedRelationSubject::class,
+            self::UNREGISTERED_PIVOT_TABLE,
+            'root_id',
+            'subject_id',
+        )->using(VersionedRelationPivot::class);
     }
 
     /**
@@ -48,7 +65,7 @@ final class VersionedRelationRoot extends Model
     protected function versionedRelations(): array
     {
         return [
-            new RelationDescriptor('categories', RelationOwnership::Reference),
+            new RelationDescriptor('categories', RelationOwnership::Reference, pivotColumns: ['position']),
         ];
     }
 }

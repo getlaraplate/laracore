@@ -5,15 +5,13 @@ declare(strict_types=1);
 namespace Modules\Core\Models\Concerns;
 
 use Closure;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use InvalidArgumentException;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
-use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
-use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\Data\RelationDescriptor;
 use Modules\Core\Versioning\Data\RestoreReport;
-use Modules\Core\Versioning\Data\VersionChange;
 use Modules\Core\Versioning\Data\VersionSetOptions;
 use Modules\Core\Versioning\Data\VersionSetRoot;
 use Modules\Core\Versioning\Exceptions\AggregateRestoreConflictException;
@@ -68,6 +66,23 @@ trait HasVersionedRelations
         $normalized = $this->normalizeSyncTarget($target);
 
         $this->runInMembershipScope(fn () => $this->applyMembershipTarget($relation, $normalized));
+    }
+
+    /**
+     * The registered relation stored in a pivot table with this root on the given pivot column, which the pivot's
+     * events record on this root (D42).
+     */
+    public function versionedRelationThroughPivot(string $table, string $foreignPivotKey): ?RelationDescriptor
+    {
+        foreach ($this->registeredRelations() as $descriptor) {
+            $relation = $this->{$descriptor->relation}();
+
+            if ($relation instanceof BelongsToMany && $table === $relation->getTable() && $foreignPivotKey === $relation->getForeignPivotKeyName()) {
+                return $descriptor;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -200,10 +215,8 @@ trait HasVersionedRelations
     {
         $this->assertVersionedRelation($relation);
 
-        $this->runInMembershipScope(function () use ($mutation, $relation, $subjectId, $type, $pivot): void {
-            $mutation();
-            $this->writeMembershipRow($relation, $subjectId, $type, $pivot);
-        });
+        // The pivot's events write the membership row (D42); the scope groups them in one revision.
+        $this->runInMembershipScope($mutation);
     }
 
     private function assertVersionedRelation(string $relation): void
@@ -220,23 +233,6 @@ trait HasVersionedRelations
             $operation,
             new VersionSetOptions(actor: $this->versionActor()),
         );
-    }
-
-    /**
-     * @param  array<string, mixed>  $pivot
-     */
-    private function writeMembershipRow(string $relation, int|string $subjectId, VersionChangeType $type, array $pivot): void
-    {
-        resolve(VersionWriterInterface::class)->write(new VersionChange(
-            model: $this,
-            type: $type,
-            originalContents: [],
-            contents: $type === VersionChangeType::Created ? $pivot : [],
-            strategy: VersionStrategy::SNAPSHOT,
-            userId: $this->versionActor(),
-            relationPath: $relation,
-            subjectKey: ['id' => $subjectId],
-        ));
     }
 
     private function versionActor(): ?int
@@ -323,14 +319,13 @@ trait HasVersionedRelations
         );
         $to_detach = array_diff($current_ids, array_keys($normalized));
 
+        // The pivot's events write the membership rows (D42).
         foreach ($to_detach as $subject_id) {
             $this->{$relation}()->detach($subject_id);
-            $this->writeMembershipRow($relation, $subject_id, VersionChangeType::Deleted, []);
         }
 
         foreach ($normalized as $subject_id => $pivot) {
             $this->{$relation}()->syncWithoutDetaching([$subject_id => $pivot]);
-            $this->writeMembershipRow($relation, $subject_id, VersionChangeType::Created, $pivot);
         }
     }
 

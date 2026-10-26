@@ -28,61 +28,94 @@ beforeEach(function (): void {
         $table->unsignedBigInteger('subject_id');
         $table->unsignedInteger('position')->default(0);
     });
+    Schema::create(VersionedRelationRoot::UNREGISTERED_PIVOT_TABLE, function (Blueprint $table): void {
+        $table->unsignedBigInteger('root_id');
+        $table->unsignedBigInteger('subject_id');
+    });
+
+    $this->root = VersionedRelationRoot::query()->create(['title' => 'First']);
+    $this->subject = VersionedRelationSubject::query()->create(['name' => 'Subject']);
 });
 
 afterEach(function (): void {
+    Schema::dropIfExists(VersionedRelationRoot::UNREGISTERED_PIVOT_TABLE);
     Schema::dropIfExists(VersionedRelationRoot::PIVOT_TABLE);
     Schema::dropIfExists(VersionedRelationSubject::TABLE);
     Schema::dropIfExists(VersionedRelationRoot::TABLE);
 });
 
-it('records an attach as a Created membership version row', function (): void {
-    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
-    $subject = VersionedRelationSubject::query()->create(['name' => 'News']);
+/**
+ * Membership rows come from the events of the custom pivot, from either side of the relation, so every caller is
+ * covered without calling versioning methods (D41, D42).
+ */
+function membership_rows(VersionedRelationRoot $root): array
+{
+    return $root->versions()->where('relation_path', 'categories')->reorder('id')->get()
+        ->map(static fn (Version $row): array => [$row->change_type, $row->subject_key, $row->contents])
+        ->all();
+}
 
-    $root->attachVersioned('categories', $subject->getKey(), ['position' => 2]);
+it('records an attach as a created membership row with the declared pivot columns', function (): void {
+    $this->root->categories()->attach($this->subject->getKey(), ['position' => 2]);
 
-    $membership = Version::query()->latest('id')->firstOrFail();
+    $row = $this->root->versions()->where('relation_path', 'categories')->sole();
 
-    expect($root->categories()->count())->toBe(1)
-        ->and($membership->change_type)->toBe(VersionChangeType::Created)
-        ->and($membership->relation_path)->toBe('categories')
-        ->and($membership->subject_key)->toBe(['id' => $subject->getKey()])
-        ->and($membership->contents)->toBe(['position' => 2])
-        ->and($membership->version_strategy)->toBe(VersionStrategy::SNAPSHOT);
+    expect($row->change_type)->toBe(VersionChangeType::Created)
+        ->and($row->version_strategy)->toBe(VersionStrategy::SNAPSHOT)
+        ->and($row->subject_key)->toBe(['id' => $this->subject->getKey()])
+        ->and($row->contents)->toBe(['position' => 2])
+        ->and($row->versionable_id)->toBe($this->root->getKey());
 });
 
-it('records a detach as a Deleted membership version row', function (): void {
-    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
-    $subject = VersionedRelationSubject::query()->create(['name' => 'News']);
-    $root->attachVersioned('categories', $subject->getKey(), ['position' => 2]);
+it('records a detach, also without ids, as deleted membership rows', function (): void {
+    $other = VersionedRelationSubject::query()->create(['name' => 'Other']);
+    $this->root->categories()->attach([$this->subject->getKey(), $other->getKey()]);
 
-    $root->detachVersioned('categories', $subject->getKey());
+    $this->root->categories()->detach($this->subject->getKey());
+    $this->root->categories()->detach();
 
-    $membership = Version::query()->latest('id')->firstOrFail();
-
-    expect($root->categories()->count())->toBe(0)
-        ->and($membership->change_type)->toBe(VersionChangeType::Deleted)
-        ->and($membership->relation_path)->toBe('categories')
-        ->and($membership->subject_key)->toBe(['id' => $subject->getKey()]);
+    expect(collect(membership_rows($this->root))->map(static fn (array $row): string => $row[0]->value . ':' . $row[1]['id'])->all())->toBe([
+        'created:' . $this->subject->getKey(),
+        'created:' . $other->getKey(),
+        'deleted:' . $this->subject->getKey(),
+        'deleted:' . $other->getKey(),
+    ]);
 });
 
-it('re-attaching an existing subject updates the pivot in place without duplicating', function (): void {
-    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
-    $subject = VersionedRelationSubject::query()->create(['name' => 'News']);
+it('records a change of a declared pivot column', function (): void {
+    $this->root->categories()->attach($this->subject->getKey(), ['position' => 1]);
 
-    $root->attachVersioned('categories', $subject->getKey(), ['position' => 1]);
-    $root->attachVersioned('categories', $subject->getKey(), ['position' => 5]);
+    $this->root->categories()->updateExistingPivot($this->subject->getKey(), ['position' => 5]);
 
-    expect($root->categories()->count())->toBe(1)
-        ->and((int) $root->categories()->first()->pivot->position)->toBe(5)
-        ->and($root->versionedRelationMembership('categories'))->toBe([
-            ['id' => $subject->getKey(), 'pivot' => ['position' => 5]],
-        ]);
+    expect(membership_rows($this->root)[1])->toBe([VersionChangeType::Updated, ['id' => $this->subject->getKey()], ['position' => 5]]);
 });
 
-it('rejects an undeclared relation', function (): void {
-    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
+it('records a link made from the inverse side on the root', function (): void {
+    $this->subject->roots()->attach($this->root->getKey(), ['position' => 3]);
 
-    expect(fn () => $root->attachVersioned('unknown', 1))->toThrow(InvalidArgumentException::class);
+    expect(membership_rows($this->root))->toBe([[VersionChangeType::Created, ['id' => $this->subject->getKey()], ['position' => 3]]]);
+});
+
+it('records nothing for a relation the root does not register', function (): void {
+    $this->root->labels()->attach($this->subject->getKey());
+
+    expect($this->root->versions()->whereNotNull('relation_path')->count())->toBe(0);
+});
+
+it('records nothing when the history of the root is off', function (): void {
+    VersionedRelationRoot::disableVersioning();
+
+    try {
+        $this->root->categories()->attach($this->subject->getKey());
+    } finally {
+        VersionedRelationRoot::enableVersioning();
+    }
+
+    expect(membership_rows($this->root))->toBe([]);
+});
+
+it('records nothing for a raw query on the pivot table', function (): void {
+    $this->root->getConnection()->table(VersionedRelationRoot::PIVOT_TABLE)->insert(['root_id' => $this->root->getKey(), 'subject_id' => $this->subject->getKey()]);
+
+    expect(membership_rows($this->root))->toBe([]);
 });
