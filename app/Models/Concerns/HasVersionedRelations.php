@@ -26,7 +26,7 @@ trait HasVersionedRelations
 {
     public function versionedRelationDescriptor(string $relation): ?RelationDescriptor
     {
-        foreach ($this->versionedRelations() as $descriptor) {
+        foreach ($this->registeredRelations() as $descriptor) {
             if ($descriptor->relation === $relation) {
                 return $descriptor;
             }
@@ -71,17 +71,17 @@ trait HasVersionedRelations
     }
 
     /**
-     * The current aggregate revision: the latest version set that touched this root. Callers pass it
-     * back as the expected revision on a restore, so a concurrent change is rejected instead of clobbered.
-     */
-    /**
      * Whether this root registers versioned relations, whose changes its save must group with its own (D34).
      */
     public function hasRegisteredRelations(): bool
     {
-        return $this->versionedRelations() !== [];
+        return $this->registeredRelations() !== [];
     }
 
+    /**
+     * The current aggregate revision: the latest version set that touched this root. Callers pass it
+     * back as the expected revision on a restore, so a concurrent change is rejected instead of clobbered.
+     */
     public function currentRevision(): ?int
     {
         $max = $this->versions()->max('version_set_id');
@@ -107,7 +107,7 @@ trait HasVersionedRelations
         $targets = [];
         $skipped = [];
 
-        foreach ($this->versionedRelations() as $descriptor) {
+        foreach ($this->registeredRelations() as $descriptor) {
             if ($descriptor->isOwned()) {
                 continue;
             }
@@ -168,6 +168,25 @@ trait HasVersionedRelations
     protected function versionedRelations(): array
     {
         return [];
+    }
+
+    /**
+     * The relations this root registers, checked: a relation to records of the root's own class touches two roots
+     * at once and is not versioned in milestone 1 (D24).
+     *
+     * @return list<RelationDescriptor>
+     */
+    private function registeredRelations(): array
+    {
+        $descriptors = $this->versionedRelations();
+
+        foreach ($descriptors as $descriptor) {
+            if ($this->{$descriptor->relation}()->getRelated() instanceof static) {
+                throw new InvalidArgumentException("Relation '{$descriptor->relation}' links records of the same class, so a change of it touches more than one root: it cannot be versioned (D24).");
+            }
+        }
+
+        return $descriptors;
     }
 
     /**
