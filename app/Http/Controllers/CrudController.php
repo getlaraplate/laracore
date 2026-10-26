@@ -446,9 +446,9 @@ class CrudController extends Controller
     /**
      * Invoke a module-registered domain action on one record.
      *
-     * The dispatcher arrives by method injection rather than through the
-     * constructor: subclasses call parent::__construct($crudService), so an
-     * extra constructor parameter would break them.
+     * The dispatcher arrives by method injection so the constructor stays a
+     * single CrudService dependency (no constructor coupling for collaborators
+     * that reuse list() via composition).
      *
      * A handler returning a Response is returned untouched — that is how file
      * exports stream. Anything else is wrapped in a CrudResult, so a domain
