@@ -897,18 +897,24 @@ class CrudService
                     $found_record->setAttribute($found_record::lockVersionColumn(), $lock_version);
                 }
 
-                /** @psalm-suppress InvalidArgument */
-                $mutated = (bool) $found_record->update($changes);
-                $pending = $mutated ? null : $this->pendingRequestOf($found_record);
+                // The record and its relations are one revision of it (D42).
+                $write = function () use ($found_record, $changes, $relations, $request, &$captured): bool {
+                    /** @psalm-suppress InvalidArgument */
+                    $mutated = (bool) $found_record->update($changes);
+                    $pending = $mutated ? null : $this->pendingRequestOf($found_record);
 
-                if ($pending instanceof Modification) {
-                    $captured[] = $pending;
-                }
+                    if ($pending instanceof Modification) {
+                        $captured[] = $pending;
+                    }
 
-                if ($relations !== []) {
-                    $this->syncModelRelations($request, $found_record, $relations);
-                    $mutated = true;
-                }
+                    if ($relations !== []) {
+                        $this->syncModelRelations($request, $found_record, $relations);
+                        $mutated = true;
+                    }
+
+                    return $mutated;
+                };
+                $mutated = (bool) (method_exists($found_record, 'withinRevision') ? $found_record->withinRevision($write) : $write());
 
                 if ($mutated) {
                     $updated_records->add($found_record->fresh());

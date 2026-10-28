@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Versioning\Relations;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Modules\Core\Contracts\ProvidesSyncableRelations;
 use Modules\Core\Enums\RelationOwnership;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersionedRelations;
@@ -13,7 +14,7 @@ use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Versioning\Data\RelationDescriptor;
 
-final class VersionedRelationRoot extends Model
+final class VersionedRelationRoot extends Model implements ProvidesSyncableRelations
 {
     use HasVersionedRelations;
     use HasVersions;
@@ -59,6 +60,14 @@ final class VersionedRelationRoot extends Model
             'root_id',
             'subject_id',
         )->using(VersionedRelationPivot::class);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function syncableRelations(): array
+    {
+        return ['categories'];
     }
 
     /**
