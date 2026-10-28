@@ -369,7 +369,9 @@ The window is resolved nearest first: the argument, then the model's own `$expir
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `CORE_VALIDITY_EXPIRING_WITHIN_HOURS` | `48` | Hours of lead time for `expiring()` when no window is given. |
+| `validity.expiring_within_hours` | `48` | Hours of lead time for `expiring()` when no window is given. A stored `0` or negative value reads as `1`. |
+
+It is a runtime setting (Filament > Settings, group `validity`), read from config as `core.validity.expiring_within_hours`.
 
 The default suits a record measured in days. A model whose rows live for months is expected to widen it for itself, rather than moving the default for everyone:
 
@@ -690,7 +692,8 @@ The Core Module utilizes several packages to enhance its functionality. Below is
     -   [spatie/laravel-medialibrary](https://github.com/spatie/laravel-medialibrary): Media handling for models.
     -   Core owns the media foundation: the shared `vend_media` table (guarded migration), the app-wide `media_model` (`Modules\Core\Models\Media`, soft-delete + version aware with a computed `expires_at`), the `file_namer` (`Modules\Core\Helpers\MediaFileNamer`), and the generic soft-delete-aware lifecycle trait `Modules\Core\Helpers\HasMedia`. Any module that needs attachments uses `HasMedia`; rows live in `vend_media`. The full `config/media-library.php` is Core-owned.
     -   Core also exposes a generic media HTTP API (`core.crud.media.*`) with a token-keyed pending bucket (`Modules\Core\Models\MediaDraft`, table `core_media_drafts`) for CREATE forms; stale drafts are pruned daily by `core:prune-media-drafts`.
-    -   Env: `MEDIA_DISK` (default `media-library`), `MAX_FILE_SIZE` (bytes, default 10MB), `MEDIA_QUEUE` (default `media-library`), `QUEUE_CONVERSIONS_BY_DEFAULT`, `QUEUE_CONVERSIONS_AFTER_DB_COMMIT`, `IMAGE_DRIVER` (default `imagick`), `FFMPEG_PATH`, `FFPROBE_PATH`, `MEDIA_DOWNLOADER_SSL`, `MEDIA_PREFIX`, `CORE_MEDIA_DRAFT_TTL_HOURS` (pending-media draft TTL in hours, default 24).
+    -   Env: `MEDIA_DISK` (default `media-library`), `MAX_FILE_SIZE` (bytes, default 10MB), `MEDIA_QUEUE` (default `media-library`), `QUEUE_CONVERSIONS_BY_DEFAULT`, `QUEUE_CONVERSIONS_AFTER_DB_COMMIT`, `IMAGE_DRIVER` (default `imagick`), `FFMPEG_PATH`, `FFPROBE_PATH`, `MEDIA_DOWNLOADER_SSL`, `MEDIA_PREFIX`.
+    -   Setting `media.draft_ttl_hours` (group `media`, default 24): hours a pending-media draft is kept before `core:prune-media-drafts` removes it; a stored `0` reads as `1`, never as "keep forever".
 
 -   **Logging and Monitoring:**
 
@@ -738,7 +741,7 @@ The Core Module utilizes several packages to enhance its functionality. Below is
 ### Environment (principali variabili)
 
 -   Feature toggles: `FORCE_HTTPS`. User and CRUD toggles are runtime settings (Filament > Settings), not env vars: `auth.email_verification.enabled`, `auth.registration.enabled`, `auth.two_factor.enabled`, `auth.licenses.enabled`, `auth.social_login.enabled`, `auth.passkeys.enabled`, `crud.dynamic_entities`, `expose_api` (gates every `/api` route, Core and modules), `soft_deletes.expiration_days` (0 = never purge), `search.vector.enabled` (embeddings generation requires AI module). Search ranking is tuned from the `search` settings group too: `search.reranker.enabled`, `search.reranker.top_k`, `search.reranker.weight` (rerank blend, seeded `0.6`) and `search.adaptive_tuning` (seeded off: applies the committed `config/search_tuning.php` profile per query class; see `docs/rag/SEARCH_RETRIEVAL_PIPELINE.md`). Settings are listed without the module prefix (the module is a column) and read from config as `core.<name>`.
--   Data retention: `CORE_MEDIA_DRAFT_TTL_HOURS` (pending-media draft TTL, default 24), `CORE_VALIDITY_EXPIRING_WITHIN_HOURS` (lead time for the `expiring` scope, default 48).
+-   Timing settings (runtime, Filament > Settings, read as `core.<name>`; a stored `0` or negative value reads as `1`): `media.draft_ttl_hours` (pending-media draft TTL, default 24), `validity.expiring_within_hours` (lead time for the `expiring` scope, default 48), `filament.tabs_counts_ttl_seconds` (seconds the backoffice caches tab counts and filter options on the Modifications, Permissions and Settings lists, default 60).
 -   CRUD aggregate route: `CORE_AGGREGATE_MAX_MEASURES` (default 3), `CORE_AGGREGATE_MAX_GROUPS` (50), `CORE_AGGREGATE_MAX_POINTS` (400), `CORE_AGGREGATE_MAX_PERIOD_DAYS` (1096) and `CORE_AGGREGATE_RATE_PER_MINUTE` (60), plus `CORE_AGGREGATE_MAX_OBJECTS_PER_MESSAGE` (6, reserved: nothing reads it yet); see [Aggregate route configuration](#aggregate-route-configuration).
 -   Standard stack: `DB_*`, `REDIS_*`, `SESSION_*`, `CACHE_STORE=redis`, `CACHE_PREFIX`, `QUEUE_CONNECTION=redis`, `HORIZON_MEMORY_LIMIT`, `FILESYSTEM_DISK`, `LOG_*`.
 
