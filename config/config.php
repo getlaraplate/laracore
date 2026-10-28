@@ -125,8 +125,7 @@ return [
      * model can override it with `protected static int $expiring_within_hours`.
      */
     'validity' => [
-        // @phpstan-ignore larastan.noEnvCallsOutsideOfConfig
-        'expiring_within_hours' => (int) env('CORE_VALIDITY_EXPIRING_WITHIN_HOURS', 48),
+        'expiring_within_hours' => 48,
     ],
 
     'extended_class_suffix' => '_extended',
@@ -134,7 +133,7 @@ return [
     'editor' => env('APP_EDITOR', 'VSCode'),
 
     'filament' => [
-        'tabs_counts_ttl_seconds' => env('FILAMENT_TABS_COUNTS_TTL_SECONDS', 60),
+        'tabs_counts_ttl_seconds' => 60,
     ],
 
     'media' => [
@@ -143,8 +142,7 @@ return [
          * that backs CREATE forms). Drafts older than this are pruned, together with
          * their staged media, by the core:prune-media-drafts command.
          */
-        // @phpstan-ignore larastan.noEnvCallsOutsideOfConfig
-        'draft_ttl_hours' => (int) env('CORE_MEDIA_DRAFT_TTL_HOURS', 24),
+        'draft_ttl_hours' => 24,
 
         /**
          * Minutes a temporary URL of the API media projection stays valid, on a disk whose driver can sign URLs.

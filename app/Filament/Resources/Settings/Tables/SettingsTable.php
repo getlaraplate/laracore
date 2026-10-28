@@ -225,7 +225,7 @@ final class SettingsTable
      */
     private static function cachedGroupNameOptions(): array
     {
-        $ttl = config('core.filament.tabs_counts_ttl_seconds', 300);
+        $ttl = max(1, (int) config('core.filament.tabs_counts_ttl_seconds', 60));
 
         return Cache::remember(
             'filament_settings_distinct_group_name',
@@ -244,7 +244,7 @@ final class SettingsTable
      */
     private static function cachedModuleOptions(): array
     {
-        $ttl = config('core.filament.tabs_counts_ttl_seconds', 300);
+        $ttl = max(1, (int) config('core.filament.tabs_counts_ttl_seconds', 60));
 
         return Cache::remember(
             'filament_settings_distinct_module',

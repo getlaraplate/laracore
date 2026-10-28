@@ -17,8 +17,6 @@ final class PermissionsTable
 {
     use HasTable;
 
-    private const int FILTER_OPTIONS_TTL_SECONDS = 300; // 5 minutes
-
     public static function configure(Table $table): Table
     {
         return self::configureTable(
@@ -75,7 +73,7 @@ final class PermissionsTable
      */
     private static function cachedDistinctOptions(string $column): array
     {
-        $ttl = config('core.filament.tabs_counts_ttl_seconds', self::FILTER_OPTIONS_TTL_SECONDS);
+        $ttl = max(1, (int) config('core.filament.tabs_counts_ttl_seconds', 60));
 
         return Cache::remember(
             "filament_permissions_distinct_{$column}",
