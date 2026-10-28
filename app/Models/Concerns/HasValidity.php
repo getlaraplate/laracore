@@ -35,6 +35,25 @@ trait HasValidity
         return static::$valid_to_column;
     }
 
+    /**
+     * The default expiring window for this model, in hours.
+     *
+     * Read off a static property when the model declares one, so a model can say
+     * what "soon" means for its own rows without every caller repeating it.
+     */
+    public static function expiringWithinHours(): int
+    {
+        if (property_exists(static::class, 'expiring_within_hours')) {
+            $own = static::$expiring_within_hours;
+
+            if (is_int($own) && $own > 0) {
+                return $own;
+            }
+        }
+
+        return max(1, (int) config('core.validity.expiring_within_hours', 48));
+    }
+
     public function initializeHasValidity(): void
     {
         if (! in_array(static::$valid_from_column, $this->fillable, true)) {
@@ -189,27 +208,6 @@ trait HasValidity
         return $query->valid()
             ->whereNotNull($valid_to)
             ->where($valid_to, '<=', now()->addHours($hours));
-    }
-
-    /**
-     * The default expiring window for this model, in hours.
-     *
-     * Read off a static property when the model declares one, so a model can say
-     * what "soon" means for its own rows without every caller repeating it.
-     */
-    public static function expiringWithinHours(): int
-    {
-        if (property_exists(static::class, 'expiring_within_hours')) {
-            $own = static::$expiring_within_hours;
-
-            if (is_int($own) && $own > 0) {
-                return $own;
-            }
-        }
-
-        $configured = config('core.validity.expiring_within_hours', 48);
-
-        return is_numeric($configured) && (int) $configured > 0 ? (int) $configured : 48;
     }
 
     /**

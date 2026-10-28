@@ -85,8 +85,6 @@ final class ListModifications extends ListRecords
 
     private function tabsCountsTtl(): int
     {
-        $ttl = config('core.filament.tabs_counts_ttl_seconds', 60);
-
-        return is_numeric($ttl) ? (int) $ttl : 60;
+        return max(1, (int) config('core.filament.tabs_counts_ttl_seconds', 60));
     }
 }
