@@ -34,7 +34,11 @@ final class PruneMediaDraftsCommand extends Command
      */
     public function handle(): int
     {
-        $ttl_hours = max(1, (int) config('core.media.draft_ttl_hours', 24));
+        $ttl_hours = (int) config('core.media.draft_ttl_hours', 24);
+
+        if ($ttl_hours <= 0) {
+            return self::SUCCESS;
+        }
 
         $threshold = now()->subHours($ttl_hours);
         $deleted = 0;

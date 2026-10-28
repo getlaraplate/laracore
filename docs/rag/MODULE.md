@@ -396,7 +396,7 @@ The per-id endpoints resolve the owner record **through the caller's row-level A
 -   `DELETE /app/crud/media/pending/{module}/{entity}/{media}?token={uuid}` (`pending.delete`): auth = `insert`. Deletes a single pending media that belongs to the user's draft for that token; `404` if not found.
 -   `POST /app/crud/media/claim/{module}/{entity}/{id}` (`claim`): auth = the entity's **`update`** permission **plus the row-level ACL** on the target `{id}` record. Body: `token` (required uuid). Moves every pending media of the user's draft onto the real record (Spatie `move()`), targeting each media's stored `target_collection` (fallback `images`), then deletes the emptied draft and returns the moved media grouped by collection. A missing/foreign token moves nothing and returns empty `data` (not an error).
 
-The literal-prefixed `pending`/`claim` routes are registered **before** the generic `{module}/{entity}/{id?}` routes so they win by registration order. Stale drafts (and their staged media) are pruned by the `core:prune-media-drafts` command, scheduled daily; the TTL is the `media.draft_ttl_hours` setting (`config('core.media.draft_ttl_hours')`, group `media`, default `24`, a stored `0` reads as `1`).
+The literal-prefixed `pending`/`claim` routes are registered **before** the generic `{module}/{entity}/{id?}` routes so they win by registration order. Stale drafts (and their staged media) are pruned by the `core:prune-media-drafts` command, scheduled daily; the TTL is the `media.draft_ttl_hours` setting (`config('core.media.draft_ttl_hours')`, group `media`, default `24`, `0` or a negative value disables pruning).
 
 ### Media search
 
@@ -587,7 +587,7 @@ stays name-based. `SettingsCacheCoordinator` exposes `flushGroup()`, `flushGroup
 saving a row also syncs runtime config. Reach for `flushAll()` only when a change genuinely crosses
 every group.
 
-Three timing values are settings, seeded by `CoreDatabaseSeeder`, all integers read with a floor of 1 (a stored `0` or negative reads as `1`, never as a disabled window or an instant expiry): `validity.expiring_within_hours` (group `validity`, default `48`: window of the `HasValidity::expiring()` scope when neither the argument nor the model's `$expiring_within_hours` names one), `filament.tabs_counts_ttl_seconds` (group `filament`, default `60`: cache TTL of the tab counts of the Modifications list and of the filter options of the Permissions and Settings lists) and `media.draft_ttl_hours` (group `media`, default `24`: pending-media draft lifetime).
+Three timing values are settings, seeded by `CoreDatabaseSeeder`, all integers. The first two are read with a floor of 1 (a stored `0` or negative reads as `1`, never as a disabled window or an instant expiry); `media.draft_ttl_hours` keeps its retention meaning, `0` or a negative value disables pruning: `validity.expiring_within_hours` (group `validity`, default `48`: window of the `HasValidity::expiring()` scope when neither the argument nor the model's `$expiring_within_hours` names one), `filament.tabs_counts_ttl_seconds` (group `filament`, default `60`: cache TTL of the tab counts of the Modifications list and of the filter options of the Permissions and Settings lists) and `media.draft_ttl_hours` (group `media`, default `24`: pending-media draft lifetime).
 
 The Settings UI exposes only genuinely configurable rows. Class-forced DIFF strategies are intentionally absent even if stale rows remain in the database.
 

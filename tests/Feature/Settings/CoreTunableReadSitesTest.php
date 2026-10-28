@@ -113,14 +113,17 @@ it('prunes media drafts older than the stored TTL and keeps newer ones', functio
         ->and(MediaDraft::query()->whereKey($fresh->getKey())->exists())->toBeTrue();
 });
 
-it('reads a stored zero media draft TTL as one hour, never as no pruning', function (): void {
-    core_store_setting('media.draft_ttl_hours', 0);
+it('prunes no media draft when the stored TTL is zero or negative', function (int $stored): void {
+    core_store_setting('media.draft_ttl_hours', $stored);
 
-    $stale = MediaDraft::factory()->create(['created_at' => now()->subHours(2)]);
+    $old = MediaDraft::factory()->create(['created_at' => now()->subYears(2)]);
     $fresh = MediaDraft::factory()->create(['created_at' => now()->subMinutes(30)]);
 
     Artisan::call('core:prune-media-drafts');
 
-    expect(MediaDraft::query()->whereKey($stale->getKey())->exists())->toBeFalse()
+    expect(MediaDraft::query()->whereKey($old->getKey())->exists())->toBeTrue()
         ->and(MediaDraft::query()->whereKey($fresh->getKey())->exists())->toBeTrue();
-});
+})->with([
+    'zero' => 0,
+    'negative' => -5,
+]);
