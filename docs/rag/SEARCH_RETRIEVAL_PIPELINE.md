@@ -43,7 +43,7 @@ the requested mode produces the cheaper result and says why, in `meta['search'][
 | `degraded_reason` | Cause |
 |-------------------|-------|
 | `mode_unavailable` | no installed module offers the requested mode (Core's resolver) |
-| `search_orchestration_disabled` | the AI overlay is switched off (`AI_SEARCH_ORCHESTRATION_ENABLED=false`) |
+| `search_orchestration_disabled` | the AI overlay is switched off by the Setting `features.search_orchestration.enabled` of the AI module (Filament, Settings) |
 | `embedder_unavailable` | the embedding service could not be built |
 | `deep_unavailable` | the LLM components could not be built |
 | `rate_limited` | the person started more deep searches than `search.deep_per_minute` allows |
@@ -434,7 +434,7 @@ overlay):
    `app(Modules\Core\Search\Contracts\ITextEmbedder::class)->embed($query)`, each wrapped in `hrtime()`. Measured
    on 2026-10-09 on a 1 vCPU test server: 23 to 60 s per LLM call, about 80 ms per warm embedding; see the
    *Measurements* section of `2026-09-16-search-modes-and-strategy-resolution-design.md`. The timeout of an LLM
-   call in a search is `AI_SEARCH_LLM_TIMEOUT` (10 s).
+   call in a search is the Setting `features.search_orchestration.timeout` of the AI module (10 s by default, 0 = no limit).
 4. Reranking runs only when the plan or the `search.reranker.enabled` setting asks for it: the
    `reranked` line says whether the `ensemble_ms` figure includes it.
 
