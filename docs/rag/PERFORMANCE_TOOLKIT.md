@@ -14,6 +14,7 @@ BenchmarkRunner     # runs an operation N times (+warmup), timing + query count
 EndpointProfiler    # dispatches real requests through the HTTP kernel
 CachegrindParser    # ranks functions by self-cost from an Xdebug profile
 SubprocessBootSampler / BootSampler  # cold-boot samples via fresh processes
+BootTime            # boot duration: LARAVEL_START to providers booted
 ```
 
 All live in `Modules\Core\Performance` (+ the `BootSampler` contract in
@@ -75,6 +76,12 @@ untrustworthy.
 ```bash
 php artisan perf:boot --runs=30
 ```
+
+Boot means from `LARAVEL_START` to the instant every service provider has
+booted (`BootTime`, recorded by `CoreServiceProvider` in a `booted` callback).
+The `BOOT` badge printed by benchmarked commands and seeders uses the same
+measure, so a nested command reports the real boot: `db:seed` under
+`migrate:fresh --seed` does not count the migrations that ran before it.
 
 ## Interpreting results — what the baseline showed
 

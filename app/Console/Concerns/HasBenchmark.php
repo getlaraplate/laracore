@@ -9,6 +9,7 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Modules\Core\Performance\BootTime;
 use Throwable;
 
 trait HasBenchmark
@@ -52,7 +53,7 @@ trait HasBenchmark
         }
 
         if (! $this->bootTime) {
-            $this->bootTime = defined('LARAVEL_START') && LARAVEL_START ? microtime(true) - LARAVEL_START : 0;
+            $this->bootTime = BootTime::seconds(app());
         }
 
         $this->benchmarkStartTime = microtime(true);

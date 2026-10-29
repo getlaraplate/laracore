@@ -7,6 +7,7 @@ use Modules\Core\Overrides\Seeder;
 
 afterEach(function (): void {
     putenv(Seeder::PARALLEL_BATCH_WORKER_ENV);
+    app()->forgetInstance(Seeder::RUN_BENCHMARK_BINDING);
 });
 
 it('constructs with DatabaseManager', function (): void {
@@ -112,4 +113,21 @@ it('destructor skips endBenchmark when parallel batch worker env is set', functi
     $seeder->__destruct();
 
     expect($seeder->benchmarkEnded)->toBeFalse();
+});
+
+it('constructor skips its benchmark inside a seeding run benchmark', function (): void {
+    config()->set('app.debug', true);
+    app()->instance(Seeder::RUN_BENCHMARK_BINDING, true);
+
+    $seeder = new class(app(DatabaseManager::class)) extends Seeder
+    {
+        public function run(): void {}
+
+        public function hasBenchmarkStarted(): bool
+        {
+            return $this->benchmarkStartTime !== null;
+        }
+    };
+
+    expect($seeder->hasBenchmarkStarted())->toBeFalse();
 });

@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Collection;
 use LogicException;
 use Modules\Core\Models\Concerns\HasApprovals;
+use Modules\Core\Seeding\ReconciliationOutcome;
 use ReflectionClass;
 
 trait HasSeedersUtils
@@ -167,5 +168,33 @@ trait HasSeedersUtils
         $already_exists = $model::query()->exists();
         $table = new ReflectionClass($model)->newInstanceWithoutConstructor()->getTable();
         $this->command?->line('  ' . ($already_exists ? 'Updating' : 'Creating') . ' default <fg=cyan;options=bold>' . $table . '</>');
+    }
+
+    /**
+     * Print the line that closes a step opened by {@see logOperation()}: `nothing to update` when the
+     * step changed no row, otherwise how many rows it created, realigned and left unchanged. Every
+     * seeder reports through here, so a re-seed prints one line per step whatever the step seeds.
+     */
+    protected function logOutcome(int $created, int $realigned = 0, int $unchanged = 0): void
+    {
+        if ($created === 0 && $realigned === 0) {
+            $this->command?->line('    - nothing to update');
+
+            return;
+        }
+
+        $this->command?->line("    - created {$created}, realigned {$realigned}, unchanged {$unchanged}");
+    }
+
+    /**
+     * {@see logOutcome()} for a reconciled definition: a restored row was realigned to its definition.
+     */
+    protected function logReconciliation(ReconciliationOutcome $outcome): void
+    {
+        $this->logOutcome(
+            count($outcome->created),
+            count($outcome->realigned) + count($outcome->restored),
+            $outcome->unchanged,
+        );
     }
 }

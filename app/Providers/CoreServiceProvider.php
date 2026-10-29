@@ -101,6 +101,7 @@ use Modules\Core\Overrides\PostgresConnection;
 use Modules\Core\Overrides\QueueMonitorCommand;
 use Modules\Core\Overrides\RouteListCommand;
 use Modules\Core\Overrides\StatusCommand;
+use Modules\Core\Performance\BootTime;
 use Modules\Core\Performance\SubprocessBootSampler;
 use Modules\Core\Search\Contracts\IProfileVectorIndex;
 use Modules\Core\Search\DeferredSearchIndexing;
@@ -162,6 +163,8 @@ final class CoreServiceProvider extends ModuleServiceProvider
     public function boot(): void
     {
         parent::boot();
+
+        BootTime::recordBootedAt($this->app);
 
         // HTTP requests get the overlay from ApplyDatabaseSettingsOverlay instead: a
         // long-lived worker boots once, so an overlay applied here would freeze

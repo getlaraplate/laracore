@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Database\Seeders\Concerns\HasSeedersUtils;
 use Modules\Core\Models\User;
+use Modules\Core\Seeding\ReconciliationOutcome;
 use Modules\Core\Tests\Stubs\Seeders\SeedersApprovalBulkStubModel;
 use Modules\Core\Tests\Stubs\Seeders\SeedersRelationParentStubModel;
 use Modules\Core\Tests\Stubs\Seeders\SeedersRelationTagStubModel;
@@ -373,4 +374,33 @@ it('logOperation writes creating/updating output', function (): void {
     $seeder->runLogOperation(SeedersRelationTagStubModel::class);
     SeedersRelationTagStubModel::query()->create(['name' => 'already']);
     $seeder->runLogOperation(SeedersRelationTagStubModel::class);
+});
+
+it('logOutcome prints nothing to update when the step changed no row', function (): void {
+    $seeder = new SeedersUtilsTestSeeder;
+    $command = Mockery::mock(Illuminate\Console\Command::class);
+    $command->shouldReceive('line')->once()->with('    - nothing to update');
+    $seeder->setCommandForTests($command);
+
+    $seeder->runLogOutcome(0, 0, 12);
+});
+
+it('logOutcome prints the counts when the step created or realigned rows', function (): void {
+    $seeder = new SeedersUtilsTestSeeder;
+    $command = Mockery::mock(Illuminate\Console\Command::class);
+    $command->shouldReceive('line')->once()->with('    - created 2, realigned 0, unchanged 5');
+    $command->shouldReceive('line')->once()->with('    - created 0, realigned 1, unchanged 3');
+    $seeder->setCommandForTests($command);
+
+    $seeder->runLogOutcome(2, 0, 5);
+    $seeder->runLogOutcome(0, 1, 3);
+});
+
+it('logReconciliation counts restored rows as realigned', function (): void {
+    $seeder = new SeedersUtilsTestSeeder;
+    $command = Mockery::mock(Illuminate\Console\Command::class);
+    $command->shouldReceive('line')->once()->with('    - created 1, realigned 2, unchanged 4');
+    $seeder->setCommandForTests($command);
+
+    $seeder->runLogReconciliation(new ReconciliationOutcome(created: ['a'], realigned: ['b'], restored: ['c'], unchanged: 4));
 });

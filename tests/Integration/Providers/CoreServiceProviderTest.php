@@ -15,6 +15,7 @@ use Modules\Core\Http\Controllers\DocsController;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Locking\Locked;
 use Modules\Core\Models\CronJob;
+use Modules\Core\Performance\BootTime;
 use Modules\Core\Providers\CoreServiceProvider;
 use Modules\Core\Providers\FortifyServiceProvider;
 use Modules\Core\Providers\RouteServiceProvider;
@@ -536,3 +537,8 @@ function scheduledCronProbe(): Illuminate\Console\Scheduling\Event
 
     return $events[0];
 }
+
+it('records the instant the framework finished booting', function (): void {
+    expect(app()->bound(BootTime::BOOTED_AT_BINDING))->toBeTrue()
+        ->and(app(BootTime::BOOTED_AT_BINDING))->toBeFloat()->toBeLessThanOrEqual(microtime(true));
+});

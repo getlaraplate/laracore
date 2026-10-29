@@ -541,6 +541,24 @@ via `ValueComparator::equal()` (which normalizes JSON key order, numeric-string 
 `BackedEnum` vs. its backing value so none of those read as drift). `seeded_value IS NULL` means the
 seeder never wrote that row — for example, a row created before this column existed.
 
+### Seeder console output
+
+A seeder prints one header and one line per step, whatever the step seeds. `logOperation($model)`
+opens the step (`Creating default <table>` or `Updating default <table>`); `logOutcome($created,
+$realigned, $unchanged)` closes it with `nothing to update` when no row changed, otherwise with the
+three counts. `logReconciliation($outcome)` does the same for a `ReconciliationOutcome`, counting
+restored rows as realigned. Both come from `HasSeedersUtils`, so a module seeder extending
+`Modules\Core\Overrides\Seeder` reports in the same shape as Core. Row names are not printed. The
+only detail beyond the counts is the superadmin password, shown once, when that user is created.
+Warnings about a missing prerequisite (a role or permission a step needs) are still printed.
+
+With `APP_DEBUG` on, `db:seed` and `module:seed` print one benchmark line (`⚡ BOOT … TIME … MEM …
+SQL …`) at the end of the run, with the totals of every seeder and of the nested `db:seed` calls.
+The outermost of the two commands owns it (`BenchmarksSeedingRun`): while it runs, the
+`Seeder::RUN_BENCHMARK_BINDING` key is bound and a seeder skips its own benchmark. A seeder run
+outside these commands, for example from a test, still benchmarks itself. Queries are counted by
+a listener, not by the query log, so a long dev seed does not hold every query in memory.
+
 ### Cleanup by module state
 
 `SettingsCleaner::clean()` runs once, after every node in the graph has succeeded, and only ever
@@ -853,11 +871,7 @@ vendor/bin/phpstan analyse --memory-limit=4G --generate-baseline phpstan-baselin
 
 ### Version Management
 
-Releases are run from the application, not from the module. From the `laraplate` root:
-
-```bash
-composer run version:minor Core   # or version:major / version:patch, see docs/releasing.md
-```
+Releases are cut by the maintainers with private tooling; do not bump versions or edit `CHANGELOG.md` by hand.
 
 ### Plan status
 

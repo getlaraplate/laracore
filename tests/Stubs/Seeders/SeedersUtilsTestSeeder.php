@@ -9,6 +9,7 @@ use Illuminate\Database\Seeder as BaseSeeder;
 use Illuminate\Support\Collection;
 use Modules\Core\Database\Seeders\Concerns\HasSeedersUtils;
 use Modules\Core\Models\User;
+use Modules\Core\Seeding\ReconciliationOutcome;
 use Modules\Core\Tests\Stubs\SeedersBulkStubModel;
 
 final class SeedersUtilsTestSeeder extends BaseSeeder
@@ -113,6 +114,16 @@ final class SeedersUtilsTestSeeder extends BaseSeeder
     public function runLogOperation(string $model): void
     {
         $this->logOperation($model);
+    }
+
+    public function runLogOutcome(int $created, int $realigned = 0, int $unchanged = 0): void
+    {
+        $this->logOutcome($created, $realigned, $unchanged);
+    }
+
+    public function runLogReconciliation(ReconciliationOutcome $outcome): void
+    {
+        $this->logReconciliation($outcome);
     }
 
     public function setCommandForTests(Command $command): void
