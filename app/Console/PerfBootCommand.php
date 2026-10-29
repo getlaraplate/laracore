@@ -7,6 +7,7 @@ namespace Modules\Core\Console;
 use Modules\Core\Contracts\BootSampler;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Performance\BenchmarkStats;
+use Modules\Core\Performance\BootTime;
 use Override;
 
 /**
@@ -29,7 +30,7 @@ final class PerfBootCommand extends Command
     public function handle(BootSampler $sampler): int
     {
         if ((bool) $this->option('child')) {
-            $ms = defined('LARAVEL_START') ? (microtime(true) - LARAVEL_START) * 1000 : 0.0;
+            $ms = BootTime::seconds($this->laravel) * 1000;
             $this->output->writeln('BOOT_MS=' . sprintf('%.3f', $ms));
 
             return self::SUCCESS;
