@@ -541,6 +541,17 @@ via `ValueComparator::equal()` (which normalizes JSON key order, numeric-string 
 `BackedEnum` vs. its backing value so none of those read as drift). `seeded_value IS NULL` means the
 seeder never wrote that row — for example, a row created before this column existed.
 
+### Seeder console output
+
+A seeder prints one header and one line per step, whatever the step seeds. `logOperation($model)`
+opens the step (`Creating default <table>` or `Updating default <table>`); `logOutcome($created,
+$realigned, $unchanged)` closes it with `nothing to update` when no row changed, otherwise with the
+three counts. `logReconciliation($outcome)` does the same for a `ReconciliationOutcome`, counting
+restored rows as realigned. Both come from `HasSeedersUtils`, so a module seeder extending
+`Modules\Core\Overrides\Seeder` reports in the same shape as Core. Row names are not printed. The
+only detail beyond the counts is the superadmin password, shown once, when that user is created.
+Warnings about a missing prerequisite (a role or permission a step needs) are still printed.
+
 ### Cleanup by module state
 
 `SettingsCleaner::clean()` runs once, after every node in the graph has succeeded, and only ever
