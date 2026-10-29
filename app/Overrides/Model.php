@@ -23,7 +23,12 @@ abstract class Model extends BaseModel implements ISoftDeletableModel
     use HasValidations;
     use HasVersions;
     use ReturnsVersionedRelations;
-    use SoftDeletes;
+    use SoftDeletes {
+        HasVersions::delete insteadof SoftDeletes;
+        HasVersions::forceDelete insteadof SoftDeletes;
+        SoftDeletes::delete as protected deleteWithTheBin;
+        SoftDeletes::forceDelete as protected forceDeleteWithTheBin;
+    }
 
     // /**
     //  * Attribute payload used by {@see HasValidations::validateWithRules}. Overridden when
@@ -35,4 +40,20 @@ abstract class Model extends BaseModel implements ISoftDeletableModel
     // {
     //     return $this->getAttributes();
     // }
+
+    /**
+     * Deletes through the bin inside the revision scope opened by {@see HasVersions::delete()}.
+     */
+    protected function deleteRecord(): ?bool
+    {
+        return $this->deleteWithTheBin();
+    }
+
+    /**
+     * Force-deletes through the bin inside the revision scope opened by {@see HasVersions::forceDelete()}.
+     */
+    protected function forceDeleteRecord(): ?bool
+    {
+        return $this->forceDeleteWithTheBin();
+    }
 }

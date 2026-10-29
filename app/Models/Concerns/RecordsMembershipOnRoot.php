@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Support\Arr;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionStrategy;
+use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\Data\RelationDescriptor;
 use Modules\Core\Versioning\Data\VersionChange;
@@ -48,6 +49,12 @@ trait RecordsMembershipOnRoot
         }
 
         [$root, $descriptor, $subject_id] = $membership;
+
+        // A link removed by its root's hard delete is in the root's snapshot set already (D54).
+        if (resolve(VersionSetManagerInterface::class)->isBeingHardDeleted($root)) {
+            return;
+        }
+
         $contents = $type === VersionChangeType::Deleted ? [] : Arr::only($this->getAttributes(), $descriptor->pivotColumns);
 
         if ($type === VersionChangeType::Updated && $contents === Arr::only($this->getRawOriginal(), $descriptor->pivotColumns)) {

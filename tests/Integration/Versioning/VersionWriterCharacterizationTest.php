@@ -140,19 +140,17 @@ it('encrypts sensitive values in both sides of an update', function (): void {
         ->and($version->contents['title'])->not->toBe('After secret');
 });
 
-it('captures deletion before the row disappears and keeps history on force delete', function (): void {
+it('captures deletion before the row disappears and keeps only its snapshot on force delete (D17)', function (): void {
     $article = SoftDeletedVersionedArticle::query()->create(['title' => 'First']);
     $article->updateOrFail(['title' => 'Second']);
-    $history_before_delete = Version::query()->count();
 
     $article->forceDelete();
 
-    $deletion = Version::query()->latest('id')->firstOrFail();
+    $deletion = Version::query()->sole();
 
     expect($deletion->change_type)->toBe(VersionChangeType::Deleted)
         ->and($deletion->original_contents)->toBe(['title' => 'Second'])
-        ->and($deletion->contents)->toBe([])
-        ->and(Version::query()->count())->toBe($history_before_delete + 1);
+        ->and($deletion->contents)->toBe([]);
 });
 
 it('records restore as a restored row of deleted_at without a duplicate lifecycle row', function (): void {

@@ -16,7 +16,10 @@ use Modules\Core\Models\Concerns\HasVersions;
 final class VersionedDocument extends Model
 {
     use HasVersions;
-    use SoftDeletes;
+    use SoftDeletes {
+        HasVersions::forceDelete insteadof SoftDeletes;
+        SoftDeletes::forceDelete as protected forceDeleteWithTheBin;
+    }
 
     public const string TABLE = 'core_test_versioned_documents';
 
@@ -29,5 +32,13 @@ final class VersionedDocument extends Model
     public function useVersionStrategy(VersionStrategy $strategy): void
     {
         $this->versionStrategy = $strategy;
+    }
+
+    /**
+     * Force-deletes through the bin inside the revision scope opened by {@see HasVersions::forceDelete()}.
+     */
+    protected function forceDeleteRecord(): ?bool
+    {
+        return $this->forceDeleteWithTheBin();
     }
 }

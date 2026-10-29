@@ -54,7 +54,12 @@ final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEm
     use Searchable {
         Searchable::toSearchableArray as private toSearchableArrayTrait;
     }
-    use SoftDeletes;
+    use SoftDeletes {
+        HasVersions::delete insteadof SoftDeletes;
+        HasVersions::forceDelete insteadof SoftDeletes;
+        SoftDeletes::delete as protected deleteWithTheBin;
+        SoftDeletes::forceDelete as protected forceDeleteWithTheBin;
+    }
 
     /**
      * The single embeddable attribute is a computed accessor composing the Core
@@ -266,6 +271,22 @@ final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEm
         $expirationDays = config('core.soft_deletes.expiration_days');
 
         return $this->trashed() && $expirationDays ? $this->{self::getDeletedAtColumn()}->addDays($expirationDays) : null;
+    }
+
+    /**
+     * Deletes through the bin inside the revision scope opened by {@see HasVersions::delete()}.
+     */
+    protected function deleteRecord(): ?bool
+    {
+        return $this->deleteWithTheBin();
+    }
+
+    /**
+     * Force-deletes through the bin inside the revision scope opened by {@see HasVersions::forceDelete()}.
+     */
+    protected function forceDeleteRecord(): ?bool
+    {
+        return $this->forceDeleteWithTheBin();
     }
 
     /**

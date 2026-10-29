@@ -80,7 +80,12 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
     }
     use Notifiable;
     use PasskeyAuthenticatable;
-    use SoftDeletes;
+    use SoftDeletes {
+        HasVersions::delete insteadof SoftDeletes;
+        HasVersions::forceDelete insteadof SoftDeletes;
+        SoftDeletes::delete as protected deleteWithTheBin;
+        SoftDeletes::forceDelete as protected forceDeleteWithTheBin;
+    }
     use TwoFactorAuthenticatable;
 
     #[Override]
@@ -657,6 +662,22 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
     protected function getDefaultGuardName(): string
     {
         return 'web';
+    }
+
+    /**
+     * Deletes through the bin inside the revision scope opened by {@see HasVersions::delete()}.
+     */
+    protected function deleteRecord(): ?bool
+    {
+        return $this->deleteWithTheBin();
+    }
+
+    /**
+     * Force-deletes through the bin inside the revision scope opened by {@see HasVersions::forceDelete()}.
+     */
+    protected function forceDeleteRecord(): ?bool
+    {
+        return $this->forceDeleteWithTheBin();
     }
 
     /**

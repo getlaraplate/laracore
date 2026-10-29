@@ -37,7 +37,12 @@ final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
         getRules as private getRulesTrait;
     }
     use HasVersions;
-    use SoftDeletes;
+    use SoftDeletes {
+        HasVersions::delete insteadof SoftDeletes;
+        HasVersions::forceDelete insteadof SoftDeletes;
+        SoftDeletes::delete as protected deleteWithTheBin;
+        SoftDeletes::forceDelete as protected forceDeleteWithTheBin;
+    }
 
     /**
      * @var string
@@ -210,6 +215,22 @@ final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
             'created_at' => 'immutable_datetime',
             'updated_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Deletes through the bin inside the revision scope opened by {@see HasVersions::delete()}.
+     */
+    protected function deleteRecord(): ?bool
+    {
+        return $this->deleteWithTheBin();
+    }
+
+    /**
+     * Force-deletes through the bin inside the revision scope opened by {@see HasVersions::forceDelete()}.
+     */
+    protected function forceDeleteRecord(): ?bool
+    {
+        return $this->forceDeleteWithTheBin();
     }
 
     /**

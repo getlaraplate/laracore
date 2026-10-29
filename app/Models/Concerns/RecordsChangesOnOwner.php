@@ -92,6 +92,17 @@ trait RecordsChangesOnOwner
     }
 
     /**
+     * The fields of this part that are its owner's state, as they are now: the locale's row of the owner's snapshot
+     * set at a hard delete (D55).
+     *
+     * @return array<string, mixed>
+     */
+    public function imageOnOwner(): array
+    {
+        return $this->ownerImage($this->getAttributes());
+    }
+
+    /**
      * @param  list<string>  $dirtyKeys
      */
     private function captureForOwner(array $dirtyKeys): void
@@ -108,7 +119,8 @@ trait RecordsChangesOnOwner
         $this->pending_owner_change = null;
         $owner = $this->versionedOwner();
 
-        if (! $owner instanceof Model) {
+        // A part removed by its owner's hard delete is in the owner's snapshot set already (D54).
+        if (! $owner instanceof Model || resolve(VersionSetManagerInterface::class)->isBeingHardDeleted($owner)) {
             return;
         }
 
