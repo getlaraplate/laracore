@@ -100,6 +100,12 @@ final class VersionSetManager implements VersionSetManagerInterface
     }
 
     #[Override]
+    public function isBeingHardDeleted(Model $root): bool
+    {
+        return $this->scope?->find(VersionSetRoot::forModel($root))?->isBeingHardDeleted() ?? false;
+    }
+
+    #[Override]
     public function current(): ?ActiveVersionSet
     {
         return $this->scope?->current();

@@ -23,6 +23,7 @@ use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Locking\Exceptions\LockedModelException;
+use Modules\Core\Models\RecordOrigin;
 use Modules\Core\Models\Version;
 use Modules\Core\Services\PerModelSettingResolver;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
@@ -30,6 +31,7 @@ use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\Data\VersionChange;
 use Modules\Core\Versioning\Data\VersionSetOptions;
 use Modules\Core\Versioning\Data\VersionSetRoot;
+use Modules\Core\Versioning\HardDeleteCoordinator;
 use Modules\Core\Versioning\NeverVersionedModels;
 
 // use Illuminate\Database\Eloquent\Relations\Pivot;
@@ -441,6 +443,26 @@ trait HasVersions
     }
 
     /**
+     * Deletes the model inside its revision scope: the lock check, the delete, the events it fires and their history
+     * commit together, and a delete refused or failed leaves everything as it was (D44). A pivot returns the number of
+     * rows it deleted, as Eloquent's pivot does.
+     */
+    public function delete(): bool|int|null
+    {
+        return $this->deleteInRevisionScope($this->deleteRecord(...), force: false);
+    }
+
+    /**
+     * Force-deletes the model inside its revision scope, as {@see self::delete()}.
+     */
+    public function forceDelete(): ?bool
+    {
+        $deleted = $this->deleteInRevisionScope($this->forceDeleteRecord(...), force: true);
+
+        return is_int($deleted) ? $deleted > 0 : $deleted;
+    }
+
+    /**
      * Groups several writes of this root in one revision: the importers, a loop over locales (D28). The options name
      * the revision's reason and actor; by default the actor is the record's own author.
      */
@@ -622,6 +644,23 @@ trait HasVersions
         );
     }
 
+    /**
+     * The delete the revision scope wraps: Eloquent's own. A model with a bin takes the trait's `delete()` instead of
+     * its bin's, aliases the bin's method and overrides this to call it.
+     */
+    protected function deleteRecord(): bool|int|null
+    {
+        return parent::delete();
+    }
+
+    /**
+     * The force delete the revision scope wraps, overridden by a model with a bin as {@see self::deleteRecord()}.
+     */
+    protected function forceDeleteRecord(): ?bool
+    {
+        return parent::forceDelete();
+    }
+
     private function capturePendingVersionUpdate(): void
     {
         $this->pending_version_update = null;
@@ -714,6 +753,11 @@ trait HasVersions
         }
 
         if ($pending['mode'] === 'hard') {
+            // The coordinator writes the root's row of the snapshot set itself (D54).
+            if (app(VersionSetManagerInterface::class)->isBeingHardDeleted($this)) {
+                return;
+            }
+
             resolve(VersionWriterInterface::class)->write(new VersionChange(
                 model: $this,
                 type: VersionChangeType::Deleted,
@@ -776,6 +820,100 @@ trait HasVersions
             && in_array($deleted_at_column, $keys, true)
             && $this->getRawOriginal($deleted_at_column) !== null
             && $this->getAttributes()[$deleted_at_column] === null;
+    }
+
+    /**
+     * Runs a delete inside the root's revision scope; a delete that removes the row goes through the hard-delete
+     * coordinator, which reads the aggregate first (D44). The `delete()` a bin's force delete calls in turn is
+     * already inside the coordinator and runs as it is.
+     *
+     * @param  Closure(): (bool|int|null)  $delete
+     */
+    private function deleteInRevisionScope(Closure $delete, bool $force): bool|int|null
+    {
+        if (! $this->exists || ! static::$versioning || $this->getVersionStrategy() === false) {
+            return $delete();
+        }
+
+        $manager = app(VersionSetManagerInterface::class);
+
+        if ($manager->isBeingHardDeleted($this)) {
+            return $delete();
+        }
+
+        $hard = $force || $this->isHardDelete();
+        $operation = $hard
+            ? fn (): bool|int|null => app(HardDeleteCoordinator::class)->delete($this, $this->hardDeleteSnapshot(), $delete)
+            : $delete;
+
+        return $manager->run(
+            VersionSetRoot::forModel($this),
+            $operation,
+            $manager->current() === null
+                ? new VersionSetOptions(reason: $hard ? HardDeleteCoordinator::MANUAL_REASON : null, actor: $this->getVersionUserId())
+                : null,
+        );
+    }
+
+    /**
+     * The aggregate as the hard delete finds it, in the rows of the snapshot set (D55): the root's image, one row per
+     * locale, one per link of a registered relation with its authoritative pivot columns, one per origin. Read after
+     * the scope locked the root, before the delete and its cascades remove the parts.
+     *
+     * @return list<VersionChange>
+     */
+    private function hardDeleteSnapshot(): array
+    {
+        $snapshot = [
+            $this->snapshotRow(VersionChange::encryptSelected($this->filterVersionableImage($this->getRawOriginal()), $this->encryptedVersionable)),
+        ];
+
+        if (method_exists($this, 'translations')) {
+            $translations = $this->translations();
+            $parent_key = $translations->getForeignKeyName();
+
+            foreach ($translations->withoutGlobalScopes()->orderBy($translations->getRelated()->getKeyName())->get() as $translation) {
+                $image = method_exists($translation, 'imageOnOwner')
+                    ? $translation->imageOnOwner()
+                    : Arr::except($translation->getAttributes(), [$translation->getKeyName(), $parent_key, 'locale', 'created_at', 'updated_at']);
+                $snapshot[] = $this->snapshotRow($image, 'translations', ['locale' => $translation->getAttribute('locale')]);
+            }
+        }
+
+        if (method_exists($this, 'currentVersionedMembership')) {
+            foreach ($this->currentVersionedMembership() as $link) {
+                $snapshot[] = $this->snapshotRow($link['pivot'], $link['relation'], ['id' => $link['id']]);
+            }
+        }
+
+        $origin = new RecordOrigin;
+        $origin->setConnection($this->getConnectionName());
+        $origin_fields = array_values(array_diff($origin->getFillable(), ['referable_type', 'referable_id']));
+
+        foreach ($origin->newQuery()->where('referable_type', $this->getMorphClass())->where('referable_id', $this->getKey())->orderBy('id')->get() as $record_origin) {
+            $snapshot[] = $this->snapshotRow(Arr::only($record_origin->getAttributes(), $origin_fields), 'origin', ['id' => $record_origin->getKey()]);
+        }
+
+        return $snapshot;
+    }
+
+    /**
+     * @param  array<string, mixed>  $image
+     * @param  array<string, mixed>|null  $subjectKey
+     */
+    private function snapshotRow(array $image, ?string $relationPath = null, ?array $subjectKey = null): VersionChange
+    {
+        return new VersionChange(
+            model: $this,
+            type: VersionChangeType::Deleted,
+            originalContents: $image,
+            contents: [],
+            strategy: VersionStrategy::SNAPSHOT,
+            userId: $this->getVersionUserId(),
+            encryptedAttributes: $relationPath === null ? $this->encryptedVersionable : [],
+            relationPath: $relationPath,
+            subjectKey: $subjectKey,
+        );
     }
 
     /**

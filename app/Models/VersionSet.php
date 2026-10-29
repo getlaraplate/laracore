@@ -13,6 +13,22 @@ use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionSetKind;
 use Override;
 
+/**
+ * One revision of a versioned root: the rows it wrote, in the order of their sequence.
+ *
+ * @property int $id
+ * @property string $uuid
+ * @property string|null $root_type
+ * @property string|null $root_id
+ * @property string|null $root_connection_ref
+ * @property string|null $root_table_ref
+ * @property int|null $user_id
+ * @property VersionSetKind $kind
+ * @property VersionCaptureQuality $capture
+ * @property string|null $reason
+ * @property int|null $reverted_from_set_id
+ * @property \Carbon\CarbonImmutable|null $created_at
+ */
 final class VersionSet extends Model
 {
     /**

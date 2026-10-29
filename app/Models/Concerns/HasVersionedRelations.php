@@ -6,6 +6,7 @@ namespace Modules\Core\Models\Concerns;
 
 use Closure;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Arr;
 use InvalidArgumentException;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
@@ -140,6 +141,38 @@ trait HasVersionedRelations
     public function versionedRelationMembership(string $relation): array
     {
         return $this->replayMembership($relation, null);
+    }
+
+    /**
+     * The links of every registered relation as the pivot tables hold them now, with their authoritative pivot
+     * columns: what a hard delete keeps in the snapshot set (D55).
+     *
+     * @return list<array{relation: string, id: int|string, pivot: array<string, mixed>}>
+     */
+    public function currentVersionedMembership(): array
+    {
+        $links = [];
+
+        foreach ($this->registeredRelations() as $descriptor) {
+            $relation = $this->{$descriptor->relation}();
+
+            if (! $relation instanceof BelongsToMany) {
+                continue;
+            }
+
+            $related_key = $relation->getRelatedPivotKeyName();
+
+            foreach ($relation->newPivotQuery()->orderBy($related_key)->get() as $row) {
+                $row = (array) $row;
+                $id = $row[$related_key] ?? null;
+
+                if (is_int($id) || is_string($id)) {
+                    $links[] = ['relation' => $descriptor->relation, 'id' => $id, 'pivot' => Arr::only($row, $descriptor->pivotColumns)];
+                }
+            }
+        }
+
+        return $links;
     }
 
     /**
