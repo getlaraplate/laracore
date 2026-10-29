@@ -6,6 +6,7 @@ namespace Modules\Core\Database\Seeders;
 
 use Illuminate\Support\Facades\Artisan;
 use Modules\Core\Overrides\Seeder;
+use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
 /**
@@ -21,9 +22,31 @@ final class PermissionRefreshSeeder extends Seeder
 {
     public function run(): void
     {
+        /** @var class-string<Permission> $permission_class */
+        $permission_class = config('permission.models.permission');
+
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $this->logOperation((string) config('permission.models.permission'));
+        $this->logOperation($permission_class);
+
+        $before = self::permissionKeys($permission_class);
         Artisan::call('permission:refresh');
-        $this->command?->line('    - permissions updated');
+        $after = self::permissionKeys($permission_class);
+
+        $kept = count(array_intersect_key($before, $after));
+
+        // A permission the refresh deleted realigns the table to the models, like a created one extends it.
+        $this->logOutcome(count($after) - $kept, count($before) - $kept, $kept);
+    }
+
+    /**
+     * @param  class-string<Permission>  $permission_class
+     * @return array<string, true>
+     */
+    private static function permissionKeys(string $permission_class): array
+    {
+        return $permission_class::query()
+            ->get(['name', 'guard_name'])
+            ->mapWithKeys(static fn (Permission $permission): array => ["{$permission->name}|{$permission->guard_name}" => true])
+            ->all();
     }
 }

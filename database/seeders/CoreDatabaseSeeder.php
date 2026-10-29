@@ -256,7 +256,7 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
         $new_roles = array_filter($roles_data, fn (array $role): bool => ! $this->groups->has(self::roleKey($role['name'], $role['guard_name'])));
 
         if ($new_roles === []) {
-            $this->command?->line('    - nothing to update');
+            $this->logOutcome(0, 0, count($roles_data));
 
             return;
         }
@@ -264,9 +264,10 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
         $role_instance->getConnection()->transaction(function () use ($role_class, $new_roles): void {
             foreach ($new_roles as &$role) {
                 $this->create($role_class, $role);
-                $this->command?->line("    - {$role['name']} ({$role['guard_name']}) <fg=green>created</>");
             }
         });
+
+        $this->logOutcome(count($new_roles), 0, count($roles_data) - count($new_roles));
 
         // Reload keyed roles so defaultUsers() sees IDs created in this transaction.
         $this->groups = $this->loadGroups($role_class, $names);
@@ -314,7 +315,7 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
         }
 
         if (ACL::query()->where('permission_id', $permission->id)->where('role_id', $guest->id)->exists()) {
-            $this->command?->line('    - settings guest ACL already exists');
+            $this->logOutcome(0, 0, 1);
 
             return;
         }
@@ -337,7 +338,7 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
         ]);
         $acl->save();
 
-        $this->command?->line('    - settings guest ACL <fg=green>created</>');
+        $this->logOutcome(1);
     }
 
     private function defaultUsers(): void
@@ -411,21 +412,24 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
         $new_users = array_filter($users_data, fn ($user) => ! isset($existing_users[$user['username']]));
 
         if ($new_users === []) {
-            $this->command?->line('    - nothing to update');
+            $this->logOutcome(0, 0, count($users_data));
 
             return;
         }
 
-        $user_instance->getConnection()->transaction(function () use ($user_class, $new_users, $superadmin): void {
+        $user_instance->getConnection()->transaction(function () use ($user_class, $new_users): void {
             foreach ($new_users as &$user) {
                 $this->create($user_class, $user);
-                $this->command?->line("    - {$user['username']} <fg=green>created</>");
-
-                if ($user['username'] === $superadmin) {
-                    $this->command?->line("      with password: {$user['password']}");
-                }
             }
         });
+
+        $this->logOutcome(count($new_users), 0, count($users_data) - count($new_users));
+
+        foreach ($new_users as $user) {
+            if ($user['username'] === $superadmin) {
+                $this->command?->line("    - {$user['username']} password: <fg=yellow;options=bold>{$user['password']}</>");
+            }
+        }
     }
 
     /**
@@ -566,11 +570,11 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
             );
 
             $created += count($outcome->created);
-            $realigned += count($outcome->realigned);
+            $realigned += count($outcome->realigned) + count($outcome->restored);
             $unchanged += $outcome->unchanged;
         }
 
-        $this->command?->line("    - created {$created}, realigned {$realigned}, unchanged {$unchanged}");
+        $this->logOutcome($created, $realigned, $unchanged);
     }
 
     /**
@@ -853,20 +857,24 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
         );
 
         if ($new_crons === []) {
-            $this->command?->line('    - nothing to update');
+            $this->logOutcome(0, 0, count($default_crons));
 
             return;
         }
 
-        $cron_job_model->getConnection()->transaction(function () use ($new_crons): void {
+        $created = $cron_job_model->getConnection()->transaction(function () use ($new_crons): int {
+            $created = 0;
+
             foreach ($new_crons as &$cron) {
                 if (! CronJob::query()->withoutGlobalScopes()->where('name', $cron['name'])->exists()) {
                     $this->create(CronJob::class, $cron);
-                    $this->command?->line("    - {$cron['name']} <fg=green>created</>");
-                } else {
-                    $this->command?->line("    - {$cron['name']} already exists");
+                    $created++;
                 }
             }
+
+            return $created;
         });
+
+        $this->logOutcome($created, 0, count($default_crons) - $created);
     }
 }
