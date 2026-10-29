@@ -218,5 +218,14 @@ trait SoftDeletes
         }
 
         $this->basePerformDeleteOnModel();
+
+        // is_deleted is generated from deleted_at by the database: an instance that read it back, as the revision
+        // scope does when it locks the row, would otherwise keep the value from before the delete.
+        $is_deleted_column = $this->getIsDeletedColumn();
+
+        if (array_key_exists($is_deleted_column, $this->attributes)) {
+            $this->attributes[$is_deleted_column] = true;
+            $this->syncOriginalAttribute($is_deleted_column);
+        }
     }
 }

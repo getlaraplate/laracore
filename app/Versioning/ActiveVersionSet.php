@@ -36,6 +36,12 @@ final class ActiveVersionSet
 
     private bool $translation_row_written = false;
 
+    /**
+     * Whether the hard-delete coordinator is deleting the root: what the delete itself writes stays out of the
+     * snapshot set (D54).
+     */
+    private bool $being_hard_deleted = false;
+
     public function __construct(
         private readonly VersionSetRoot $root,
         private readonly string $connection_name,
@@ -98,6 +104,16 @@ final class ActiveVersionSet
         if (! $this->version_set instanceof VersionSet && $this->options->kind === VersionSetKind::Change) {
             $this->stored_kind = VersionSetKind::Baseline;
         }
+    }
+
+    public function markBeingHardDeleted(bool $being_hard_deleted): void
+    {
+        $this->being_hard_deleted = $being_hard_deleted;
+    }
+
+    public function isBeingHardDeleted(): bool
+    {
+        return $this->being_hard_deleted;
     }
 
     public function nextSequence(): int

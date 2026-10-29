@@ -12,6 +12,12 @@ use Modules\Core\Versioning\Data\VersionSetRoot;
 
 interface VersionSetManagerInterface
 {
+    /**
+     * @template TResult
+     *
+     * @param  Closure(): TResult  $operation
+     * @return TResult
+     */
     public function run(
         VersionSetRoot $root,
         Closure $operation,
@@ -30,6 +36,11 @@ interface VersionSetManagerInterface
     public function setFor(Model $root): ActiveVersionSet;
 
     public function enlist(string $connection): void;
+
+    /**
+     * Whether the root is being deleted by the hard-delete coordinator inside the active scope (D54).
+     */
+    public function isBeingHardDeleted(Model $root): bool;
 
     public function current(): ?ActiveVersionSet;
 }

@@ -9,6 +9,7 @@ use Modules\Core\Console\ClearExpiredModels;
 use Modules\Core\Helpers\HelpersCache;
 use Modules\Core\Tests\Stubs\Models\ClearExpiredModelsNoSoftStub;
 use Modules\Core\Tests\Stubs\Models\ClearExpiredModelsSoftStub;
+use Modules\Core\Versioning\HardDeleteCoordinator;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
@@ -45,14 +46,14 @@ it('clears expired soft-deleted rows when configured and skips when disabled', f
 
     config(['core.soft_deletes.expiration_days' => 5]);
     $command = clearExpiredModelsCommandWithOutput(new ClearExpiredModels);
-    $command->handle();
+    $command->handle(app(HardDeleteCoordinator::class));
 
     expect(ClearExpiredModelsSoftStub::withTrashed()->whereKey(1)->exists())->toBeFalse()
         ->and(ClearExpiredModelsSoftStub::withTrashed()->whereKey(2)->exists())->toBeTrue()
         ->and(ClearExpiredModelsSoftStub::withTrashed()->whereKey(3)->exists())->toBeTrue();
 
     config(['core.soft_deletes.expiration_days' => null]);
-    $command->handle();
+    $command->handle(app(HardDeleteCoordinator::class));
 
     Schema::dropIfExists('clear_expired_no_soft_stubs');
     Schema::dropIfExists('clear_expired_soft_stubs');
