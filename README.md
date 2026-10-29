@@ -871,11 +871,7 @@ vendor/bin/phpstan analyse --memory-limit=4G --generate-baseline phpstan-baselin
 
 ### Version Management
 
-Releases are run from the application, not from the module. From the `laraplate` root:
-
-```bash
-composer run version:minor Core   # or version:major / version:patch, see docs/releasing.md
-```
+Releases are cut by the maintainers with private tooling; do not bump versions or edit `CHANGELOG.md` by hand.
 
 ### Plan status
 
