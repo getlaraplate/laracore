@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace Modules\Core\Versioning;
 
+use function class_uses_trait;
+
 use Closure;
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\VersionSet;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\Data\VersionChange;
+use Modules\Core\Versioning\Data\VersionSetOptions;
+use Modules\Core\Versioning\Data\VersionSetRoot;
 
 /**
  * Owns the hard delete of a versioned root, inside the revision scope its `delete()` or `forceDelete()` opened (D29,
@@ -24,10 +29,33 @@ final readonly class HardDeleteCoordinator
      */
     public const string MANUAL_REASON = 'manual';
 
+    /**
+     * The reason of a snapshot set written by the purge of a record left in the bin past its expiration (D35).
+     */
+    public const string EXPIRED_REASON = 'expired';
+
     public function __construct(
         private VersionSetManagerInterface $manager,
         private VersionWriterInterface $writer,
     ) {}
+
+    /**
+     * Deletes for good a record whose time in the bin expired, through its own `forceDelete()`: the record's events
+     * run, so its origin and embeddings leave with it, and a versioned record keeps one snapshot set with reason
+     * `expired` (D29).
+     */
+    public function purge(Model $record): bool
+    {
+        if (! class_uses_trait($record, HasVersions::class)) {
+            return (bool) $record->forceDelete();
+        }
+
+        return (bool) $this->manager->run(
+            VersionSetRoot::forModel($record),
+            static fn (): ?bool => $record->forceDelete(),
+            new VersionSetOptions(reason: self::EXPIRED_REASON),
+        );
+    }
 
     /**
      * @param  list<VersionChange>  $snapshot  the aggregate as it was before the delete, read by the root (D55)
