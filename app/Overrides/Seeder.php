@@ -8,6 +8,7 @@ use function is_laraplate_owned_module;
 
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Seeder as BaseSeeder;
+use Modules\Core\Console\Concerns\BenchmarksSeedingRun;
 use Modules\Core\Console\Concerns\HasBenchmark;
 use Modules\Core\Database\Seeders\Concerns\HasSeedersUtils;
 use Modules\Core\Helpers\BatchSeeder;
@@ -25,13 +26,19 @@ class Seeder extends BaseSeeder
      */
     public const string PARALLEL_BATCH_WORKER_ENV = 'LARAPLE_PARALLEL_BATCH_WORKER';
 
+    /**
+     * Container key bound while a seeding command benchmarks the whole run
+     * ({@see BenchmarksSeedingRun}): a seeder created inside it skips its own benchmark.
+     */
+    public const string RUN_BENCHMARK_BINDING = 'core.seeding.run_benchmark';
+
     protected bool $disableBenchmark = false;
 
     public function __construct(protected DatabaseManager $db)
     {
         $this->db = $db;
 
-        if (config('app.debug') && ! $this->disableBenchmark) {
+        if (config('app.debug') && ! $this->disableBenchmark && ! app()->bound(self::RUN_BENCHMARK_BINDING)) {
             $this->startBenchmark();
         }
     }
@@ -42,7 +49,7 @@ class Seeder extends BaseSeeder
             return;
         }
 
-        if (config('app.debug') && ! $this->disableBenchmark) {
+        if ($this->benchmarkStartTime !== null) {
             $this->endBenchmark();
         }
     }

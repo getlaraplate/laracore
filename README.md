@@ -552,6 +552,13 @@ restored rows as realigned. Both come from `HasSeedersUtils`, so a module seeder
 only detail beyond the counts is the superadmin password, shown once, when that user is created.
 Warnings about a missing prerequisite (a role or permission a step needs) are still printed.
 
+With `APP_DEBUG` on, `db:seed` and `module:seed` print one benchmark line (`⚡ BOOT … TIME … MEM …
+SQL …`) at the end of the run, with the totals of every seeder and of the nested `db:seed` calls.
+The outermost of the two commands owns it (`BenchmarksSeedingRun`): while it runs, the
+`Seeder::RUN_BENCHMARK_BINDING` key is bound and a seeder skips its own benchmark. A seeder run
+outside these commands, for example from a test, still benchmarks itself. Queries are counted by
+a listener, not by the query log, so a long dev seed does not hold every query in memory.
+
 ### Cleanup by module state
 
 `SettingsCleaner::clean()` runs once, after every node in the graph has succeeded, and only ever

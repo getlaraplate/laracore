@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Console;
 
 use Illuminate\Support\Str;
+use Modules\Core\Console\Concerns\BenchmarksSeedingRun;
 use Modules\Core\Console\Concerns\ResolvesDevSeedScale;
 use Nwidart\Modules\Commands\Database\SeedCommand as BaseModuleSeedCommand;
 use Nwidart\Modules\Module;
@@ -18,7 +19,14 @@ use Symfony\Component\Console\Input\InputOption;
  */
 final class ModuleSeedCommand extends BaseModuleSeedCommand
 {
+    use BenchmarksSeedingRun;
     use ResolvesDevSeedScale;
+
+    #[Override]
+    public function handle(): int
+    {
+        return $this->benchmarkSeedingRun(fn (): int => (int) parent::handle());
+    }
 
     #[Override]
     public function moduleSeed(Module $module): void
