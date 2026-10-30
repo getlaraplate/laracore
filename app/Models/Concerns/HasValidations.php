@@ -263,7 +263,7 @@ trait HasValidations
         if ($user) {
             // Hydrating the acting user from the session is how authentication itself works, so a
             // user always reads their own row, whatever they were granted.
-            if ($user->is($model)) {
+            if (static::isActingUserRow($user, $model)) {
                 return true;
             }
 
@@ -286,6 +286,23 @@ trait HasValidations
         }
 
         return true;
+    }
+
+    /**
+     * Whether the record is the acting user's own row. Only a row of the user's table that carries its key can be:
+     * a grouped aggregate or a partial select hydrates rows without one, and reading the missing key would throw.
+     */
+    protected static function isActingUserRow(Authenticatable $user, Model $model): bool
+    {
+        if (! $user instanceof Model || $model->getTable() !== $user->getTable()) {
+            return false;
+        }
+
+        if (! array_key_exists($model->getKeyName(), $model->getAttributes())) {
+            return false;
+        }
+
+        return $user->is($model);
     }
 
     /**
