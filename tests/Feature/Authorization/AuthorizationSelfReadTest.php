@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Modules\Core\Models\Concerns\HasValidations;
+use Modules\Core\Models\CronJob;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Support\PermissionName;
@@ -91,4 +93,35 @@ it('resolves the acting user from the session without recursing into its own sel
     session()->put(Auth::guard('web')->getName(), $user->getKey());
 
     expect(Auth::user()?->getKey())->toBe($user->getKey());
+});
+
+it('checks a grouped aggregate row that carries no key without reading the key', function (): void {
+    // The CMS entity list counts its rows per type with a grouped `count(*)`: the hydrated rows have
+    // no `id`, and the self-read exemption read it to compare them with the acting user.
+    $permission = registerSelectPermission(new CronJob());
+
+    $role = Role::query()->firstOrCreate(['name' => 'cron-reader', 'guard_name' => 'web']);
+    $role->givePermissionTo($permission);
+    $user = User::factory()->create();
+    $user->assignRole($role);
+    CronJob::factory()->count(2)->create();
+
+    Auth::login(User::query()->findOrFail($user->getKey()));
+
+    $rows = CronJob::query()->selectRaw('count(*) as aggregate_count')->get();
+
+    expect((int) $rows->first()?->getAttribute('aggregate_count'))->toBe(2);
+});
+
+it('checks a keyless aggregate row of the users table against the permission, not as the acting user own row', function (): void {
+    // Without its key a row cannot be shown to be the acting user's own, so the exemption does not
+    // apply and the row is asked for the permission like any other.
+    registerSelectPermission(new User());
+
+    $user = User::factory()->create();
+
+    Auth::login(User::query()->findOrFail($user->getKey()));
+
+    expect(fn () => User::query()->selectRaw('count(*) as aggregate_count')->get())
+        ->toThrow(AuthorizationException::class);
 });
