@@ -6,6 +6,7 @@ use Illuminate\Config\Repository;
 use Modules\Core\Search\Enums\QueryClass;
 use Modules\Core\Search\Services\FallbackSearchPlanner;
 use Modules\Core\Search\Services\RetrievalTuningProfile;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -30,7 +31,7 @@ function retrieval_tuning_config(bool $enabled, ?array $profile): Repository
 function retrieval_tuning_plan(): array
 {
     $previous = config()->all();
-    config()->set('core.search.vector.enabled', true);
+    FakeVectorProfile::use();
     config()->set('core.search.reranker.enabled', true);
     config()->set('core.search.reranker.top_k', 30);
     $plan = (new FallbackSearchPlanner())->safePlan('fatture fornitori scadute del mese');

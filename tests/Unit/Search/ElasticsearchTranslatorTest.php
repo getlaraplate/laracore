@@ -2,11 +2,13 @@
 
 declare(strict_types=1);
 
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Schema\FieldDefinition;
 use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Search\Schema\IndexType;
 use Modules\Core\Search\Schema\SchemaDefinition;
 use Modules\Core\Search\Translators\ElasticsearchTranslator;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 it('maps a locale object field to per-language analyzers', function (): void {
     $schema = new SchemaDefinition('cms_contents');
@@ -51,4 +53,40 @@ it('maps a vector-carrying array field to a nested dense_vector', function (): v
         ->and($field['properties']['vector'])->toMatchArray([
             'type' => 'dense_vector', 'dims' => 384, 'index' => true, 'similarity' => 'cosine',
         ]);
+});
+
+/**
+ * @param  array<string, mixed>  $options
+ * @return array<string, mixed>
+ */
+function esNestedVectorProperty(array $options): array
+{
+    $schema = new SchemaDefinition('cms_contents');
+    $schema->addField(new FieldDefinition('embeddings', FieldType::Array, [IndexType::Searchable], ['vector' => $options]));
+
+    return (new ElasticsearchTranslator)->translate($schema)['mappings']['properties']['embeddings'];
+}
+
+it('maps a nested vector field with the dimensions and similarity of its option', function (): void {
+    FakeVectorProfile::use(new VectorProfile('a:one', 384, 'cosine'));
+
+    $vector = esNestedVectorProperty(['dimensions' => 1024, 'similarity' => 'dot_product'])['properties']['vector'];
+
+    expect($vector)->toMatchArray(['type' => 'dense_vector', 'dims' => 1024, 'similarity' => 'dot_product']);
+});
+
+it('maps a nested vector field from the vector profile when the option names nothing', function (): void {
+    FakeVectorProfile::use(new VectorProfile('a:one', 768, 'l2_norm'));
+
+    $vector = esNestedVectorProperty([])['properties']['vector'];
+
+    expect($vector)->toMatchArray(['type' => 'dense_vector', 'dims' => 768, 'similarity' => 'l2_norm']);
+});
+
+it('emits no dense_vector for a nested vector field without option and without profile', function (): void {
+    FakeVectorProfile::none();
+
+    $embeddings = esNestedVectorProperty([]);
+
+    expect($embeddings)->not->toHaveKey('properties');
 });

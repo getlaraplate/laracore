@@ -9,6 +9,7 @@ use Modules\Core\Search\Schema\FieldDefinition;
 use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Search\Schema\IndexType;
 use Modules\Core\Search\Schema\SchemaDefinition;
+use Modules\Core\Search\Support\VectorProfileContext;
 
 class ElasticsearchTranslator implements ISchemaTranslator
 {
@@ -48,21 +49,26 @@ class ElasticsearchTranslator implements ISchemaTranslator
             return ['type' => 'object', 'properties' => $properties];
         }
 
-        // Handle Array field with vector option (nested with dense_vector)
+        // Handle Array field with vector option (nested with dense_vector): the option wins, the vector profile fills the gaps
         if ($field->type === FieldType::Array && is_array($field->options['vector'] ?? null)) {
             $vector = $field->options['vector'];
+            $profile = isset($vector['dimensions'], $vector['similarity']) ? null : VectorProfileContext::get();
+            $dimensions = $vector['dimensions'] ?? $profile?->dimensions;
+            $similarity = $vector['similarity'] ?? $profile?->similarity;
 
-            return [
-                'type' => 'nested',
-                'properties' => [
-                    'vector' => [
-                        'type' => 'dense_vector',
-                        'dims' => (int) ($vector['dimensions'] ?? config('core.search.vector.dimensions', 384)),
-                        'index' => true,
-                        'similarity' => (string) ($vector['similarity'] ?? config('core.search.vector.similarity', 'cosine')),
+            if ($dimensions !== null && $similarity !== null) {
+                return [
+                    'type' => 'nested',
+                    'properties' => [
+                        'vector' => [
+                            'type' => 'dense_vector',
+                            'dims' => (int) $dimensions,
+                            'index' => true,
+                            'similarity' => (string) $similarity,
+                        ],
                     ],
-                ],
-            ];
+                ];
+            }
         }
 
         $esField = match ($field->type) {

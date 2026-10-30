@@ -18,12 +18,14 @@ use Modules\Core\Search\Contracts\ILocaleFilterableEngine;
 use Modules\Core\Search\Contracts\IReportsVectorDimensions;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DTOs\TextMatchOptions;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Exceptions\MissingSearchSchemaException;
 use Modules\Core\Search\Exceptions\SearchCollectionResolutionException;
 use Modules\Core\Search\Jobs\ReindexSearchJob;
 use Modules\Core\Search\Schema\MappingStructureComparator;
 use Modules\Core\Search\Services\SearchQueryAnalyzer;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
 use Modules\Core\Services\ElasticsearchService;
@@ -627,15 +629,14 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
         ];
 
         // Add a vector field if needed
-        if (config('core.search.vector.enabled') && $this->supportsVectorSearch()) {
-            $dimension = config('core.search.vector.dimensions', 384);
-            $similarity = config('core.search.vector.similarity', 'cosine');
+        $profile = VectorProfileContext::get();
 
+        if ($profile instanceof VectorProfile && $this->supportsVectorSearch()) {
             $mapping['mappings']['properties']['embedding'] = [
                 'type' => 'dense_vector',
-                'dims' => $dimension,
+                'dims' => $profile->dimensions,
                 'index' => true,
-                'similarity' => $similarity,
+                'similarity' => $profile->similarity,
             ];
         }
 

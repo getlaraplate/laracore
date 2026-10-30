@@ -5,8 +5,10 @@ declare(strict_types=1);
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\ModelEmbedding;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 /*
  * Runs only against a scratch PostgreSQL with pgvector named by PGVECTOR_TEST_HOST / _PORT /
@@ -104,9 +106,7 @@ it('returns only the active model rows and can be served by the index', function
 
     (new PgvectorProfileIndex)->ensure($this->connection, 'a', 3, 'cosine');
 
-    config()->set('core.search.vector.dimensions', 3);
-    config()->set('core.search.vector.similarity', 'cosine');
-    config()->set('core.search.vector.model', 'a');
+    FakeVectorProfile::use(new VectorProfile('a', 3, 'cosine'));
 
     $method = new ReflectionMethod(DatabaseEngine::class, 'postgreSQLVectorSearchQuery');
     $query = $method->invoke(app(DatabaseEngine::class), [1.0, 2.0, 3.0], new ModelEmbedding, null);

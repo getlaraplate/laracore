@@ -14,9 +14,11 @@ use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\DatabaseEngine as BaseDatabaseEngine;
 use Modules\Core\Models\ModelEmbedding;
 use Modules\Core\Search\Contracts\ISearchEngine;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Services\DatabaseTextMatchCompiler;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 
 final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
@@ -508,15 +510,18 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
 
         // The cast, the model filter and the operator mirror the partial index of the profile
         // (PgvectorProfileIndex): any difference and the planner scans the table instead.
-        $configured_dimensions = config('core.search.vector.dimensions');
+        $profile = VectorProfileContext::get();
 
-        if (! is_numeric($configured_dimensions) || (int) $configured_dimensions < 1) {
-            throw new InvalidArgumentException('core.search.vector.dimensions must be a positive number to search vectors on PostgreSQL.');
+        if (! $profile instanceof VectorProfile) {
+            throw new InvalidArgumentException('A vector profile is required to search vectors on PostgreSQL, and none is available.');
         }
 
-        $dimensions = (int) $configured_dimensions;
-        $similarity = config('core.search.vector.similarity', 'cosine');
-        $operator = PgvectorProfileIndex::distanceOperator(is_scalar($similarity) ? (string) $similarity : '');
+        if ($profile->dimensions < 1) {
+            throw new InvalidArgumentException('The dimensions of the vector profile must be a positive number to search vectors on PostgreSQL.');
+        }
+
+        $dimensions = $profile->dimensions;
+        $operator = PgvectorProfileIndex::distanceOperator($profile->similarity);
         $distance = "\"embedding\"::vector({$dimensions}) {$operator} ?::vector";
 
         $query = ModelEmbedding::query()
@@ -524,9 +529,9 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
             ->selectRaw("*, {$distance} AS distance", [$vector_string])
             ->orderByRaw($distance, [$vector_string]);
 
-        $model_key = config('core.search.vector.model');
+        $model_key = $profile->modelKey;
 
-        if (is_string($model_key) && $model_key !== '') {
+        if ($model_key !== '') {
             // A literal, not a binding: the partial index predicate is one, and a generic plan
             // cannot prove that a parameter implies it.
             $query->whereRaw('"model_key" = ' . PgvectorProfileIndex::quoteLiteral($model_key));

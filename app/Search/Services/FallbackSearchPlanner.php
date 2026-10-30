@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Modules\Core\Search\Services;
 
 use Modules\Core\Search\Contracts\ISearchPlanner;
+use Modules\Core\Search\DTOs\VectorProfile;
+use Modules\Core\Search\Support\VectorProfileContext;
 
 /**
  * Rule-based search planner that generates execution plans without AI/LLM.
@@ -33,8 +35,7 @@ final readonly class FallbackSearchPlanner implements ISearchPlanner
     {
         $is_short = mb_strlen($query) < 20;
         $has_numbers = (bool) preg_match('/\d/', $query);
-        $vector_globally_enabled = (bool) config('core.search.vector.enabled', false);
-        $use_vector = $vector_globally_enabled && ! $has_numbers;
+        $use_vector = VectorProfileContext::get() instanceof VectorProfile && ! $has_numbers;
 
         return [
             'strategy' => $use_vector ? 'hybrid' : 'fulltext',

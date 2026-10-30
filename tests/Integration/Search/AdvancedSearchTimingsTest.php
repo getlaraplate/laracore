@@ -11,22 +11,23 @@ use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\Contracts\ITextEmbedder;
 use Modules\Core\Search\Contracts\IVectorSearchAvailability;
 use Modules\Core\Search\DTOs\AdvancedSearchResult;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\EnsembleSearchService;
 use Modules\Core\Search\Services\SimpleQueryIntentParser;
 use Modules\Core\Search\Services\VectorSearchAvailability;
 use Modules\Core\Tests\Stubs\Search\EngineBoundStubModel;
 use Modules\Core\Tests\Stubs\Search\FixedSearchStrategyResolver;
+use Modules\Core\Tests\Stubs\Search\SuspendedVectorSearchAvailabilityStub;
 use Modules\Core\Tests\Stubs\Search\VectorGuardOrchestratedEngineStub;
 use Modules\Core\Tests\Stubs\Search\VectorGuardPlannerStub;
 use Modules\Core\Tests\Stubs\Search\VectorGuardStubModel;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 beforeEach(function (): void {
     Cache::flush();
     app()->instance(IVectorSearchAvailability::class, new VectorSearchAvailability);
-    config()->set('core.search.vector.enabled', true);
-    config()->set('core.search.vector.suspended_reason', null);
-    config()->set('core.search.vector.dimensions', 384);
+    FakeVectorProfile::use(new VectorProfile('a:one', 384, 'cosine'));
     config()->set('core.search.debug_timings', false);
     VectorGuardStubModel::$engine = VectorGuardOrchestratedEngineStub::make(384);
 });
@@ -95,7 +96,7 @@ it('leaves the meta exactly as the ensemble returned it when the flag is off', f
 });
 
 it('leaves the vector_disabled meta unchanged when the flag is off', function (): void {
-    config()->set('core.search.vector.suspended_reason', 'switching');
+    app()->instance(IVectorSearchAvailability::class, new SuspendedVectorSearchAvailabilityStub);
     bind_embedder();
 
     expect(timed_search()->meta)->toBe([...timed_search_ensemble_meta(), 'vector_disabled' => 'suspended', 'search' => timed_search_mode_meta()]);
@@ -130,7 +131,7 @@ it('reports the vector stage as null when no embedder is bound', function (): vo
 
 it('reports the vector stage as null when the guard refuses vectors', function (): void {
     config()->set('core.search.debug_timings', true);
-    config()->set('core.search.vector.suspended_reason', 'switching');
+    app()->instance(IVectorSearchAvailability::class, new SuspendedVectorSearchAvailabilityStub);
     bind_embedder();
 
     $meta = timed_search()->meta;

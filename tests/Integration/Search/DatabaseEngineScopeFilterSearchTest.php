@@ -18,6 +18,7 @@ use Modules\Core\Models\User;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Tests\Stubs\Search\ScopedLicenseSearchStub;
 use Modules\Core\Tests\Stubs\Search\ValidatedSearchRequestStub;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 /*
  * The database engine is a search engine like the others (S8): it takes no scope node. Every license matches
@@ -26,7 +27,7 @@ use Modules\Core\Tests\Stubs\Search\ValidatedSearchRequestStub;
 
 beforeEach(function (): void {
     Carbon::setTestNow('2026-08-19 12:00:00');
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
     config()->set('permission.roles.superadmin', 'superadmin');
 });
 

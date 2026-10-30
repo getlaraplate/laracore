@@ -14,10 +14,12 @@ use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\TypesenseEngine as BaseTypesenseEngine;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DTOs\TextMatchOptions;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Exceptions\MissingSearchSchemaException;
 use Modules\Core\Search\Exceptions\SearchCollectionResolutionException;
 use Modules\Core\Search\Jobs\ReindexSearchJob;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
 use Override;
@@ -388,9 +390,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
             ],
         ];
 
-        $vector_search_enabled = (bool) config('core.search.vector.enabled', false);
-
-        if ($vector_search_enabled && $this->supportsVectorSearch()) {
+        if (VectorProfileContext::get() instanceof VectorProfile && $this->supportsVectorSearch()) {
             // Typesense vector field configuration
             // The embedding is pre-computed, so we just need to define it as float[]
             $mapping['fields']['embedding'] = [

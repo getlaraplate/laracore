@@ -12,7 +12,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Engines\DatabaseEngine;
 use Laravel\Scout\Engines\TypesenseEngine;
@@ -28,6 +27,7 @@ use Modules\Core\Overrides\LocaleScope;
 use Modules\Core\Search\AdaptiveBatchController;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DeferredSearchIndexing;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Exceptions\UnsupportedSearchEngineException;
 use Modules\Core\Search\Schema\FieldDefinition;
 use Modules\Core\Search\Schema\FieldType;
@@ -35,7 +35,7 @@ use Modules\Core\Search\Schema\IndexType;
 use Modules\Core\Search\Schema\SchemaDefinition;
 use Modules\Core\Search\Schema\SchemaManager;
 use Modules\Core\Search\SearchableContributorRegistry;
-use Modules\Core\Search\Support\VectorModelContext;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Modules\Core\Support\SearchEngineAvailability;
 use Spatie\MediaLibrary\HasMedia;
@@ -265,7 +265,7 @@ trait Searchable
             // Reuse the eager-loaded relation on the bulk path (adaptiveBulkIndex
             // pre-loads it) and query only when it is not loaded, so serializing a
             // chunk does not fire one embeddings query per model.
-            $model_key = VectorModelContext::get();
+            $model_key = VectorProfileContext::modelKey();
             $loaded = $this->relationLoaded('embeddings') ? $this->getRelation('embeddings') : null;
             $embeddings = $loaded instanceof Collection
                 ? $loaded
@@ -391,8 +391,10 @@ trait Searchable
             $document = $this->toSearchableArray();
 
             foreach ($document as $key => $value) {
-                if ($key === 'embedding') {
-                    $schema->addField(new FieldDefinition($key, FieldType::Vector, [IndexType::Searchable, IndexType::Vector], ['dimensions' => self::configInt('core.search.vector.dimensions', 384)]));
+                $profile = $key === 'embedding' ? VectorProfileContext::get() : null;
+
+                if ($profile instanceof VectorProfile) {
+                    $schema->addField(new FieldDefinition($key, FieldType::Vector, [IndexType::Searchable, IndexType::Vector], ['dimensions' => $profile->dimensions, 'similarity' => $profile->similarity]));
                 } else {
                     $schema->addField(new FieldDefinition($key, FieldType::fromValue($value), [IndexType::Searchable]));
                 }
@@ -671,13 +673,7 @@ trait Searchable
 
     private function vectorSearchEnabled(): bool
     {
-        /** @phpstan-ignore-next-line false-positive: config loaded via module */
-        if (! Config::has('core.search.vector.enabled')) {
-            return false;
-        }
-
-        /** @phpstan-ignore-next-line false-positive: config loaded via module */
-        return (bool) Config::get('core.search.vector.enabled');
+        return VectorProfileContext::get() instanceof VectorProfile;
     }
 
     private function mediaSurrogateText(): string
