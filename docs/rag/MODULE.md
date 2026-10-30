@@ -635,6 +635,7 @@ Core exposes reusable primitives for module authors:
 - Geocoding contracts and providers (`IGeocodingService`, `NominatimService`, `GoogleMapsService`).
 - Tabular exporters (`TabularCsvExporter`, `TabularPdfExporter`) — serialize an explicit `{key, label, format?}` column spec plus a row iterable to CSV or a minimal self-contained PDF, sharing one column contract. `TabularPdfExporter`'s PDF plumbing is `protected` so a module exporter with a custom row layout can extend it instead of duplicating the byte-offset bookkeeping (ERP's `ReportPdfExporter` does this).
 - Settings infrastructure and module activation.
+- Migration helpers (`MigrateUtils`): timestamps, soft deletes, locks and validity columns per driver, search indexes, and `liveUniqueIndex($table, $columns, $name)`, a unique key over the rows that are not soft-deleted. Use it for a business key on a soft-deleted table: `unique([..., 'deleted_at'])` does not constrain live rows, because `deleted_at` is null on all of them and a null makes a row distinct. PostgreSQL and SQLite get a partial index, Oracle a function-based index, MySQL and MariaDB a stored `is_live` column (1, or null when deleted) added to the key. Call it after `Schema::create()`.
 
 When building new module features, reuse these primitives instead of re-implementing lifecycle logic.
 

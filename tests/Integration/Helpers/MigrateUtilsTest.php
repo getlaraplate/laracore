@@ -163,3 +163,42 @@ it('rejects unsafe search index identifiers and unsupported oracle sync modes', 
         ->and(fn () => MigrateUtils::fullTextIndex('safe_table', 'body', oracleSync: 'hourly'))
         ->toThrow(InvalidArgumentException::class);
 });
+
+function createLiveUniqueTable(string $table_name): void
+{
+    Schema::create($table_name, function (Blueprint $table): void {
+        $table->id();
+        $table->string('locale');
+        $table->string('slug');
+        $table->softDeletes();
+    });
+
+    MigrateUtils::liveUniqueIndex($table_name, ['locale', 'slug'], $table_name . '_locale_slug_UN');
+}
+
+it('liveUniqueIndex refuses a second live row with the same key', function (): void {
+    createLiveUniqueTable('mu_live');
+
+    DB::table('mu_live')->insert(['locale' => 'it', 'slug' => 'jazz']);
+
+    expect(fn () => DB::table('mu_live')->insert(['locale' => 'it', 'slug' => 'jazz']))
+        ->toThrow(Illuminate\Database\UniqueConstraintViolationException::class);
+});
+
+it('liveUniqueIndex lets deleted rows share the key with each other and with one live row', function (): void {
+    createLiveUniqueTable('mu_live_deleted');
+
+    DB::table('mu_live_deleted')->insert([
+        ['locale' => 'it', 'slug' => 'jazz', 'deleted_at' => now()],
+        ['locale' => 'it', 'slug' => 'jazz', 'deleted_at' => now()],
+        ['locale' => 'it', 'slug' => 'jazz', 'deleted_at' => null],
+        ['locale' => 'en', 'slug' => 'jazz', 'deleted_at' => null],
+    ]);
+
+    expect(DB::table('mu_live_deleted')->count())->toBe(4);
+});
+
+it('liveUniqueIndex rejects unsafe identifiers', function (): void {
+    expect(fn () => MigrateUtils::liveUniqueIndex('mu_live_unsafe', ['slug; drop'], 'mu_live_unsafe_UN'))
+        ->toThrow(InvalidArgumentException::class);
+});

@@ -116,6 +116,58 @@ final class MigrateUtils
     }
 
     /**
+     * Add a unique index over the rows that are not soft-deleted.
+     *
+     * `unique([..., 'deleted_at'])` does not do this: `deleted_at` is null on every live row, and a null in a
+     * unique key makes the row distinct on MySQL, MariaDB, PostgreSQL and SQLite. PostgreSQL and SQLite get a
+     * partial index; Oracle a function-based index whose key is all null on a deleted row; MySQL and MariaDB a
+     * stored `is_live` column (1, or null when deleted) added to the key. Call it after `Schema::create()`; the
+     * table must have `deleted_at`.
+     *
+     * @param  list<string>  $columns
+     */
+    public static function liveUniqueIndex(
+        string $table,
+        array $columns,
+        string $name,
+        ?ConnectionInterface $connection = null,
+    ): void {
+        $connection = self::connection($connection);
+        self::assertIdentifier($table);
+        self::assertIdentifier($name);
+        array_walk($columns, static fn (string $column) => self::assertIdentifier($column));
+
+        $grammar = $connection->getQueryGrammar();
+        $wrapped_columns = array_map(static fn (string $column): string => $grammar->wrap($column), $columns);
+
+        match ($connection->getDriverName()) {
+            'pgsql', 'sqlite' => $connection->statement(sprintf(
+                'CREATE UNIQUE INDEX %s ON %s (%s) WHERE %s IS NULL',
+                $grammar->wrap($name),
+                $grammar->wrapTable($table),
+                implode(', ', $wrapped_columns),
+                $grammar->wrap('deleted_at'),
+            )),
+            'oracle' => $connection->statement(sprintf(
+                'CREATE UNIQUE INDEX %s ON %s (%s)',
+                $grammar->wrap($name),
+                $grammar->wrapTable($table),
+                implode(', ', array_map(
+                    static fn (string $column): string => sprintf('CASE WHEN %s IS NULL THEN %s END', $grammar->wrap('deleted_at'), $column),
+                    $wrapped_columns,
+                )),
+            )),
+            default => $connection->getSchemaBuilder()->table($table, static function (Blueprint $blueprint) use ($connection, $table, $columns, $name): void {
+                if (! $connection->getSchemaBuilder()->hasColumn($table, 'is_live')) {
+                    $blueprint->tinyInteger('is_live')->nullable()->storedAs('IF(deleted_at IS NULL, 1, NULL)')->comment('1 on a live row, null on a deleted one, for unique keys over live rows');
+                }
+
+                $blueprint->unique([...$columns, 'is_live'], $name);
+            }),
+        };
+    }
+
+    /**
      * Add common timestamp columns to a table.
      *
      * @param  Blueprint  $table  The table blueprint
