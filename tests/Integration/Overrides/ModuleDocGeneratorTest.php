@@ -162,6 +162,22 @@ namespace {
             ->and($routes[0])->toBeInstanceOf(ModuleDocRoute::class);
     });
 
+    it('getAppRoutes ignores redirect and view routes', function (): void {
+        $generator = new ModuleDocGenerator(['ignoredRoutes' => []], 'Modules\\Core', null);
+
+        $redirect = new Route(['GET', 'POST'], '/', '\\Illuminate\\Routing\\RedirectController');
+        $view = new Route(['GET'], '/landing', '\\Illuminate\\Routing\\ViewController');
+        $endpoint = new Route(['GET'], '/api/plain', ['as' => 'api.plain']);
+
+        $GLOBALS['__module_doc_routes'] = [$redirect, $view, $endpoint];
+
+        $ref = new ReflectionMethod(ModuleDocGenerator::class, 'getAppRoutes');
+        $routes = $ref->invoke($generator);
+
+        expect($routes)->toHaveCount(1)
+            ->and($routes[0]->uri())->toBe('/api/plain');
+    });
+
     it('generatePath sets operationId and up route html content', function (): void {
         $config = [
             'ignoredRoutes' => [],
