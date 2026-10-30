@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Modules\Core\Overrides;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Routing\RedirectController;
 use Illuminate\Routing\Route;
+use Illuminate\Routing\ViewController;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Mtrajano\LaravelSwagger\Generator;
@@ -194,6 +196,10 @@ final class ModuleDocGenerator extends Generator
         $route_name = $route->getName();
         $route_uri = $route->uri();
 
+        if ($this->isRedirectOrViewRoute($route)) {
+            return true;
+        }
+
         if ($route_name === '' || Str::startsWith($route_uri, ['_', '/_']) || Str::endsWith($route_uri, ['.map', '.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.ico', '.webp', '.woff', '.woff2', '.ttf', '.eot', '.otf'])) {
             return true;
         }
@@ -215,6 +221,16 @@ final class ModuleDocGenerator extends Generator
         }
 
         return false;
+    }
+
+    /**
+     * Routes declared with Route::redirect() or Route::view() serve web pages, not API endpoints.
+     */
+    private function isRedirectOrViewRoute(Route $route): bool
+    {
+        $controller = mb_ltrim((string) $route->getControllerClass(), '\\');
+
+        return in_array($controller, [RedirectController::class, ViewController::class], true);
     }
 
     /**
