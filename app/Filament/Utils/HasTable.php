@@ -34,6 +34,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\HtmlString;
 use InvalidArgumentException as GlobalInvalidArgumentException;
 use LogicException;
 use Modules\Core\Contracts\IActivatableModel;
@@ -968,16 +969,16 @@ trait HasTable
      * @return list<string>
      */
     /**
-     * A translated text column shows the default locale's text where the content locale has no translation
-     * ({@see \Modules\Core\Overrides\LocaleScope}); the column then says so below the text, so the row does not
-     * pass for translated.
+     * A translated text column shows the text of another locale where the content locale has no translation
+     * ({@see \Modules\Core\Overrides\LocaleScope}); the column then follows the text with that locale, greyed
+     * like a description, so the row does not pass for translated.
      *
      * @param  Collection<int, Column>  $columns
      */
     private static function markTextShownInAnotherLocale(Collection $columns): void
     {
         foreach ($columns as $column) {
-            if (! $column instanceof TextColumn || $column->hasDescription()) {
+            if (! $column instanceof TextColumn) {
                 continue;
             }
 
@@ -985,7 +986,7 @@ trait HasTable
 
             // Asked of the record when the cell renders, not while the table is built: resolving the translated
             // fields loads the translation model, which the table does not otherwise need.
-            $column->description(static function (Model $record) use ($name): ?string {
+            $column->suffix(static function (Model $record) use ($name): ?HtmlString {
                 if (! method_exists($record, 'isTranslatableField') || ! $record->isTranslatableField($name)) {
                     return null;
                 }
@@ -993,9 +994,14 @@ trait HasTable
                 $translation = $record->relationLoaded('translation') ? $record->getRelationValue('translation') : null;
                 $locale = $translation instanceof Model ? $translation->getAttribute('locale') : null;
 
-                return is_string($locale) && $locale !== LocaleContext::get()
-                    ? (string) __('app.tables.shownInLocale', ['locale' => mb_strtoupper($locale)])
-                    : null;
+                if (! is_string($locale) || $locale === LocaleContext::get()) {
+                    return null;
+                }
+
+                $code = mb_strtoupper($locale);
+                $label = (string) __('app.tables.shownInLocale', ['locale' => $code]);
+
+                return new HtmlString(' <span class="fi-ta-text-description" title="' . e($label) . '">(' . e($code) . ')</span>');
             });
         }
     }
