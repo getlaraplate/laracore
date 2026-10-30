@@ -11,12 +11,12 @@ uses(RefreshDatabase::class);
 function managedSetting(bool $managed, mixed $value = 384): Setting
 {
     $setting = Setting::factory()->persistedWithoutApprovalCapture()->create([
-        'name' => 'search.vector.dimensions',
+        'name' => 'tests.managed_counter',
         'module' => 'Core',
         'type' => 'integer',
         'value' => $value,
         'choices' => null,
-        'group_name' => 'search',
+        'group_name' => 'tests',
     ]);
 
     $setting->forceFill(['managed' => $managed])->saveQuietly();
@@ -35,17 +35,17 @@ it('casts the managed flag to a bool', function (): void {
 it('writes a managed value and the settings overlay follows', function (): void {
     managedSetting(true);
 
-    Setting::writeManaged('search.vector.dimensions', 1024);
+    Setting::writeManaged('tests.managed_counter', 1024);
 
-    expect(Setting::query()->where('name', 'search.vector.dimensions')->value('value'))->toBe(1024)
-        ->and(config('core.search.vector.dimensions'))->toBe(1024);
+    expect(Setting::query()->where('name', 'tests.managed_counter')->value('value'))->toBe(1024)
+        ->and(config('core.tests.managed_counter'))->toBe(1024);
 });
 
 it('writes a managed value without creating a pending approval', function (): void {
     $setting = managedSetting(true);
     HttpContext::panelActorWithoutApproval(new Setting, ['select', 'update']);
 
-    Setting::writeManaged('search.vector.dimensions', 768);
+    Setting::writeManaged('tests.managed_counter', 768);
 
     expect($setting->modifications()->activeOnly()->count())->toBe(0)
         ->and($setting->fresh()->value)->toBe(768);
@@ -54,10 +54,10 @@ it('writes a managed value without creating a pending approval', function (): vo
 it('refuses to write a setting that is not managed', function (): void {
     managedSetting(false);
 
-    expect(fn () => Setting::writeManaged('search.vector.dimensions', 1))->toThrow(InvalidArgumentException::class)
-        ->and(Setting::query()->where('name', 'search.vector.dimensions')->value('value'))->toBe(384);
+    expect(fn () => Setting::writeManaged('tests.managed_counter', 1))->toThrow(InvalidArgumentException::class)
+        ->and(Setting::query()->where('name', 'tests.managed_counter')->value('value'))->toBe(384);
 });
 
 it('refuses to write a setting that does not exist', function (): void {
-    expect(fn () => Setting::writeManaged('search.vector.nope', 1))->toThrow(InvalidArgumentException::class);
+    expect(fn () => Setting::writeManaged('tests.missing', 1))->toThrow(InvalidArgumentException::class);
 });

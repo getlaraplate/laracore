@@ -9,16 +9,11 @@ use Modules\Core\Search\Engines\TypesenseEngine;
 use Modules\Core\Tests\Stubs\Search\DefaultMappingStubModel;
 use Modules\Core\Tests\Support\FakeVectorProfile;
 
-it('seeds the vector dimension at the length of the default embedding profile (384)', function (): void {
-    // The embeddings provider (openai_compatible, all-MiniLM-L6-v2) emits
-    // 384-dim vectors; the seeded setting is the authoritative source overlaid
-    // onto config, so the engine index mapping is created at 384. A mismatch
-    // (e.g. the former 768) produces an unusable dense_vector index.
+it('defines no vector dimension setting, the dimension comes from the vector profile', function (): void {
     $definition = collect(CoreDatabaseSeeder::runtimeSettingDefinitions())
         ->firstWhere('name', 'search.vector.dimensions');
 
-    expect($definition)->not->toBeNull()
-        ->and($definition['value'])->toBe(384);
+    expect($definition)->toBeNull();
 });
 
 it('maps the Elasticsearch embedding field with the dimensions and similarity of the vector profile', function (): void {
