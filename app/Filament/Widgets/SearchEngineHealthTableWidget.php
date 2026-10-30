@@ -7,10 +7,8 @@ namespace Modules\Core\Filament\Widgets;
 use Exception;
 use Filament\Widgets\Widget;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Str;
 use Laravel\Scout\EngineManager;
 use Laravel\Scout\Searchable;
-use Modules\Core\Filament\Pages\CacheHealth;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Override;
 use Throwable;
@@ -31,18 +29,12 @@ final class SearchEngineHealthTableWidget extends Widget
     #[Override]
     protected static ?int $sort = 51;
 
-    public static function canView(): bool
-    {
-        // Only show on CacheHealth page, hide from dashboard
-        $url = request()->url();
-        $cacheHealthUrl = CacheHealth::getUrl();
-
-        if (Str::contains($url, $cacheHealthUrl)) {
-            return true;
-        }
-
-        return Str::contains($url, '/health/cache');
-    }
+    /**
+     * Rendered only by the CacheHealth page, which lists it explicitly; kept out of
+     * panel discovery so the dashboard does not pick it up.
+     */
+    #[Override]
+    protected static bool $isDiscovered = false;
 
     protected function getViewData(): array
     {
