@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Modules\Core\Filament\RelationManagers\MediaRelationManager;
 use Modules\Core\Models\Media;
 use Modules\Core\Models\User;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 function relationManagerMedia(array $custom): Media
 {
@@ -29,7 +30,7 @@ function relationManagerMedia(array $custom): Media
 }
 
 beforeEach(function (): void {
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
 });
 
 it('merges display edits into custom_properties and marks them human, preserving other keys', function (): void {

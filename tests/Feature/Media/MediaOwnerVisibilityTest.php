@@ -6,6 +6,7 @@ use Modules\Core\Models\Media;
 use Modules\Core\Models\User;
 use Modules\Core\Search\OwnerAuthorizerRegistry;
 use Modules\Core\Tests\Stubs\Search\StubOwnerAuthorizer;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 /**
  * A media row owned by a User (any model class works as an owner), sharing one content hash.
@@ -48,7 +49,7 @@ function rehydratedMediaIds(array $ids): array
 }
 
 beforeEach(function (): void {
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
 });
 
 it('drops a media whose owner the user cannot see, keeping its duplicate under a visible owner', function (): void {

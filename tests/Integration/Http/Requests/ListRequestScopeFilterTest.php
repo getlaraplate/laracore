@@ -20,12 +20,13 @@ use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Support\CrudApiExposure;
 use Modules\Core\Support\PermissionName;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 beforeEach(function (): void {
     Cache::flush();
     Carbon::setTestNow('2026-08-19 12:00:00');
     config()->set('permission.roles.superadmin', 'superadmin');
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
     CrudApiExposure::enable();
 });
 

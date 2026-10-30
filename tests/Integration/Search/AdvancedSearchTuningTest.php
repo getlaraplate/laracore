@@ -14,6 +14,7 @@ use Modules\Core\Search\Services\SimpleQueryIntentParser;
 use Modules\Core\Tests\Stubs\Search\EngineBoundStubModel;
 use Modules\Core\Tests\Stubs\Search\FixedSearchStrategyResolver;
 use Modules\Core\Tests\Stubs\Search\FusionFixtureSearchModel;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 /**
  * Runs one advanced search and returns the plan the ensemble received.
@@ -46,7 +47,7 @@ function advanced_search_tuning_captured_plan(string $query): array
 }
 
 beforeEach(function (): void {
-    config()->set('core.search.vector.enabled', true);
+    FakeVectorProfile::use();
     config()->set('search_tuning', [
         'version' => 'test.2',
         'default' => ['rrf_k' => 40],

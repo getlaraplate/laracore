@@ -5,7 +5,9 @@ declare(strict_types=1);
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Modules\Core\Search\Contracts\ISearchPlanner;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Services\FallbackSearchPlanner;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 beforeEach(function (): void {
     $container = Container::getInstance();
@@ -33,8 +35,8 @@ it('returns a valid plan structure', function (): void {
     expect($plan['meta']['source'])->toBe('fallback_rules');
 });
 
-it('disables vector when VECTOR_SEARCH_ENABLED is false', function (): void {
-    config()->set('core.search.vector.enabled', false);
+it('disables vector when there is no vector profile', function (): void {
+    FakeVectorProfile::none();
 
     $planner = new FallbackSearchPlanner;
     $plan = $planner->fallbackPlan('test query');
@@ -46,8 +48,8 @@ it('disables vector when VECTOR_SEARCH_ENABLED is false', function (): void {
     expect($plan['ensemble']['keyword_weight'])->toBe(1.0);
 });
 
-it('enables vector when VECTOR_SEARCH_ENABLED is true and no numbers', function (): void {
-    config()->set('core.search.vector.enabled', true);
+it('enables vector when there is a vector profile and no numbers', function (): void {
+    FakeVectorProfile::use(new VectorProfile('a:one', 384, 'cosine'));
 
     $planner = new FallbackSearchPlanner;
     $plan = $planner->fallbackPlan('test query');
@@ -57,8 +59,8 @@ it('enables vector when VECTOR_SEARCH_ENABLED is true and no numbers', function 
     expect($plan['strategy'])->toBe('hybrid');
 });
 
-it('disables vector for queries with numbers even if globally enabled', function (): void {
-    config()->set('core.search.vector.enabled', true);
+it('disables vector for queries with numbers even with a vector profile', function (): void {
+    FakeVectorProfile::use(new VectorProfile('a:one', 384, 'cosine'));
 
     $planner = new FallbackSearchPlanner;
     $plan = $planner->fallbackPlan('order 12345');

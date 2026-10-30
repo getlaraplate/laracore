@@ -16,11 +16,13 @@ use Modules\Core\Search\Contracts\IVectorSearchAvailability;
 use Modules\Core\Search\DTOs\AdvancedSearchResult;
 use Modules\Core\Search\DTOs\SearchStrategy;
 use Modules\Core\Search\DTOs\VectorAvailability;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Enums\QueryClass;
 use Modules\Core\Search\Enums\SearchMode;
 use Modules\Core\Search\Enums\TextMatchPreference;
 use Modules\Core\Search\Support\SearchDegradations;
 use Modules\Core\Search\Support\SearchStageTimings;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Throwable;
 
 final readonly class AdvancedSearchService
@@ -300,7 +302,7 @@ final readonly class AdvancedSearchService
     /**
      * The plan of a retry: the first one found too little, so cast a wider net. The candidate window doubles
      * (up to 200), the intent expansion is dropped by the caller, which searches the user's own words, and
-     * semantic retrieval is switched on when the strategy has an embedder and vector search is enabled.
+     * semantic retrieval is switched on when the strategy has an embedder and a vector profile is available.
      *
      * @param  array<string, mixed>  $plan
      * @return array<string, mixed>
@@ -312,7 +314,7 @@ final readonly class AdvancedSearchService
         $size = $retrieval['size'] ?? null;
         $retrieval['size'] = min(200, max($per_page, is_numeric($size) ? (int) $size : $per_page) * 2);
 
-        if ($strategy->embedder instanceof ITextEmbedder && (bool) config('core.search.vector.enabled', false)) {
+        if ($strategy->embedder instanceof ITextEmbedder && VectorProfileContext::get() instanceof VectorProfile) {
             $retrieval['use_vector'] = true;
             $retrieval['use_ensemble'] = true;
             $plan['ensemble'] = [...$this->planSection($plan, 'ensemble'), 'keyword_weight' => 0.35, 'vector_weight' => 0.35, 'hybrid_weight' => 0.30];

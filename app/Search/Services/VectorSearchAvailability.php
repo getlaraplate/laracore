@@ -9,10 +9,12 @@ use Illuminate\Support\Facades\Cache;
 use Modules\Core\Search\Contracts\IReportsVectorDimensions;
 use Modules\Core\Search\Contracts\IVectorSearchAvailability;
 use Modules\Core\Search\DTOs\VectorAvailability;
+use Modules\Core\Search\DTOs\VectorProfile;
+use Modules\Core\Search\Support\VectorProfileContext;
 
 /**
- * Default guard: vector search is available unless it is disabled, suspended by an embedding model
- * switch, or the engine's index holds vectors of a dimension other than the configured one.
+ * Default guard: vector search is available unless there is no vector profile, or the engine's index holds
+ * vectors of a dimension other than the profile's. Modules that know more (a model switch in progress) decorate it.
  */
 final class VectorSearchAvailability implements IVectorSearchAvailability
 {
@@ -24,21 +26,15 @@ final class VectorSearchAvailability implements IVectorSearchAvailability
 
     public function check(Model $model): VectorAvailability
     {
-        if (! (bool) config('core.search.vector.enabled')) {
+        $profile = VectorProfileContext::get();
+
+        if (! $profile instanceof VectorProfile) {
             return VectorAvailability::no('disabled');
-        }
-
-        $suspended_reason = config('core.search.vector.suspended_reason');
-
-        if (is_string($suspended_reason) && $suspended_reason !== '') {
-            return VectorAvailability::no('suspended');
         }
 
         $indexed = $this->indexedDimensions($model);
 
-        $configured = config('core.search.vector.dimensions');
-
-        if ($indexed !== null && $indexed !== (is_numeric($configured) ? (int) $configured : 0)) {
+        if ($indexed !== null && $indexed !== $profile->dimensions) {
             return VectorAvailability::no('dimension_mismatch');
         }
 

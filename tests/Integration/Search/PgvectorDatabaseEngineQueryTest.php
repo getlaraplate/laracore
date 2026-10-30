@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use Modules\Core\Models\ModelEmbedding;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Engines\DatabaseEngine;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 function pgvector_engine_query(): Illuminate\Database\Eloquent\Builder
 {
@@ -13,9 +15,7 @@ function pgvector_engine_query(): Illuminate\Database\Eloquent\Builder
 }
 
 it('casts the column and filters on the active model like the partial index', function (): void {
-    config()->set('core.search.vector.dimensions', 384);
-    config()->set('core.search.vector.similarity', 'cosine');
-    config()->set('core.search.vector.model', 'prov:model-a');
+    FakeVectorProfile::use(new VectorProfile('prov:model-a', 384, 'cosine'));
 
     $query = pgvector_engine_query();
 
@@ -26,31 +26,33 @@ it('casts the column and filters on the active model like the partial index', fu
         ->and($query->getBindings())->not->toContain('prov:model-a');
 });
 
-it('uses the operator of the configured similarity', function (string $similarity, string $operator): void {
-    config()->set('core.search.vector.dimensions', 8);
-    config()->set('core.search.vector.similarity', $similarity);
-    config()->set('core.search.vector.model', 'prov:model-a');
+it('uses the operator of the profile similarity', function (string $similarity, string $operator): void {
+    FakeVectorProfile::use(new VectorProfile('prov:model-a', 8, $similarity));
 
     expect(pgvector_engine_query()->toSql())->toContain("\"embedding\"::vector(8) {$operator} ?::vector");
 })->with([['cosine', '<=>'], ['l2', '<->'], ['ip', '<#>']]);
 
-it('does not filter on a model when none is configured', function (): void {
-    config()->set('core.search.vector.dimensions', 8);
-    config()->set('core.search.vector.model', '');
+it('does not filter on a model when the profile names none', function (): void {
+    FakeVectorProfile::use(new VectorProfile('', 8, 'cosine'));
 
     expect(pgvector_engine_query()->toSql())->not->toContain('"model_key"')
         ->toContain('vector_dims("embedding") = 8');
 });
 
 it('escapes the model key literal', function (): void {
-    config()->set('core.search.vector.dimensions', 8);
-    config()->set('core.search.vector.model', "a'b");
+    FakeVectorProfile::use(new VectorProfile("a'b", 8, 'cosine'));
 
     expect(pgvector_engine_query()->toSql())->toContain("\"model_key\" = 'a''b'");
 });
 
-it('rejects non-positive or non-numeric dimensions before building SQL', function (mixed $dimensions): void {
-    config()->set('core.search.vector.dimensions', $dimensions);
+it('rejects non-positive dimensions before building SQL', function (int $dimensions): void {
+    FakeVectorProfile::use(new VectorProfile('prov:model-a', $dimensions, 'cosine'));
 
     expect(fn () => pgvector_engine_query())->toThrow(InvalidArgumentException::class);
-})->with([0, -3, 'abc', null]);
+})->with([0, -3]);
+
+it('rejects a query when there is no vector profile', function (): void {
+    FakeVectorProfile::none();
+
+    expect(fn () => pgvector_engine_query())->toThrow(InvalidArgumentException::class, 'vector profile');
+});

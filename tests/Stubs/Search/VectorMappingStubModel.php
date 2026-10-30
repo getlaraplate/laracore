@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Search;
 
 use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Contracts\ISearchableModel;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\Searchable;
 
 /**
@@ -34,7 +35,7 @@ class VectorMappingStubModel extends Model implements ISearchableModel
                 'properties' => [
                     'embedding' => [
                         'type' => 'dense_vector',
-                        'dims' => (int) config('core.search.vector.dimensions', 384),
+                        'dims' => VectorProfileContext::get()?->dimensions,
                         'index' => true,
                         'similarity' => 'cosine',
                     ],

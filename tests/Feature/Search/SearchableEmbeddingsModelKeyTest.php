@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DTOs\VectorProfile;
@@ -11,8 +10,6 @@ use Modules\Core\Tests\Stubs\Search\VectorEmbeddingsArrayStubModel;
 use Modules\Core\Tests\Support\FakeVectorProfile;
 
 beforeEach(function (): void {
-    Config::set('core.search.vector.enabled', true);
-
     Schema::create('core_test_vector_embeddings_stub', function ($table): void {
         $table->id();
     });
@@ -50,8 +47,8 @@ it('filters an eager-loaded relation the same way', function (): void {
     expect($this->model->toSearchableArray()['embeddings'])->toBe([['vector' => [0.3, 0.4, 0.5]]]);
 });
 
-it('serializes every row when there is no profile', function (): void {
+it('serializes no embeddings when there is no profile, whatever rows the model has', function (): void {
     FakeVectorProfile::none();
 
-    expect($this->model->toSearchableArray()['embeddings'])->toHaveCount(3);
+    expect($this->model->toSearchableArray())->not->toHaveKey('embeddings');
 });

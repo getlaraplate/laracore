@@ -7,6 +7,7 @@ use Modules\Core\Models\MediaDraft;
 use Modules\Core\Models\User;
 use Modules\Core\Search\SearchableContributorRegistry;
 use Modules\Core\Tests\Stubs\Search\StubMediaContributor;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 function makeMedia(array $custom = [], ?string $ownerType = User::class): Media
 {
@@ -27,7 +28,7 @@ function makeMedia(array $custom = [], ?string $ownerType = User::class): Media
 }
 
 beforeEach(function (): void {
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
 });
 
 it('is not searchable while owned by a media draft (claim gate)', function (): void {

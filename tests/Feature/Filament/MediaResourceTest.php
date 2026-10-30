@@ -12,6 +12,7 @@ use Modules\Core\Models\Media;
 use Modules\Core\Models\MediaDraft;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 function mediaPanelUser(): User
 {
@@ -49,7 +50,7 @@ function makeClaimedMedia(array $custom = [], string $mime = 'image/jpeg', strin
 }
 
 beforeEach(function (): void {
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
     Filament::setCurrentPanel('admin');
 });
 

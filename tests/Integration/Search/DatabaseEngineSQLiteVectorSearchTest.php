@@ -10,11 +10,13 @@ use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\WhereClause;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\ModelEmbedding;
+use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Services\EnsembleSearchService;
 use Modules\Core\Search\Services\HeuristicReranker;
 use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
 use Modules\Core\Tests\Stubs\Search\DatabaseEngineSQLiteVectorSearchUser;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 it('returns the top sqlite vector search matches without changing the result shape', function (): void {
     config()->set('database.default', 'sqlite');
@@ -63,9 +65,7 @@ it('builds the postgresql vector query with pgvector distance bindings without e
     $method = new ReflectionMethod(DatabaseEngine::class, 'postgreSQLVectorSearchQuery');
     $method->setAccessible(true);
 
-    config()->set('core.search.vector.dimensions', 3);
-    config()->set('core.search.vector.similarity', 'cosine');
-    config()->set('core.search.vector.model', '');
+    FakeVectorProfile::use(new VectorProfile('', 3, 'cosine'));
 
     $query = $method->invoke(new DatabaseEngine(), [1.0, 0.5, 0.0], new DatabaseEngineSQLiteVectorSearchUser(), [101, 202]);
 

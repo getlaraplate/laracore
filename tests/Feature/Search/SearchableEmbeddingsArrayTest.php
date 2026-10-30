@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Search\Contracts\ISearchEngine;
+use Modules\Core\Search\DTOs\VectorProfile;
+use Modules\Core\Search\Engines\ElasticsearchEngine;
+use Modules\Core\Tests\Stubs\Search\VectorEmbeddingFieldStubModel;
 use Modules\Core\Tests\Stubs\Search\VectorEmbeddingsArrayStubModel;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 /**
  * Base Searchable::toSearchableArray() must emit an agnostic `embeddings`
@@ -14,7 +17,7 @@ use Modules\Core\Tests\Stubs\Search\VectorEmbeddingsArrayStubModel;
  * (nested vector field) already expects.
  */
 beforeEach(function (): void {
-    Config::set('core.search.vector.enabled', true);
+    FakeVectorProfile::use(new VectorProfile('test-profile', 2, 'cosine'));
 
     Schema::create('core_test_vector_embeddings_stub', function ($table): void {
         $table->id();
@@ -67,4 +70,27 @@ it('does not add embeddings when the engine does not support vector search', fun
     $array = $model->toSearchableArray();
 
     expect($array)->not->toHaveKey('embeddings');
+});
+
+it('does not add embeddings when there is no vector profile', function (): void {
+    FakeVectorProfile::none();
+    $engine = Mockery::mock(ISearchEngine::class);
+    $engine->shouldReceive('supportsVectorSearch')->andReturn(true);
+
+    $model = new VectorEmbeddingsArrayStubModel();
+    $model->withEngine($engine);
+    $model->saveQuietly();
+    $model->embeddings()->create(['embedding' => [0.1, 0.2], 'locale' => 'it', 'model_key' => 'test-profile']);
+
+    expect($model->toSearchableArray())->not->toHaveKey('embeddings')
+        ->and($model->isEmbeddable())->toBeFalse();
+});
+
+it('sizes the embedding schema field after the dimensions and similarity of the vector profile', function (): void {
+    FakeVectorProfile::use(new VectorProfile('test-profile', 1024, 'dot_product'));
+    $model = (new VectorEmbeddingFieldStubModel())->withEngine((new ReflectionClass(ElasticsearchEngine::class))->newInstanceWithoutConstructor());
+
+    $embedding = $model->getSearchMapping()['mappings']['properties']['embedding'];
+
+    expect($embedding)->toMatchArray(['type' => 'dense_vector', 'dims' => 1024, 'similarity' => 'dot_product']);
 });

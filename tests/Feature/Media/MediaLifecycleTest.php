@@ -14,9 +14,10 @@ use Modules\Core\Models\Media;
 use Modules\Core\Models\ModelEmbedding;
 use Modules\Core\Services\PerModelSettingResolver;
 use Modules\Core\Tests\Stubs\Search\MediaOwnerStubModel;
+use Modules\Core\Tests\Support\FakeVectorProfile;
 
 beforeEach(function (): void {
-    config()->set('core.search.vector.enabled', false);
+    FakeVectorProfile::none();
     Schema::create('media_owner_stubs', function ($table): void {
         $table->id();
         $table->string('title')->nullable();
