@@ -6,10 +6,12 @@ namespace Modules\Core\Filament\Widgets;
 
 use Exception;
 use Filament\Widgets\Widget;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Laravel\Scout\EngineManager;
 use Laravel\Scout\Searchable;
 use Modules\Core\Search\Contracts\ISearchEngine;
+use Modules\Core\Services\ElasticsearchService;
 use Override;
 use Throwable;
 
@@ -72,16 +74,15 @@ final class SearchEngineHealthTableWidget extends Widget
 
                 if ($engine instanceof ISearchEngine) {
                     try {
-                        $stats = $engine->stats();
-                        $documents = $stats[$instance->searchableAs()]['num_documents'] ?? 0;
-                    } catch (Throwable) {
-                        $documents = 0;
-                    }
-
-                    try {
                         $index_exists = $engine->checkIndex($instance);
                     } catch (Throwable) {
                         $index_exists = false;
+                    }
+
+                    try {
+                        $documents = $index_exists ? $this->countDocuments($engine, $instance) : 0;
+                    } catch (Throwable) {
+                        $documents = 0;
                     }
                 }
 
@@ -101,5 +102,21 @@ final class SearchEngineHealthTableWidget extends Widget
         }
 
         return $data;
+    }
+
+    /**
+     * The number of documents in the model's index. Elasticsearch is asked through the
+     * `_count` API, since a search reports at most 10,000 hits and its cluster stats
+     * hold no per-index figures; other engines report the total of an empty search.
+     */
+    private function countDocuments(ISearchEngine $engine, Model $model): int
+    {
+        if (config('scout.driver') === 'elasticsearch') {
+            $response = ElasticsearchService::getInstance()->client->count(['index' => $model->searchableAs()]);
+
+            return (int) ($response->asArray()['count'] ?? 0);
+        }
+
+        return (int) $engine->getTotalCount($engine->search($model::search('')));
     }
 }
