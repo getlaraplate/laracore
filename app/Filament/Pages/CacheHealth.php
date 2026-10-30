@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Modules\Core\Filament\Pages;
 
 use BackedEnum;
-use Deprecated;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Modules\Core\Filament\Widgets\SearchEngineHealthTableWidget;
@@ -31,30 +30,22 @@ final class CacheHealth extends Page
         return (string) __('app.pages.caches');
     }
 
+    #[Override]
+    public function getTitle(): string
+    {
+        return (string) __('app.pages.caches');
+    }
+
     // protected static ?int $navigationSort = 1;
 
     /**
      * @return array<class-string<Widget> | WidgetConfiguration>
      */
-    public function getWidgets(): array
+    #[Override]
+    protected function getHeaderWidgets(): array
     {
         return [
             SearchEngineHealthTableWidget::class,
         ];
-    }
-
-    /**
-     * @return array<class-string<Widget> | WidgetConfiguration>
-     */
-    #[Deprecated(message: 'Use `getWidgetsSchemaComponents($this->getWidgets())` to transform widgets into schema components instead, which also filters their visibility.')]
-    public function getVisibleWidgets(): array
-    {
-        return $this->filterVisibleWidgets($this->getWidgets());
-    }
-
-    #[Override]
-    public function getTitle(): string
-    {
-        return (string) __('app.pages.caches');
     }
 }
