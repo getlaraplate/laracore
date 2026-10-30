@@ -518,3 +518,52 @@ it('falls back to the locale the default language setting names, once the settin
 
     expect(FakeTranslatableModel::query()->find($id)?->title)->toBe('Solo italiano');
 });
+
+it('shows the text of any locale in the backoffice when neither the content locale nor the default one has it', function (): void {
+    configureFakeTranslatableFallback(false);
+    $other_locale = LocaleContext::getDefault() === 'fr' ? 'es' : 'fr';
+    $id = (new FakeTranslatableModel)->newQueryWithoutScopes()->insertGetId(['created_at' => now(), 'updated_at' => now()]);
+    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+        'fake_translatable_model_id' => $id,
+        'locale' => $other_locale,
+        'title' => 'Only in another locale',
+    ]);
+
+    LocaleContext::setContentLocale('de');
+
+    $record = FakeTranslatableModel::query()->find($id);
+
+    expect($record)->not->toBeNull()
+        ->and($record->title)->toBe('Only in another locale')
+        ->and(FakeTranslatableModel::query()->get()->firstWhere('id', $id)?->title)->toBe('Only in another locale');
+});
+
+it('prefers the default locale over any other in the backoffice when the content locale is missing', function (): void {
+    configureFakeTranslatableFallback(false);
+    $other_locale = LocaleContext::getDefault() === 'fr' ? 'es' : 'fr';
+    $id = fakeTranslatedOnlyInDefaultLocale('Default text');
+    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+        'fake_translatable_model_id' => $id,
+        'locale' => $other_locale,
+        'title' => 'Text in another locale',
+    ]);
+
+    LocaleContext::setContentLocale('de');
+
+    expect(FakeTranslatableModel::query()->get()->firstWhere('id', $id)?->title)->toBe('Default text');
+});
+
+it('still hides a record translated only in another locale outside the backoffice', function (): void {
+    configureFakeTranslatableFallback(true);
+    $other_locale = LocaleContext::getDefault() === 'fr' ? 'es' : 'fr';
+    $id = (new FakeTranslatableModel)->newQueryWithoutScopes()->insertGetId(['created_at' => now(), 'updated_at' => now()]);
+    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+        'fake_translatable_model_id' => $id,
+        'locale' => $other_locale,
+        'title' => 'Only in another locale',
+    ]);
+
+    LocaleContext::set('de');
+
+    expect(FakeTranslatableModel::query()->find($id))->toBeNull();
+});

@@ -34,9 +34,10 @@ final class LocaleScope implements Scope
 
         // Eager load traduzione corrente (con fallback se abilitato)
         // The backoffice lists every record, so where the content locale has no translation it shows the default
-        // one, whatever the model's fallback: an empty cell would read as missing data. Forms do not use this
-        // relation for what they write (they ask for the translation without fallback).
-        $this->eagerLoadTranslation($builder, $current_locale, $default_locale, $fallback_enabled || LocaleContext::getContentLocale() !== null);
+        // one, whatever the model's fallback, and any other one where the default is missing too: an empty cell
+        // would read as missing data. Forms do not use this relation for what they write (they ask for the
+        // translation without fallback).
+        $this->eagerLoadTranslation($builder, $current_locale, $default_locale, $fallback_enabled, LocaleContext::getContentLocale() !== null);
     }
 
     /**
@@ -96,10 +97,15 @@ final class LocaleScope implements Scope
         string $current_locale,
         string $default_locale,
         bool $fallback_enabled,
+        bool $any_locale = false,
     ): void {
         /** @var \Illuminate\Database\Query\Builder $query */
-        $builder->with(['translation' => function ($query) use ($current_locale, $default_locale, $fallback_enabled): void { // @pest-ignore-type
-            if ($fallback_enabled) {
+        $builder->with(['translation' => function ($query) use ($current_locale, $default_locale, $fallback_enabled, $any_locale): void { // @pest-ignore-type
+            if ($any_locale) {
+                // Carica traduzione corrente, poi quella di default, poi una qualsiasi
+                $query->orderByRaw('CASE WHEN locale = ? THEN 0 WHEN locale = ? THEN 1 ELSE 2 END', [$current_locale, $default_locale])
+                    ->orderBy('id');
+            } elseif ($fallback_enabled) {
                 // Carica traduzione corrente, se non esiste usa quella di default
                 /** @var \Illuminate\Database\Query\Builder $q */
                 $query->where(function ($q) use ($current_locale, $default_locale): void { // @pest-ignore-type

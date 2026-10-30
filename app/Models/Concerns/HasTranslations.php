@@ -182,13 +182,19 @@ trait HasTranslations
     {
         $current_locale = LocaleContext::get();
         $default_locale = LocaleContext::getDefault();
-        // The backoffice (a picked content locale) shows the default text where a translation is missing, whatever
-        // the model's fallback; what it writes never comes from this relation.
-        $fallback_enabled = $this->isFallbackEnabled() || LocaleContext::getContentLocale() !== null;
+        $fallback_enabled = $this->isFallbackEnabled();
 
         $relation = $this->hasOne(static::getTranslationModelClass());
 
-        if ($fallback_enabled) {
+        // The backoffice (a picked content locale) shows the default text where a translation is missing, whatever
+        // the model's fallback, and the text of any other locale where the default is missing too: an empty cell
+        // would read as missing data. What it writes never comes from this relation.
+        if (LocaleContext::getContentLocale() !== null) {
+            $relation->orderByRaw(
+                'CASE WHEN locale = ? THEN 0 WHEN locale = ? THEN 1 ELSE 2 END',
+                [$current_locale, $default_locale],
+            )->orderBy('id');
+        } elseif ($fallback_enabled) {
             // Se fallback abilitato: traduzione corrente o di default
             $relation->where(function ($query) use ($current_locale, $default_locale): void {
                 $query->where('locale', $current_locale)
