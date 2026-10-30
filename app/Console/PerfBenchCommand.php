@@ -16,12 +16,12 @@ use Override;
  * reporting latency percentiles, per-request query counts and peak memory.
  *
  * Example:
- *   php artisan perf:bench GET:/api/v1/health POST:/app/... --iterations=50
+ *   php artisan test:perf:bench GET:/api/v1/health POST:/app/... --iterations=50
  */
 final class PerfBenchCommand extends Command
 {
     #[Override]
-    protected $signature = 'perf:bench
+    protected $signature = 'test:perf:bench
         {endpoint* : One or more METHOD:URI targets, e.g. GET:/api/v1/health}
         {--iterations=30 : Number of measured iterations per endpoint}
         {--warmup=3 : Number of unmeasured warmup iterations per endpoint}

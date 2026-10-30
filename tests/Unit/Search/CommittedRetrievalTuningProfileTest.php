@@ -6,7 +6,7 @@ use Modules\Core\Tests\Support\RetrievalTuningProfileAudit;
 
 /**
  * A committed profile with measured values must say where they come from: a `report` key naming a
- * report of `ai:tune-retrieval` kept under `docs/evaluations/retrieval-tuning/`, that passed the
+ * report of `test:ai:tune-retrieval` kept under `docs/evaluations/retrieval-tuning/`, that passed the
  * held-out validation and the noise check, and whose winner is what the profile holds. Without
  * that, a hand-picked number is indistinguishable from a measurement. A profile that only
  * restates the L0 constants is exempt: it changes nothing.

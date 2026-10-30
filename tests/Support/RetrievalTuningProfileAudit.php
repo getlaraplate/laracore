@@ -10,7 +10,7 @@ use Modules\Core\Search\Enums\QueryClass;
  * Checks that a committed retrieval tuning profile is backed by a measurement.
  *
  * A profile that only restates the L0 constants changes nothing and needs no source. One with
- * measured values must name, in `report`, a report of `ai:tune-retrieval` kept under
+ * measured values must name, in `report`, a report of `test:ai:tune-retrieval` kept under
  * {@see self::REPORT_DIRECTORY} (relative to the Core module), and that report must have passed the
  * held-out validation and the noise check and hold the same winner and class overrides as the
  * profile. Otherwise a hand-picked number cannot be told from a measured one.
@@ -39,7 +39,7 @@ final class RetrievalTuningProfileAudit
         }
 
         if (! is_string($report_path) || mb_trim($report_path) === '') {
-            return ['The profile carries measured values but cites no report: add a `report` key naming a validated ai:tune-retrieval report.'];
+            return ['The profile carries measured values but cites no report: add a `report` key naming a validated test:ai:tune-retrieval report.'];
         }
 
         if (! str_starts_with($report_path, self::REPORT_DIRECTORY)

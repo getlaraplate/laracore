@@ -273,7 +273,7 @@ The database engine always provides case-insensitive prefix or substring matchin
 
 ### Retrieval tuning profile
 
-Orchestrated search fuses keyword, vector and hybrid rankings with parameters from the planner (L0). The `search.adaptive_tuning` setting (group `search`, seeded off) swaps in the committed, measured profile `config/search_tuning.php`, selected per query class (`identifier`, `short_keyword`, `multi_term`, `natural_language`). The profile shapes fusion and reranking only, never which strategies run; off, missing or invalid means the planner values are used unchanged. Every tuned response carries `meta['tuning']` with the profile version and the query class. Profile values are produced by `php artisan ai:tune-retrieval` (AI module) and committed by hand. Details: `docs/rag/SEARCH_RETRIEVAL_PIPELINE.md`.
+Orchestrated search fuses keyword, vector and hybrid rankings with parameters from the planner (L0). The `search.adaptive_tuning` setting (group `search`, seeded off) swaps in the committed, measured profile `config/search_tuning.php`, selected per query class (`identifier`, `short_keyword`, `multi_term`, `natural_language`). The profile shapes fusion and reranking only, never which strategies run; off, missing or invalid means the planner values are used unchanged. Every tuned response carries `meta['tuning']` with the profile version and the query class. Profile values are produced by `php artisan test:ai:tune-retrieval` (AI module) and committed by hand. Details: `docs/rag/SEARCH_RETRIEVAL_PIPELINE.md`.
 
 ### Elasticsearch configuration
 
