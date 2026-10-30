@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Elastic\Elasticsearch\ClientBuilder;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
@@ -19,6 +20,8 @@ use Modules\Core\Models\License;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Search\Contracts\ISearchEngine;
+use Modules\Core\Services\ElasticsearchService;
+use Modules\Core\Tests\Stubs\Search\CountingElasticsearchHttpClient;
 
 beforeEach(function (): void {
     if (! class_exists(App\Models\User::class)) {
@@ -243,6 +246,47 @@ it('returns search engine health view data structure', function (): void {
             ->and($data['models'][0]['documents'])->toBe(0)
             ->and($data['models'][0]['index_exists'])->toBeFalse();
     }
+});
+
+it('counts search engine health documents with the elasticsearch count api', function (): void {
+    config(['scout.driver' => 'elasticsearch']);
+
+    $engine = Mockery::mock(ISearchEngine::class);
+    $engine->shouldReceive('checkIndex')->andReturnTrue();
+    app()->instance(EngineManager::class, Mockery::mock(EngineManager::class, ['engine' => $engine]));
+
+    $http_client = new CountingElasticsearchHttpClient(42);
+    $reflection = new ReflectionClass(ElasticsearchService::class);
+    $service = $reflection->newInstanceWithoutConstructor();
+    $reflection->getProperty('client')->setValue($service, ClientBuilder::create()->setHttpClient($http_client)->build());
+    $reflection->getProperty('instance')->setValue(null, $service);
+
+    try {
+        $data = new ReflectionMethod(SearchEngineHealthTableWidget::class, 'fetchSearchEngineData')->invoke(new SearchEngineHealthTableWidget());
+    } finally {
+        $reflection->getProperty('instance')->setValue(null, null);
+    }
+
+    expect($data['error'])->toBeNull()
+        ->and($data['models'])->not->toBeEmpty()
+        ->and(array_column($data['models'], 'documents'))->each->toBe(42)
+        ->and($http_client->uris)->each->toContain('/_count');
+});
+
+it('counts search engine health documents through the engine total for other engines', function (): void {
+    config(['scout.driver' => 'typesense']);
+
+    $engine = Mockery::mock(ISearchEngine::class);
+    $engine->shouldReceive('checkIndex')->andReturnTrue();
+    $engine->shouldReceive('search')->andReturn(['found' => 7]);
+    $engine->shouldReceive('getTotalCount')->with(['found' => 7])->andReturn(7);
+    app()->instance(EngineManager::class, Mockery::mock(EngineManager::class, ['engine' => $engine]));
+
+    $data = new ReflectionMethod(SearchEngineHealthTableWidget::class, 'fetchSearchEngineData')->invoke(new SearchEngineHealthTableWidget());
+
+    expect($data['error'])->toBeNull()
+        ->and($data['models'])->not->toBeEmpty()
+        ->and(array_column($data['models'], 'documents'))->each->toBe(7);
 });
 
 it('returns system health widget columns and stats', function (): void {
