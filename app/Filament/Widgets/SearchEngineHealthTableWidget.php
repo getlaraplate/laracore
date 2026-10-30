@@ -90,7 +90,7 @@ final class SearchEngineHealthTableWidget extends Widget
                     'name' => class_basename($model),
                     'full_name' => $model,
                     'searchable_as' => $instance->searchableAs(),
-                    'count' => $model::query()->count(),
+                    'count' => $this->countRecords($model),
                     'index_exists' => $index_exists,
                     'documents' => $documents,
                 ];
@@ -102,6 +102,17 @@ final class SearchEngineHealthTableWidget extends Widget
         }
 
         return $data;
+    }
+
+    /**
+     * The number of rows the index should hold: the rows `scout:import` reaches through
+     * makeAllSearchableQuery(), which lifts scopes such as LocaleScope that `query()` keeps.
+     *
+     * @param  class-string<Model>  $model
+     */
+    private function countRecords(string $model): int
+    {
+        return $model::makeAllSearchableQuery()->count();
     }
 
     /**
