@@ -160,10 +160,10 @@ profile logs one warning per process). The shipped profile restates the L0 const
 (`rrf_k` 60, `rrf_weight` 0.25, `agreement_boost` 0.15, empty class sets), so switching it on
 changes only `meta['tuning']` until a measured profile is committed. A profile with measured values
 must cite its source in a `report` key, a path relative to the Core module under
-`docs/evaluations/retrieval-tuning/`: a report of `ai:tune-retrieval` that passed the held-out
+`docs/evaluations/retrieval-tuning/`: a report of `test:ai:tune-retrieval` that passed the held-out
 validation and the noise check and holds the same `default` and class sets (checked by
 `CommittedRetrievalTuningProfileTest`; the runtime ignores the key). Profile values come from
-`ai:tune-retrieval` (AI module), never from intuition: see
+`test:ai:tune-retrieval` (AI module), never from intuition: see
 `Modules/AI/docs/rag/MODULE.md`. The tuner holds out a share of its cases to validate the winner and
 withholds class overrides backed by too few cases, and it declares no winner when the gain over the committed profile is no bigger than what one flipped case of its sample could produce (the noise margin), so a profile is not just the best fit to its dataset.
 
@@ -368,7 +368,7 @@ so a request in Italian ranks on Italian text and on the vectors.
 | `reranked` | whether reranking actually ran (false after a reranker failure) |
 | `reranker_model` | the model that scored the hits, present only when the reranker names it (`IRerankerWithModel`, which `CrossEncoderService` implements from the `model` its service answers with) |
 | `matching` | resolved text-match decision plus engine degradations |
-| `per_strategy` | per-strategy ordered hits (`id`, `score`, `rank`), consumed by `ai:evaluate-retrieval-strategies` and `ai:tune-retrieval` |
+| `per_strategy` | per-strategy ordered hits (`id`, `score`, `rank`), consumed by `test:ai:evaluate-retrieval-strategies` and `test:ai:tune-retrieval` |
 | `tuning` | present only when the tuning profile was applied: `{applied, profile_version, query_class}` |
 | `search` | always present: `{mode_requested, mode_applied, degraded_reason, retries_used}`, see [Search modes](#search-modes-how-much-a-request-spends) |
 | `unsupported_driver` | present when the engine cannot orchestrate |
@@ -439,7 +439,7 @@ overlay):
    `reranked` line says whether the `ensemble_ms` figure includes it.
 
 `perf:crud` does not exercise this path: it benchmarks `/api/v1/select/{module}/{entity}`, the list
-endpoint, without a search query. `perf:bench` and `perf:profile` can target
+endpoint, without a search query. `test:perf:bench` and `perf:profile` can target
 `GET:/api/v1/search/{module}/{entity}?qs=...&mode=orchestrated` for end-to-end latency or a flame
 profile (the public API must be exposed, as `perf:crud` does with the `expose_api` setting), but none
 of the perf commands prints the response body, so the per-stage split comes from step 2.
@@ -472,7 +472,7 @@ Consumed at runtime:
 | `core.search.reranker.weight` | runtime setting | `EnsembleSearchService` (rerank blend when the plan sets none) |
 | `core.search.adaptive_tuning` | runtime setting | `RetrievalTuningProfile` (switch) |
 | `core.search.debug_timings` | runtime setting | `AdvancedSearchService` (adds `meta['timings']`) |
-| `search_tuning.*` | — (committed file) | `RetrievalTuningProfile`, `ai:tune-retrieval` |
+| `search_tuning.*` | — (committed file) | `RetrievalTuningProfile`, `test:ai:tune-retrieval` |
 | `search.text_matching.*` | — | `TextMatchOptionsResolver` |
 
 Declared but **not read by any code today** (do not document them as working knobs):
@@ -483,7 +483,7 @@ Declared but **not read by any code today** (do not document them as working kno
 
 ## Evaluation is an offline loop
 
-`ai:evaluate-application-content` (end-to-end ordering) and `ai:evaluate-retrieval-strategies`
+`test:ai:evaluate-application-content` (end-to-end ordering) and `test:ai:evaluate-retrieval-strategies`
 (per-strategy ordering, reranker off and on) score the real pipeline against committed relevance
 datasets. **No runtime code reads the produced reports.** The loop is: run the command, read the
 metrics, change code or configuration in a reviewed commit, re-run. Committed baselines are
@@ -502,7 +502,7 @@ See `Modules/AI/docs/rag/MODULE.md` for datasets, metrics and baseline locations
 | `meta.vector_disabled` = `dimension_mismatch` | the index maps another length than `core.search.vector.dimensions`: finish the switch, or recreate the index |
 | `meta.vector_disabled` = `no_vectors` | nothing embedded with the active model: embeddings feature off, or run `ai:embeddings:repair --all` |
 | Vector results are noise | records with embeddings but none of the active `model_key`; run `ai:embeddings:repair --stale` |
-| Hybrid ranks worse than keyword alone | measure with `ai:evaluate-retrieval-strategies` before changing weights |
+| Hybrid ranks worse than keyword alone | measure with `test:ai:evaluate-retrieval-strategies` before changing weights |
 | Ranking changed after flipping `search.adaptive_tuning` | read `meta['tuning']` (profile version, query class); switch it off to return to L0 without a deploy |
 
 ## FAQ prompts for RAG

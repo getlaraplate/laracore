@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Route;
 it('profiles the given endpoint and reports latency columns', function (): void {
     Route::get('/perf-cmd-probe', fn () => response()->json(['ok' => true]));
 
-    $this->artisan('perf:bench', [
+    $this->artisan('test:perf:bench', [
         'endpoint' => ['GET:/perf-cmd-probe'],
         '--iterations' => 2,
         '--warmup' => 0,
@@ -20,7 +20,7 @@ it('profiles the given endpoint and reports latency columns', function (): void 
 });
 
 it('fails clearly on a malformed endpoint spec', function (): void {
-    $this->artisan('perf:bench', [
+    $this->artisan('test:perf:bench', [
         'endpoint' => ['not-a-valid-spec'],
     ])->assertFailed();
 });
@@ -32,7 +32,7 @@ it('profiles as an authenticated user when --user is given', function (): void {
 
     $user = User::factory()->create();
 
-    $this->artisan('perf:bench', [
+    $this->artisan('test:perf:bench', [
         'endpoint' => ['GET:/perf-cmd-auth'],
         '--user' => (string) $user->getKey(),
         '--iterations' => 2,
@@ -43,7 +43,7 @@ it('profiles as an authenticated user when --user is given', function (): void {
 });
 
 it('fails when --user id does not exist', function (): void {
-    $this->artisan('perf:bench', [
+    $this->artisan('test:perf:bench', [
         'endpoint' => ['GET:/whatever'],
         '--user' => '999999',
     ])->assertFailed();

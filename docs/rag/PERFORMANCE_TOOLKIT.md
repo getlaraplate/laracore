@@ -22,16 +22,16 @@ All live in `Modules\Core\Performance` (+ the `BootSampler` contract in
 
 ## Commands
 
-### `perf:bench` — endpoint latency
+### `test:perf:bench` — endpoint latency
 
 Profiles one or more endpoints through the **real kernel** (full
 middleware/routing/controller/authorization/serialization stack), reporting
 p50/p95/max latency, per-request query count and peak memory.
 
 ```bash
-php artisan perf:bench GET:/app/about "GET:/api/v1/health" --iterations=50 --warmup=5
-php artisan perf:bench "GET:/app/user/profile-information" --user=1   # act as a user
-php artisan perf:bench GET:/app/about --json                          # machine-readable
+php artisan test:perf:bench GET:/app/about "GET:/api/v1/health" --iterations=50 --warmup=5
+php artisan test:perf:bench "GET:/app/user/profile-information" --user=1   # act as a user
+php artisan test:perf:bench GET:/app/about --json                          # machine-readable
 ```
 
 `--user=<id>` authenticates on the guard (so `$request->user()` / `auth()->user()`

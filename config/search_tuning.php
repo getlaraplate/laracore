@@ -21,7 +21,7 @@ declare(strict_types=1);
 |
 | This shipped profile only restates the L0 constants, so turning the switch on
 | changes nothing but `meta['tuning']`. Replace it with a block printed by
-| `php artisan ai:tune-retrieval`, add `'report' => 'docs/evaluations/retrieval-tuning/<file>.json'`
+| `php artisan test:ai:tune-retrieval`, add `'report' => 'docs/evaluations/retrieval-tuning/<file>.json'`
 | (relative to the Core module) citing the report of that run, committed there, and
 | bump `version`. Never hand-pick values: a test requires every profile with measured
 | values to cite a report that passed the held-out validation and the noise check and
