@@ -215,9 +215,9 @@ of after the cache expires. Engines that do not report dimensions (database, Typ
 `dimension_mismatch` check.
 
 Index documents carry the vectors of one model only: `Searchable::toSearchableArray()` keeps the
-embedding rows whose `model_key` equals `VectorModelContext::get()`, which is
-`core.search.vector.model` unless code runs inside `VectorModelContext::using($key, ...)` (the switch
-does, to write documents with the target's vectors). With no model configured every row is kept.
+embedding rows whose `model_key` equals `VectorProfileContext::modelKey()`, which is the key of the
+`IVectorProfileProvider::current()` profile unless code runs inside `VectorProfileContext::using($profile, ...)`
+(the switch does, to write documents with the target's vectors). With no profile every row is kept.
 
 ### PostgreSQL with pgvector
 
@@ -464,7 +464,7 @@ Consumed at runtime:
 | `core.search.vector.enabled` | runtime setting (Filament > Settings) | `FallbackSearchPlanner`, engines |
 | `core.search.vector.dimensions` | managed setting (written by the AI model switch) | ES `dense_vector` mapping, guard, pgvector query cast |
 | `core.search.vector.similarity` | managed setting (written by the AI model switch) | ES mapping, pgvector operator |
-| `core.search.vector.model` | managed setting (written by the AI model switch) | `VectorModelContext` (index documents), pgvector query filter |
+| `core.search.vector.model` | managed setting (written by the AI model switch) | pgvector query filter |
 | `core.search.vector.suspended_reason` | managed setting (`switching` during a switch, else null) | vector guard |
 | `search.analyzers` | `SEARCH_ANALYZER_IT`, `SEARCH_ANALYZER_EN` | per-locale text mappings |
 | `core.search.reranker.enabled` | runtime setting | `EnsembleSearchService` (plan fallback) |

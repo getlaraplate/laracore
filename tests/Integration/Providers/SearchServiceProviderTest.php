@@ -6,9 +6,12 @@ use Laravel\Scout\EngineManager;
 use Modules\Core\Providers\SearchServiceProvider;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\Contracts\ISearchStrategyResolver;
+use Modules\Core\Search\Contracts\IVectorProfileProvider;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\CoreSearchStrategyResolver;
+use Modules\Core\Search\Services\NullVectorProfileProvider;
+use Modules\Core\Search\Support\VectorProfileContext;
 
 beforeEach(function (): void {
     $this->provider = new SearchServiceProvider(app());
@@ -30,6 +33,12 @@ it('registers advanced search coordinator', function (): void {
 it('binds the strategy resolver contract, to Core\'s cheap resolver unless a module replaces it', function (): void {
     expect(app(ISearchStrategyResolver::class))->toBeInstanceOf(ISearchStrategyResolver::class)
         ->and(app(CoreSearchStrategyResolver::class))->toBeInstanceOf(CoreSearchStrategyResolver::class);
+});
+
+it('binds the vector profile provider to the null provider, so there is no profile by default', function (): void {
+    expect(app(IVectorProfileProvider::class))->toBeInstanceOf(NullVectorProfileProvider::class)
+        ->and(VectorProfileContext::get())->toBeNull()
+        ->and(VectorProfileContext::modelKey())->toBeNull();
 });
 
 it('binds Scout engine implementations', function (): void {

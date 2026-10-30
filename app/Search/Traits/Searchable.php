@@ -35,7 +35,7 @@ use Modules\Core\Search\Schema\IndexType;
 use Modules\Core\Search\Schema\SchemaDefinition;
 use Modules\Core\Search\Schema\SchemaManager;
 use Modules\Core\Search\SearchableContributorRegistry;
-use Modules\Core\Search\Support\VectorModelContext;
+use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Modules\Core\Support\SearchEngineAvailability;
 use Spatie\MediaLibrary\HasMedia;
@@ -265,7 +265,7 @@ trait Searchable
             // Reuse the eager-loaded relation on the bulk path (adaptiveBulkIndex
             // pre-loads it) and query only when it is not loaded, so serializing a
             // chunk does not fire one embeddings query per model.
-            $model_key = VectorModelContext::get();
+            $model_key = VectorProfileContext::modelKey();
             $loaded = $this->relationLoaded('embeddings') ? $this->getRelation('embeddings') : null;
             $embeddings = $loaded instanceof Collection
                 ? $loaded
