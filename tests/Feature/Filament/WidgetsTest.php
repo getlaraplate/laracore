@@ -16,12 +16,14 @@ use Modules\Core\Filament\Widgets\HorizonStatsWidget;
 use Modules\Core\Filament\Widgets\SearchEngineHealthTableWidget;
 use Modules\Core\Filament\Widgets\SystemHealthWidget;
 use Modules\Core\Filament\Widgets\WelcomeLinkWidget;
+use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Models\License;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Services\ElasticsearchService;
 use Modules\Core\Tests\Stubs\Search\CountingElasticsearchHttpClient;
+use Modules\Core\Tests\Stubs\Search\LocaleHiddenSearchStubModel;
 
 beforeEach(function (): void {
     if (! class_exists(App\Models\User::class)) {
@@ -287,6 +289,35 @@ it('counts search engine health documents through the engine total for other eng
     expect($data['error'])->toBeNull()
         ->and($data['models'])->not->toBeEmpty()
         ->and(array_column($data['models'], 'documents'))->each->toBe(7);
+});
+
+it('counts search engine health records as the import reaches them', function (): void {
+    config(['app.locale' => 'it', 'app.default_locale' => 'it']);
+    LocaleContext::set('it');
+
+    Schema::create('core_test_locale_hidden_search_stub', function (Blueprint $table): void {
+        $table->id();
+    });
+
+    Schema::create('core_test_locale_hidden_search_stub_translations', function (Blueprint $table): void {
+        $table->id();
+        $table->unsignedBigInteger('locale_hidden_search_stub_model_id');
+        $table->string('locale');
+    });
+
+    $visible = new LocaleHiddenSearchStubModel;
+    $visible->saveQuietly();
+    $visible->translations()->create(['locale' => 'it']);
+
+    $hidden = new LocaleHiddenSearchStubModel;
+    $hidden->saveQuietly();
+    $hidden->translations()->create(['locale' => 'en']);
+
+    $count = new ReflectionMethod(SearchEngineHealthTableWidget::class, 'countRecords')
+        ->invoke(new SearchEngineHealthTableWidget(), LocaleHiddenSearchStubModel::class);
+
+    expect(LocaleHiddenSearchStubModel::query()->count())->toBe(1)
+        ->and($count)->toBe(2);
 });
 
 it('returns system health widget columns and stats', function (): void {
