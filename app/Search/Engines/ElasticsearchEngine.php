@@ -16,6 +16,7 @@ use InvalidArgumentException;
 use Laravel\Scout\Builder;
 use Modules\Core\Search\Contracts\ILocaleFilterableEngine;
 use Modules\Core\Search\Contracts\IReportsVectorDimensions;
+use Modules\Core\Search\Contracts\IReportsVectorSimilarity;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DTOs\TextMatchOptions;
 use Modules\Core\Search\DTOs\VectorProfile;
@@ -37,7 +38,7 @@ use stdClass;
 /**
  * Implementation of the search engine for Elasticsearch.
  */
-final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILocaleFilterableEngine, IReportsVectorDimensions, ISearchEngine
+final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILocaleFilterableEngine, IReportsVectorDimensions, IReportsVectorSimilarity, ISearchEngine
 {
     use CommonEngineFunctions;
 
@@ -708,6 +709,17 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
     }
 
     /**
+     * The similarity behind the `_score` of a kNN hit. For `cosine` and `dot_product` the score is
+     * `(1 + similarity) / 2`; an `l2_norm` score is built from a distance, and the floor does not apply
+     * to it, so it gives none.
+     */
+    #[Override]
+    public function vectorSimilarity(float $score, VectorProfile $profile): ?float
+    {
+        return in_array($profile->similarity, ['cosine', 'dot_product'], true) ? 2.0 * $score - 1.0 : null;
+    }
+
+    /**
      * The declared-vs-live mapping mismatches for a model's index, as
      * human-readable lines (dotted field paths). Empty when the structure
      * matches and — failing open — when the index is missing, its mapping is
@@ -981,6 +993,14 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
             // with a matching vector in any language still scores, it is just excluded when none of its
             // available languages is the requested one.
             $knn['filter'] = ['bool' => ['must' => $filters]];
+        }
+
+        // The profile floor is on the scale of the similarity function (the cosine for `cosine`), which
+        // is what kNN `similarity` reads; it is not the `_score` of the hits.
+        $floor = VectorProfileContext::get()?->similarityFloor();
+
+        if ($floor !== null) {
+            $knn['similarity'] = $floor;
         }
 
         $body = ['knn' => $knn];
