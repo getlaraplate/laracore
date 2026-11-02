@@ -9,6 +9,7 @@ use Elastic\Elasticsearch\Response\Elasticsearch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Helpers\LocaleContext;
+use Modules\Core\Search\Translators\ElasticsearchTranslator;
 use Modules\Core\Services\ElasticsearchService;
 use Throwable;
 
@@ -20,6 +21,9 @@ use Throwable;
  * with no language (keyword and text values such as `entity` or `preset`) stay. The mapping read is the live
  * one, because the component fields (`subtitle`, `content`, ...) are mapped dynamically, as an object with a
  * sub-field per language; the model's declared mapping is the fallback when the cluster cannot be asked.
+ *
+ * A text field with an exact sub-field (analysed without stemming, see {@see ElasticsearchTranslator}) is
+ * searched through both, the exact one right after the stemmed one and with the same boost.
  */
 final readonly class ElasticsearchLocaleTextFields
 {
@@ -98,7 +102,12 @@ final readonly class ElasticsearchLocaleTextFields
                         $sub = $children[$locale] ?? null;
 
                         if (is_array($sub) && in_array($sub['type'] ?? null, ['text', 'keyword'], true)) {
-                            $fields[] = $path . '.' . $locale . ($path === 'title' ? self::TITLE_BOOST : '');
+                            $boost = $path === 'title' ? self::TITLE_BOOST : '';
+                            $fields[] = $path . '.' . $locale . $boost;
+
+                            if (self::hasExactSubField($sub)) {
+                                $fields[] = $path . '.' . $locale . '.' . ElasticsearchTranslator::EXACT_SUB_FIELD . $boost;
+                            }
                         }
                     }
 
@@ -112,8 +121,25 @@ final readonly class ElasticsearchLocaleTextFields
 
             if (in_array($type, ['text', 'keyword'], true)) {
                 $fields[] = $path;
+
+                if (self::hasExactSubField($definition)) {
+                    $fields[] = $path . '.' . ElasticsearchTranslator::EXACT_SUB_FIELD;
+                }
             }
         }
+    }
+
+    /**
+     * Whether a text field carries the sub-field analysed without stemming. An index built before it existed
+     * has none, and its fields are searched as they were.
+     *
+     * @param  array<array-key, mixed>  $definition
+     */
+    private static function hasExactSubField(array $definition): bool
+    {
+        $exact = is_array($definition['fields'] ?? null) ? ($definition['fields'][ElasticsearchTranslator::EXACT_SUB_FIELD] ?? null) : null;
+
+        return is_array($exact) && ($exact['type'] ?? null) === 'text';
     }
 
     /**

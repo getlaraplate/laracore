@@ -111,6 +111,33 @@ return [
         'rate_per_minute' => env('CORE_AGGREGATE_RATE_PER_MINUTE', 60),
     ],
 
+    'search' => [
+        /**
+         * Request words, per language: what a reader types to ask ("find me", "articoli su"), not what the
+         * documents contain. The keyword search drops them (the vector search keeps the whole question), and
+         * keeps the query whole when nothing else is left. Matching is whole word or phrase, case and accent
+         * insensitive. A language with no list drops nothing.
+         *
+         * @var array<string, list<string>>
+         */
+        'request_words' => [
+            'en' => [
+                'can you', 'could you', 'find me', 'show me', 'give me', 'tell me about', 'search for',
+                'look for', 'looking for', 'i am looking for', "i'm looking for", 'i want', 'i need', 'are there',
+                'is there', 'articles about', 'articles on', 'articles', 'documents about', 'documents on',
+                'documents', 'news about', 'news on', 'news', 'information about', 'information on',
+                'anything about', 'something about', 'please',
+            ],
+            'it' => [
+                'puoi', 'potresti', 'trovami', 'cercami', 'mostrami', 'fammi vedere', 'dammi',
+                'vorrei', 'voglio', 'cerco', 'ci sono', "c'è", 'esistono', 'articoli su', 'articoli sul',
+                'articoli sulla', 'articoli relativi a', 'articoli riguardanti', 'articoli che parlano di',
+                'articoli', 'documenti su', 'documenti relativi a', 'documenti', 'notizie su', 'notizie sul',
+                'notizie sulla', 'notizie', 'informazioni su', 'qualcosa su', 'qualcosa sul', 'per favore',
+            ],
+        ],
+    ],
+
     'api_tokens' => [
         /**
          * Longest life of a personal access token, in days.

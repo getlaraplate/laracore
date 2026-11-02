@@ -27,6 +27,56 @@ it('maps a locale object field to per-language analyzers', function (): void {
         ->and($title['properties']['en'])->toMatchArray(['type' => 'text', 'analyzer' => 'english']);
 });
 
+it('the mapping of a localised text field has an exact sub-field', function (): void {
+    $schema = new SchemaDefinition('cms_contents');
+    $schema->addField(new FieldDefinition('title', FieldType::Object, [IndexType::Searchable], [
+        'locale_properties' => [
+            'it' => ['analyzer' => 'italian'],
+            'en' => ['analyzer' => 'english'],
+        ],
+    ]));
+
+    $title = (new ElasticsearchTranslator)->translate($schema)['mappings']['properties']['title'];
+
+    expect($title['properties']['it'])->toBe([
+        'type' => 'text',
+        'analyzer' => 'italian',
+        'fields' => ['exact' => ['type' => 'text', 'analyzer' => 'standard']],
+    ])
+        ->and($title['properties']['en']['fields'])->toBe(['exact' => ['type' => 'text', 'analyzer' => 'standard']]);
+});
+
+it('gives no exact sub-field to a text field whose analyzer does not stem', function (): void {
+    $schema = new SchemaDefinition('cms_contents');
+    $schema->addField(new FieldDefinition('title', FieldType::Object, [IndexType::Searchable], [
+        'locale_properties' => ['de' => ['analyzer' => 'standard'], 'it' => []],
+    ]));
+    $schema->addField(new FieldDefinition('slug', FieldType::Object, [IndexType::Searchable], [
+        'locale_properties' => ['it' => ['analyzer' => 'keyword']],
+    ]));
+    $schema->addField(new FieldDefinition('code', FieldType::Text, [IndexType::Searchable]));
+
+    $properties = (new ElasticsearchTranslator)->translate($schema)['mappings']['properties'];
+
+    expect($properties['title']['properties']['de'])->toBe(['type' => 'text', 'analyzer' => 'standard'])
+        ->and($properties['title']['properties']['it'])->toBe(['type' => 'text', 'analyzer' => 'standard'])
+        ->and($properties['slug']['properties']['it'])->toBe(['type' => 'text', 'analyzer' => 'keyword'])
+        ->and($properties['code'])->toBe(['type' => 'text', 'analyzer' => 'standard']);
+});
+
+it('gives an exact sub-field to a plain text field analysed with a stemming analyzer', function (): void {
+    $schema = new SchemaDefinition('cms_contents');
+    $schema->addField(new FieldDefinition('body', FieldType::Text, [IndexType::Searchable], ['analyzer' => 'italian']));
+
+    $body = (new ElasticsearchTranslator)->translate($schema)['mappings']['properties']['body'];
+
+    expect($body)->toBe([
+        'type' => 'text',
+        'analyzer' => 'italian',
+        'fields' => ['exact' => ['type' => 'text', 'analyzer' => 'standard']],
+    ]);
+});
+
 it('maps a geocode field to a bare geo_point without the obsolete lat_lon parameter', function (): void {
     $schema = new SchemaDefinition('cms_locations');
     $schema->addField(new FieldDefinition('geocode', FieldType::Geocode, [IndexType::Filterable]));

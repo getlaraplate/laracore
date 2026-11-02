@@ -66,6 +66,10 @@ final readonly class AdvancedSearchService
      * (`max_retries`, zero for `fast`). A retry is judged by {@see SearchQualityEvaluator} and is not the same
      * query again: see {@see self::relaxedPlan()}.
      *
+     * The keyword search runs without the request words of the locale ("find me", "articoli su"), the vector
+     * search on the whole question: see {@see SearchQueryAnalyzer::withoutRequestWords()}. The query class that
+     * picks the tuning is read from the whole query, which is the shape of the question.
+     *
      * A date the query names becomes a filter on the date field the model declares (`searchDateField()`), and
      * `meta['date_filter']` reports it: see {@see self::searchWithDates()}. A model that declares none, a query
      * that names no date, and a request that filters on the date field itself search as they always did.
@@ -113,6 +117,7 @@ final readonly class AdvancedSearchService
             $plan = $this->tuningProfile()->apply($plan, QueryClass::fromAnalysis($text_match->analysis));
             $availability = $this->vectorAvailability($model, $plan, $strategy);
             $vector = $availability->available ? $this->resolveVector($query, $plan, $strategy, $timings) : null;
+            $keyword_query = app(SearchQueryAnalyzer::class)->withoutRequestWords($search_query, LocaleContext::get());
 
             $ensemble = fn (?FiltersGroup $attempt_filters, string $attempt_query): AdvancedSearchResult => $this->ensemble_search->search(
                 model: $model,
@@ -127,7 +132,7 @@ final readonly class AdvancedSearchService
                 reranker: $strategy->reranker,
             );
 
-            $result = $this->stage($timings, SearchStageTimings::ENSEMBLE, fn (): AdvancedSearchResult => $this->searchWithDates($date_filter, $ensemble, $filters, $search_query));
+            $result = $this->stage($timings, SearchStageTimings::ENSEMBLE, fn (): AdvancedSearchResult => $this->searchWithDates($date_filter, $ensemble, $filters, $keyword_query));
 
             return [$result, $availability, $plan];
         };
@@ -166,8 +171,8 @@ final readonly class AdvancedSearchService
 
     /**
      * Runs the ensemble under the date filter of the query: each interval in turn, the date words taken out of
-     * the keyword query, until a run finds enough hits; then once more without a date filter and with the full
-     * query. An engine that cannot filter on the declared field (it refuses the filter) gets the search without
+     * the keyword query, until a run finds enough hits; then once more without a date filter and with the date
+     * words kept. `$search_query` is the keyword query, the request words already out. An engine that cannot filter on the declared field (it refuses the filter) gets the search without
      * the date, never an error. With no date filter this is the plain ensemble call.
      *
      * @param  Closure(?FiltersGroup, string): AdvancedSearchResult  $ensemble

@@ -28,6 +28,7 @@ use Modules\Core\Search\Services\TextMatchOptionsResolver;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
+use Modules\Core\Search\Translators\ElasticsearchTranslator;
 use Modules\Core\Services\ElasticsearchService;
 use Override;
 use RuntimeException;
@@ -1269,6 +1270,11 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
     }
 
     /**
+     * The text query searches the fields it is given, an exact sub-field (`title.it.exact`, analysed without
+     * stemming) next to its stemmed field. The exact-match clause (`exact_match_boost`) searches the exact
+     * sub-field in place of the stemmed one, so a word that only shares the stem of a proper name ("rosso" for
+     * "Rossi") gets no exact-match boost. With no exact sub-field among the fields the query is as it was.
+     *
      * @return array<string, mixed>
      */
     private function buildFreeTextMatchQuery(string $query, TextMatchOptions $options): array
@@ -1314,7 +1320,7 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
                     [
                         'multi_match' => [
                             'query' => $query,
-                            'fields' => $fields,
+                            'fields' => $this->exactMatchFields($fields),
                             'type' => 'phrase',
                             'boost' => $options->exactMatchBoost,
                         ],
@@ -1323,6 +1329,23 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
                 'minimum_should_match' => 1,
             ],
         ];
+    }
+
+    /**
+     * The fields of the exact-match clause: a stemmed field whose exact sub-field is also listed gives way to it.
+     *
+     * @param  list<string>  $fields  Field names, each with an optional `^boost`.
+     * @return list<string>
+     */
+    private function exactMatchFields(array $fields): array
+    {
+        $names = array_map(static fn (string $field): string => explode('^', $field, 2)[0], $fields);
+        $suffix = '.' . ElasticsearchTranslator::EXACT_SUB_FIELD;
+
+        return array_values(array_filter(
+            $fields,
+            static fn (string $field): bool => ! in_array(explode('^', $field, 2)[0] . $suffix, $names, true),
+        ));
     }
 
     /**
