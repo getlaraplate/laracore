@@ -35,8 +35,9 @@ it('binds the strategy resolver contract, to Core\'s cheap resolver unless a mod
         ->and(app(CoreSearchStrategyResolver::class))->toBeInstanceOf(CoreSearchStrategyResolver::class);
 });
 
-it('binds the vector profile provider to the null provider, so there is no profile by default', function (): void {
-    expect(app(IVectorProfileProvider::class))->toBeInstanceOf(NullVectorProfileProvider::class)
+it('binds a vector profile provider, and the null provider answers no profile', function (): void {
+    expect(app(IVectorProfileProvider::class))->toBeInstanceOf(IVectorProfileProvider::class)
+        ->and((new NullVectorProfileProvider)->current())->toBeNull()
         ->and(VectorProfileContext::get())->toBeNull()
         ->and(VectorProfileContext::modelKey())->toBeNull();
 });
