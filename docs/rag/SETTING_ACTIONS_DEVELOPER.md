@@ -85,9 +85,12 @@ key in a module's row).
   cleared by writing the JSON string `null` directly and flushing the setting through
   `SettingsCacheCoordinator`, as the seeder stores an unset value (see the AI `EmbeddingSwitchStore`).
 
-Core seeds four managed settings in group `search`, written by the AI embedding model switch:
-`search.vector.dimensions` (384), `search.vector.similarity` (`cosine`), `search.vector.model`
-(`openai_compatible:intfloat/multilingual-e5-small`) and `search.vector.suspended_reason` (null).
+Core seeds no managed setting and has no `search.vector.*` setting: the vector profile is a contract
+(`IVectorProfileProvider`) that a module implements. The AI module seeds two managed settings, both written
+only by its embedding model switch: `features.embeddings.serving_model` (the `provider:model` key whose vectors
+the indexes hold now, for example `openai_compatible:intfloat/multilingual-e5-small`) and
+`features.embeddings.switch` (the switch progress as JSON). `features.embeddings.model`, the operator's chosen
+target, is a normal dropdown setting and not managed.
 
 ## Change confirmations and locks
 

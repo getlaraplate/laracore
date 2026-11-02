@@ -165,8 +165,8 @@ The `model_indexing` entry has a **10-minute TTL**. If a pre-processing step fin
 
 | Layer | Keys |
 |-------|------|
-| Scout / Core | `SCOUT_DRIVER`, `core.search.vector.enabled`, model `$embed`, `vectorSearchEnabled()` |
-| AI | `ai.features.embeddings.enabled`, embedding provider env vars |
+| Scout / Core | `SCOUT_DRIVER`, model `$embed`; vector fields are indexed only when `IVectorProfileProvider::current()` returns a `VectorProfile` (`Searchable::vectorSearchEnabled()`); Core has no vector setting and its default provider returns `null` (keyword-only) |
+| AI | `ai.features.embeddings.enabled` (also makes the AI provider return a profile, from `features.embeddings.serving_model`), embedding provider env vars |
 | Per model | `translations.auto.{table}` (translations group) via `PerModelSettingResolver` |
 
 See also: [Modules/AI/docs/SEARCH_AND_TRANSLATION.md](../AI/docs/SEARCH_AND_TRANSLATION.md).

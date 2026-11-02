@@ -36,8 +36,8 @@ are), the value you saved may no longer be in it, for example because the provid
 
 ## Read-only values and confirmations
 
-Some settings are written by the application itself, for example the vector search dimensions and model
-that the embedding model switch sets. Their value is shown greyed out in the edit form and cannot be
+Some settings are written by the application itself, for example the embedding model that currently serves
+search (`features.embeddings.serving_model`), which the embedding model switch sets. Their value is shown greyed out in the edit form and cannot be
 changed there.
 
 Changing a few settings has a cost, and the form asks first: a window explains what will happen and you
