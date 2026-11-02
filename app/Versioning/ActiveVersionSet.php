@@ -106,6 +106,27 @@ final class ActiveVersionSet
         }
     }
 
+    /**
+     * Stores the set as a baseline once the whole aggregate has been appended after its own rows (D45, D53). The
+     * set row may already exist: `finish()` writes the kind. Never for a revert or a set that is not a change.
+     */
+    public function storeAsBaselineAfterItsRows(): void
+    {
+        if ($this->options->kind === VersionSetKind::Change) {
+            $this->stored_kind = VersionSetKind::Baseline;
+        }
+    }
+
+    public function isStoredAsBaseline(): bool
+    {
+        return $this->stored_kind === VersionSetKind::Baseline;
+    }
+
+    public function hasWrittenVersions(): bool
+    {
+        return $this->version_written;
+    }
+
     public function markBeingHardDeleted(bool $being_hard_deleted): void
     {
         $this->being_hard_deleted = $being_hard_deleted;
@@ -201,6 +222,7 @@ final class ActiveVersionSet
         }
 
         $this->version_set->forceFill([
+            'kind' => $this->stored_kind ?? $this->options->kind,
             'root_type' => $this->root->type(),
             'root_id' => $root_id,
             'root_connection_ref' => $this->root->connectionName(),
