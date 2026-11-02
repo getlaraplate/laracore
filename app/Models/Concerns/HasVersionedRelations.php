@@ -52,6 +52,16 @@ trait HasVersionedRelations
     }
 
     /**
+     * The relations this root registers as part of its history, checked as everywhere else (D24).
+     *
+     * @return list<RelationDescriptor>
+     */
+    public function versionedRelationDescriptors(): array
+    {
+        return $this->registeredRelations();
+    }
+
+    /**
      * Whether this root registers versioned relations, whose changes its save must group with its own (D34).
      */
     public function hasRegisteredRelations(): bool

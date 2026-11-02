@@ -18,7 +18,7 @@ use Override;
 
 final readonly class VersionWriter implements VersionWriterInterface
 {
-    public function __construct(private VersionSetManagerInterface $manager) {}
+    public function __construct(private VersionSetManagerInterface $manager, private VersionEpochs $epochs) {}
 
     #[Override]
     public function write(VersionChange $change): Version
@@ -65,6 +65,8 @@ final readonly class VersionWriter implements VersionWriterInterface
         $version->forceFill([
             'version_set_id' => $version_set->getKey(),
             'sequence' => $active->nextSequence(),
+            // The shape of the root class, whichever part of the aggregate the row is about (D32).
+            'epoch_id' => $this->epochs->currentFor($active->root()->model())->getKey(),
             'change_type' => $change->type,
             'relation_path' => $change->relationPath,
             'subject_key' => $change->subjectKey,

@@ -103,6 +103,19 @@ trait RecordsChangesOnOwner
     }
 
     /**
+     * The fields of the part that are the owner's state: its fillable fields but the locale and the keys.
+     *
+     * @return list<string>
+     */
+    public function ownerImageKeys(): array
+    {
+        return array_values(array_filter(
+            $this->getFillable(),
+            static fn (string $field): bool => $field !== 'locale' && ! str_ends_with($field, '_id'),
+        ));
+    }
+
+    /**
      * @param  list<string>  $dirtyKeys
      */
     private function captureForOwner(array $dirtyKeys): void
@@ -211,19 +224,6 @@ trait RecordsChangesOnOwner
         $owner = $this->getRelation($relation);
 
         return $owner instanceof Model ? $owner : null;
-    }
-
-    /**
-     * The fields of the part that are the owner's state: its fillable fields but the locale and the keys.
-     *
-     * @return list<string>
-     */
-    private function ownerImageKeys(): array
-    {
-        return array_values(array_filter(
-            $this->getFillable(),
-            static fn (string $field): bool => $field !== 'locale' && ! str_ends_with($field, '_id'),
-        ));
     }
 
     /**
