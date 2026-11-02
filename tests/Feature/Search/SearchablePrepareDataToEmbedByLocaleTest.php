@@ -55,3 +55,10 @@ it('returns exactly one locale entry when only the default-locale translation ex
 
     expect($result)->toBe(['en' => 'English only title']);
 });
+
+it('declares no embedding context header unless the model opts in', function (): void {
+    $model = new TranslatedSearchableStubModel();
+
+    expect($model->embedHeader())->toBeNull()
+        ->and($model->embedHeader('en'))->toBeNull();
+});
