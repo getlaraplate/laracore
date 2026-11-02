@@ -230,6 +230,10 @@ final class VersionSetManager implements VersionSetManagerInterface
         }
 
         $image = $root->aggregateImage(VersionChangeType::Updated, VersionChangeType::Updated, VersionChangeType::Created);
+
+        if ($image === []) {
+            return;
+        }
         $writer = app(VersionWriterInterface::class);
 
         $this->runInSet($set, static function () use ($image, $writer): void {

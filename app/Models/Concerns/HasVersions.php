@@ -563,7 +563,8 @@ trait HasVersions
 
     /**
      * The aggregate as rows, read back from the database: the root's image, one row per locale, one per link of a
-     * registered relation with its authoritative pivot columns. Each image is in `contents`. The hard-delete snapshot
+     * registered relation with its authoritative pivot columns. Each image is in `contents`. A root whose row is gone has
+     * no image. The hard-delete snapshot
      * (D55) and the baseline (D45) are both written from it.
      *
      * @return list<VersionChange>
@@ -571,9 +572,13 @@ trait HasVersions
     public function aggregateImage(VersionChangeType $rootType, VersionChangeType $partType, VersionChangeType $linkType): array
     {
         $stored = $this->newQueryWithoutScopes()->whereKey($this->getKey())->toBase()->first();
-        $root_attributes = $stored === null ? $this->getRawOriginal() : (array) $stored;
+
+        if ($stored === null) {
+            return [];
+        }
+
         $image = [
-            $this->imageRow($rootType, VersionChange::encryptSelected($this->filterVersionableImage($root_attributes), $this->encryptedVersionable)),
+            $this->imageRow($rootType, VersionChange::encryptSelected($this->filterVersionableImage((array) $stored), $this->encryptedVersionable)),
         ];
 
         if (method_exists($this, 'translations')) {

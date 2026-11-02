@@ -241,3 +241,68 @@ it('adds at most one query to the atomic write of a plain versioned model', func
     expect($queries)->toBeLessThanOrEqual(BASELINE_FREE_ATOMIC_UPDATE_QUERIES + 1)
         ->and(latest_set_of($article)->kind)->toBe(VersionSetKind::Change);
 });
+
+it('writes a baseline at the first atomic write after a best_effort set that changed only a translation', function (): void {
+    $document = TranslatedDocument::query()->create(['code' => 'doc', 'title' => 'Title']);
+    write_best_effort($document, ['code' => 'doc']);
+
+    $document->translations()->firstOrFail()->update(['title' => 'Edited']);
+
+    $set = latest_set_of($document);
+
+    expect($set->kind)->toBe(VersionSetKind::Baseline)
+        ->and(array_column(rows_of($set), 'path'))->toBe(['translations', 'root', 'translations']);
+});
+
+it('writes a baseline at the first atomic write after a best_effort set that changed only a link', function (): void {
+    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
+    $subject = VersionedRelationSubject::query()->create(['name' => 'A']);
+    write_best_effort($root, ['title' => 'First']);
+
+    app(VersionSetManagerInterface::class)->run(
+        VersionSetRoot::forModel($root),
+        fn () => $root->categories()->attach($subject->getKey(), ['position' => 1]),
+    );
+
+    $set = latest_set_of($root);
+
+    expect($set->kind)->toBe(VersionSetKind::Baseline)
+        ->and(array_column(rows_of($set), 'path'))->toBe(['categories', 'root', 'categories']);
+});
+
+it('writes no baseline for a root whose row is gone by the end of its set', function (): void {
+    $document = TranslatedDocument::query()->create(['code' => 'doc', 'title' => 'Title']);
+    write_best_effort($document, ['code' => 'doc']);
+    $before = VersionSet::query()->max('id');
+
+    app(VersionSetManagerInterface::class)->run(VersionSetRoot::forModel($document), function () use ($document): void {
+        $document->update(['code' => 'second']);
+        TranslatedDocument::query()->whereKey($document->getKey())->delete();
+    });
+
+    $set = VersionSet::query()->where('id', '>', $before)->sole();
+
+    expect($set->kind)->toBe(VersionSetKind::Change)
+        ->and(array_column(rows_of($set), 'path'))->toBe(['root']);
+});
+
+it('reads the sets of a root by its table, not only by its class and key', function (): void {
+    Schema::create('core_test_versioned_articles_copy', function (Blueprint $table): void {
+        $table->id();
+        $table->string('title');
+        $table->timestamps();
+    });
+    $article = VersionedArticle::query()->create(['title' => 'First']);
+    $article->getConnection()->transaction(fn () => $article->update(['title' => 'Anchored']));
+    $copy = (new VersionedArticle)->setTable('core_test_versioned_articles_copy');
+    $copy->fill(['title' => 'Copy'])->save();
+    write_best_effort($copy, ['title' => 'Copy']);
+
+    expect($copy->getKey())->toBe($article->getKey());
+
+    $article->getConnection()->transaction(fn () => $article->update(['title' => 'Again']));
+
+    expect(latest_set_of($article)->kind)->toBe(VersionSetKind::Change);
+
+    Schema::dropIfExists('core_test_versioned_articles_copy');
+});
