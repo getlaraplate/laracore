@@ -94,6 +94,7 @@ final class VersionSet extends Model
         return [
             'kind' => VersionSetKind::class,
             'capture' => VersionCaptureQuality::class,
+            'baseline_from_sequence' => 'integer',
             'created_at' => 'immutable_datetime',
         ];
     }

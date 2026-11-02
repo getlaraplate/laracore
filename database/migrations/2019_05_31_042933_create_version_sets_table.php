@@ -36,6 +36,7 @@ return new class() extends Migration
                 array_map(static fn (VersionCaptureQuality $case): string => $case->value, VersionCaptureQuality::cases()),
             )->default(VersionCaptureQuality::BestEffort->value)->comment('Capture quality of the set (D47, D52)');
             $table->string('reason', 255)->nullable();
+            $table->unsignedInteger('baseline_from_sequence')->nullable()->comment('First row of the aggregate image appended to a baseline (D45)');
             $table->unsignedBigInteger('reverted_from_set_id')->nullable();
 
             MigrateUtils::timestamps(

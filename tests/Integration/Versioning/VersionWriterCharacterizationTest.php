@@ -30,6 +30,15 @@ afterEach(function (): void {
 });
 
 /**
+ * An article created inside a transaction: its creation is an atomic baseline, so a later atomic write carries no
+ * baseline image (D47) and the latest row is the write's own.
+ */
+function characterization_anchored_article(string $title): VersionedArticle
+{
+    return (new VersionedArticle)->getConnection()->transaction(static fn (): VersionedArticle => VersionedArticle::query()->create(['title' => $title]));
+}
+
+/**
  * Current production persistence entrypoints to migrate to the sole writer:
  *
  * - [x] HasVersions::createVersion()
@@ -73,7 +82,7 @@ it('writes an unwrapped lifecycle change synchronously in an implicit singleton 
 });
 
 it('orders multiple writes in one explicit version set', function (): void {
-    $article = VersionedArticle::query()->create(['title' => 'First']);
+    $article = characterization_anchored_article('First');
     $version_count_before_scope = Version::query()->count();
 
     app(VersionSetManagerInterface::class)->run(
@@ -116,7 +125,7 @@ it('rolls back a lifecycle write with its explicit business transaction', functi
 });
 
 it('captures full before and after images for snapshot updates', function (): void {
-    $article = VersionedArticle::query()->create(['title' => 'First']);
+    $article = characterization_anchored_article('First');
     $article->useVersionStrategy(VersionStrategy::SNAPSHOT);
 
     $article->updateOrFail(['title' => 'Second']);
@@ -129,7 +138,7 @@ it('captures full before and after images for snapshot updates', function (): vo
 });
 
 it('encrypts sensitive values in both sides of an update', function (): void {
-    $article = VersionedArticle::query()->create(['title' => 'Before secret']);
+    $article = characterization_anchored_article('Before secret');
     $article->encryptVersionAttributes(['title']);
 
     $article->updateOrFail(['title' => 'After secret']);

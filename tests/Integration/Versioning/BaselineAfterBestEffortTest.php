@@ -14,6 +14,7 @@ use Modules\Core\Models\Version;
 use Modules\Core\Models\VersionSet;
 use Modules\Core\Tests\Stubs\Versioning\Relations\VersionedRelationRoot;
 use Modules\Core\Tests\Stubs\Versioning\Relations\VersionedRelationSubject;
+use Modules\Core\Tests\Stubs\Versioning\SoftDeletedVersionedArticle;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocument;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocumentTranslation;
 use Modules\Core\Tests\Stubs\Versioning\VersionedArticle;
@@ -69,6 +70,7 @@ beforeEach(function (): void {
         $table->id();
         $table->string('title');
         $table->timestamps();
+        $table->softDeletes();
     });
 });
 
@@ -305,4 +307,63 @@ it('reads the sets of a root by its table, not only by its class and key', funct
     expect(latest_set_of($article)->kind)->toBe(VersionSetKind::Change);
 
     Schema::dropIfExists('core_test_versioned_articles_copy');
+});
+
+it('writes a baseline at the first atomic write of a record whose creation was best_effort (D47)', function (): void {
+    $article = VersionedArticle::query()->create(['title' => 'First']);
+
+    expect(latest_set_of($article)->capture)->toBe(VersionCaptureQuality::BestEffort);
+
+    $article->getConnection()->transaction(fn () => $article->update(['title' => 'Second']));
+
+    $set = latest_set_of($article);
+
+    expect($set->kind)->toBe(VersionSetKind::Baseline)
+        ->and(array_column(rows_of($set), 'path'))->toBe(['root', 'root'])
+        ->and(rows_of($set)[1]['contents'])->toBe(['title' => 'Second']);
+});
+
+it('writes a baseline holding the trashed row when a soft delete is the first atomic write after a best_effort creation', function (): void {
+    $article = SoftDeletedVersionedArticle::query()->create(['title' => 'First']);
+
+    $article->delete();
+
+    $set = latest_set_of($article);
+    $rows = rows_of($set);
+
+    expect($set->kind)->toBe(VersionSetKind::Baseline)
+        ->and($rows[0]['type'])->toBe(VersionChangeType::Trashed)
+        ->and(array_column($rows, 'path'))->toBe(['root', 'root']);
+});
+
+it('leaves the baseline of a root whose set was opened by another root write to its next own scope', function (): void {
+    $article = VersionedArticle::query()->create(['title' => 'First']);
+    $document = TranslatedDocument::query()->create(['code' => 'doc', 'title' => 'Title']);
+
+    app(VersionSetManagerInterface::class)->run(VersionSetRoot::forModel($document), function () use ($document, $article): void {
+        $document->update(['code' => 'second']);
+        $article->update(['title' => 'Second']);
+    });
+
+    expect(latest_set_of($article)->kind)->toBe(VersionSetKind::Change);
+
+    $article->getConnection()->transaction(fn () => $article->update(['title' => 'Third']));
+
+    expect(latest_set_of($article)->kind)->toBe(VersionSetKind::Baseline);
+});
+
+it('leaves the baseline image out of the history listing and keeps the rows of the set itself', function (): void {
+    $document = TranslatedDocument::query()->create(['code' => 'doc', 'title' => 'Title']);
+    $document->setTranslation('it', ['title' => 'Titolo']);
+    $document->save();
+    write_best_effort($document, ['code' => 'doc']);
+
+    $document->update(['code' => 'changed']);
+
+    $set = latest_set_of($document);
+
+    expect($set->kind)->toBe(VersionSetKind::Baseline)
+        ->and($set->baseline_from_sequence)->toBe(2)
+        ->and($document->history()->where('version_set_id', $set->getKey())->get()->pluck('sequence')->all())->toBe([1])
+        ->and($document->history()->where('relation_path', null)->get()->last()->change_type)->toBe(VersionChangeType::Created);
 });

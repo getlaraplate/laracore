@@ -75,6 +75,7 @@ it('never stores a revert set as a baseline', function (): void {
 
 it('stores the creation of a root inside another root scope as that root own baseline', function (): void {
     $outer = VersionedDocument::query()->create(['title' => 'Outer']);
+    $outer->getConnection()->transaction(fn () => $outer->update(['title' => 'Outer anchored']));
     $before = VersionSet::query()->max('id');
     $manager = app(VersionSetManagerInterface::class);
 

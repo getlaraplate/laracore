@@ -32,7 +32,10 @@ final class VersionSetManager implements VersionSetManagerInterface
      */
     private ?VersionScope $scope = null;
 
-    public function __construct(private readonly DatabaseManager $database) {}
+    public function __construct(
+        private readonly DatabaseManager $database,
+        private readonly BaselinePolicy $baseline_policy,
+    ) {}
 
     #[Override]
     public function run(
@@ -192,7 +195,7 @@ final class VersionSetManager implements VersionSetManagerInterface
         }
 
         $this->validateRevertedFrom($root, $options);
-        $set = new ActiveVersionSet($root, $root->connectionName(), $options, $this->activeScope()->capture());
+        $set = new ActiveVersionSet($root, $root->connectionName(), $options, $this->activeScope()->capture(), $lock);
         $this->activeScope()->add($set);
 
         return $set;
@@ -213,7 +216,9 @@ final class VersionSetManager implements VersionSetManagerInterface
     /**
      * Appends the whole aggregate after the set's own rows and stores the set as a baseline, when the policy says
      * one is due (D45 rule 1, D52). Only an atomic change set that wrote rows of its own and whose root still exists
-     * carries it: never a revert (D60), never an empty set, and a creation set is already whole.
+     * carries it: never a revert (D60), never an empty set, and a creation set is already whole. A set opened by another
+     * root's write did not lock its root, so the aggregate it would read may miss a concurrent change: the baseline
+     * stays due for the root's next own scope.
      */
     private function appendBaselineIfDue(ActiveVersionSet $set): void
     {
@@ -223,9 +228,10 @@ final class VersionSetManager implements VersionSetManagerInterface
             || $set->isStoredAsBaseline()
             || $set->options()->kind !== VersionSetKind::Change
             || $set->capture() !== VersionCaptureQuality::Atomic
+            || ! $set->isLocked()
             || ! $root->exists
             || ! method_exists($root, 'aggregateImage')
-            || ! app(BaselinePolicy::class)->isDue($set->root())) {
+            || ! $this->baseline_policy->isDue($set->root())) {
             return;
         }
 
@@ -235,14 +241,13 @@ final class VersionSetManager implements VersionSetManagerInterface
             return;
         }
         $writer = app(VersionWriterInterface::class);
+        $set->storeAsBaselineFromNextRow();
 
         $this->runInSet($set, static function () use ($image, $writer): void {
             foreach ($image as $change) {
                 $writer->write($change);
             }
         });
-
-        $set->storeAsBaselineAfterItsRows();
     }
 
     /**

@@ -155,14 +155,15 @@ trait HasVersions
     }
 
     /**
-     * The versions, latest first. Declared with its relation type: a relation a request names is called only
-     * when its declaration says it returns a relation.
+     * The versions, latest first, without the aggregate image a baseline appends after its own rows: it restates the
+     * record, it is no change. Declared with its relation type: a relation a request names is called only when its
+     * declaration says it returns a relation.
      *
      * @return MorphMany<Version, $this>
      */
     public function history(): MorphMany
     {
-        return $this->latestVersions();
+        return $this->latestVersions()->withoutBaselineImage();
     }
 
     /**

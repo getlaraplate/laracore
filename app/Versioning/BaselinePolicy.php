@@ -11,8 +11,9 @@ use Modules\Core\Versioning\Data\VersionSetRoot;
 
 /**
  * Says whether the next atomic set of a root must anchor its whole aggregate (D45 rule 1, D52): when the root has no
- * baseline set, or a set captured less than atomically is newer than its latest baseline. The root is its class, key
- * and table, as everywhere the sets of one root are read.
+ * baseline captured atomically, or a set captured less than atomically is newer than it: a baseline that was itself
+ * captured less than atomically is no complete anchor (D47). The root is its class, key and table, as everywhere the
+ * sets of one root are read.
  */
 final readonly class BaselinePolicy
 {
@@ -27,8 +28,8 @@ final readonly class BaselinePolicy
             ->where('root_id', $root->id())
             ->where('root_table_ref', $root->tableName())
             ->selectRaw(
-                'max(case when kind = ? then id end) as latest_baseline, max(case when capture <> ? then id end) as latest_partial',
-                [VersionSetKind::Baseline->value, VersionCaptureQuality::Atomic->value],
+                'max(case when kind = ? and capture = ? then id end) as latest_baseline, max(case when capture <> ? then id end) as latest_partial',
+                [VersionSetKind::Baseline->value, VersionCaptureQuality::Atomic->value, VersionCaptureQuality::Atomic->value],
             )
             ->first();
 

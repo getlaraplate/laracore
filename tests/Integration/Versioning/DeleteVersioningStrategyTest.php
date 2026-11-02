@@ -59,7 +59,7 @@ it('records a soft delete as a trashed row of deleted_at, not a Deleted row', fu
 
     $article->delete();
 
-    $trashing = Version::query()->latest('id')->firstOrFail();
+    $trashing = Version::query()->where('change_type', VersionChangeType::Trashed)->latest('id')->firstOrFail();
 
     expect($trashing->change_type)->toBe(VersionChangeType::Trashed)
         ->and($trashing->original_contents)->toBe(['deleted_at' => null])
@@ -70,7 +70,7 @@ it('records a soft delete as a trashed row of deleted_at, not a Deleted row', fu
 it('exposes trashing versions and excludes the restore that clears deleted_at', function (): void {
     $article = SoftDeletedVersionedArticle::query()->create(['title' => 'First']);
     $article->delete();
-    $trashing_version_id = Version::query()->latest('id')->firstOrFail()->getKey();
+    $trashing_version_id = Version::query()->where('change_type', VersionChangeType::Trashed)->latest('id')->firstOrFail()->getKey();
     $article->restore();
 
     $trashing_versions = $article->trashingVersions()->get();
@@ -85,7 +85,7 @@ it('records a soft delete of a SNAPSHOT model as a DIFF of deleted_at', function
 
     $article->delete();
 
-    $trashing = Version::query()->latest('id')->firstOrFail();
+    $trashing = Version::query()->where('change_type', VersionChangeType::Trashed)->latest('id')->firstOrFail();
 
     expect($trashing->change_type)->toBe(VersionChangeType::Trashed)
         ->and($trashing->version_strategy)->toBe(VersionStrategy::DIFF)

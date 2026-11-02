@@ -68,8 +68,9 @@ it('writes a move to the bin in one atomic set', function (): void {
 
     $set = sets_after($before)->sole();
 
+    // The creation was best_effort, so this first atomic set also anchors the record (D47).
     expect($set->capture)->toBe(VersionCaptureQuality::Atomic)
-        ->and($set->versions()->pluck('change_type')->all())->toBe([VersionChangeType::Trashed]);
+        ->and($set->versions()->pluck('change_type')->all())->toBe([VersionChangeType::Trashed, VersionChangeType::Updated]);
 });
 
 it('writes the hard delete of a model without a bin in one atomic set', function (): void {
