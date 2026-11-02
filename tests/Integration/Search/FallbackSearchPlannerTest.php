@@ -104,3 +104,22 @@ it('honours the reranker being explicitly disabled', function (): void {
 
     expect($plan['ranking']['use_reranker'])->toBeFalse();
 });
+
+it('carries the date interval of the query and the recency windows in its filters', function (): void {
+    config()->set('core.search.recency_windows_days', [30, 180]);
+
+    $plan = (new FallbackSearchPlanner)->fallbackPlan('reports of 2024');
+
+    expect($plan['filters'])->toBe([
+        'date_range' => ['from' => '2024-01-01', 'to' => '2024-12-31'],
+        'recent' => false,
+        'recency_windows_days' => [30, 180],
+    ]);
+});
+
+it('carries a recency request without an interval', function (): void {
+    $plan = (new FallbackSearchPlanner)->fallbackPlan('latest releases');
+
+    expect($plan['filters']['date_range'])->toBeNull()
+        ->and($plan['filters']['recent'])->toBeTrue();
+});

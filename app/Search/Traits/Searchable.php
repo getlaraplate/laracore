@@ -505,6 +505,19 @@ trait Searchable
     }
 
     /**
+     * The date field a search filters on when its query names a date ("of 2024", "last month", "latest"),
+     * declared by the model as `protected ?string $searchDateField`. Null when the model declares none: its
+     * searches are never filtered by a date read from the query. The property is checked with
+     * property_exists(), so a model without it never reaches Eloquent's attribute lookup.
+     */
+    public function searchDateField(): ?string
+    {
+        $field = property_exists($this, 'searchDateField') ? $this->searchDateField : null;
+
+        return is_string($field) && $field !== '' ? $field : null;
+    }
+
+    /**
      * The models Scout hands over (one model or several) as a list.
      *
      * @param  iterable<int, static>|static  $models
