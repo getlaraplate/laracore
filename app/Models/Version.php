@@ -202,7 +202,7 @@ final class Version extends Model
     /**
      * The schema epoch of the root class when the row was written.
      *
-     * @return BelongsTo<VersionEpoch, Version>
+     * @return BelongsTo<VersionEpoch, $this>
      */
     public function epoch(): BelongsTo
     {

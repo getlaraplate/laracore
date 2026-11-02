@@ -34,19 +34,18 @@ final class VersionEpochs
         }
 
         $definition = $this->fingerprint->definitionOf($root);
+        $fingerprint = $this->fingerprint->fingerprintOf($definition);
         $root_type = $root->getMorphClass();
-        $epoch = new VersionEpoch;
-        $epoch->setConnection($root->getConnectionName());
-
-        // createOrFirst behind firstOrCreate absorbs the unique violation of two processes seeing a new shape at once.
-        $current = $epoch->newQuery()->firstOrCreate(
-            ['root_type' => $root_type, 'fingerprint' => $this->fingerprint->fingerprintOf($definition)],
-            ['definition' => $definition, 'first_seen_at' => now()],
-        );
-
-        if ($current->wasRecentlyCreated) {
-            unset($this->several[$root_type]);
-        }
+        $query = new VersionEpoch()->setConnection($root->getConnectionName())->newQuery();
+        // One read answers both questions, so that hasSeveral() costs no query at the writes that follow.
+        $known = $query->clone()->where('root_type', $root_type)->get();
+        $current = $known->firstWhere('fingerprint', $fingerprint)
+            // createOrFirst absorbs the unique violation of two processes seeing a new shape at once.
+            ?? $query->createOrFirst(
+                ['root_type' => $root_type, 'fingerprint' => $fingerprint],
+                ['definition' => $definition, 'first_seen_at' => now()],
+            );
+        $this->several[$root_type] = $known->count() + ($current->wasRecentlyCreated ? 1 : 0) > 1;
 
         return $this->current[$key] = $current;
     }

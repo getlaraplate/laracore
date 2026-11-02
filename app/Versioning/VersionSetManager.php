@@ -231,7 +231,7 @@ final class VersionSetManager implements VersionSetManagerInterface
             || ! $set->isLocked()
             || ! $root->exists
             || ! method_exists($root, 'aggregateImage')
-            || ! $this->baseline_policy->isDue($set->root())) {
+            || ! $this->baseline_policy->isDue($set->root(), $set->versionSet()->id)) {
             return;
         }
 

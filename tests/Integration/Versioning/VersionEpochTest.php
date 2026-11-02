@@ -7,14 +7,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Enums\RelationCoverage;
 use Modules\Core\Enums\RelationOwnership;
+use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Models\Version;
 use Modules\Core\Models\VersionEpoch;
+use Modules\Core\Models\VersionSet;
 use Modules\Core\Tests\Stubs\Versioning\EpochArticle;
 use Modules\Core\Tests\Stubs\Versioning\EpochArticleTwin;
+use Modules\Core\Tests\Stubs\Versioning\Relations\VersionedRelationRoot;
 use Modules\Core\Tests\Stubs\Versioning\Relations\VersionedRelationSubject;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocument;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocumentTranslation;
+use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Data\RelationDescriptor;
+use Modules\Core\Versioning\Data\VersionSetRoot;
 use Modules\Core\Versioning\EpochFingerprint;
 use Modules\Core\Versioning\VersionEpochs;
 
@@ -35,6 +40,16 @@ beforeEach(function (): void {
         $table->id();
         $table->string('name');
         $table->timestamps();
+    });
+    Schema::create(VersionedRelationRoot::TABLE, function (Blueprint $table): void {
+        $table->id();
+        $table->string('title');
+        $table->timestamps();
+    });
+    Schema::create(VersionedRelationRoot::PIVOT_TABLE, function (Blueprint $table): void {
+        $table->unsignedBigInteger('root_id');
+        $table->unsignedBigInteger('subject_id');
+        $table->unsignedInteger('position')->default(0);
     });
     Schema::create(EpochArticle::PIVOT_TABLE, function (Blueprint $table): void {
         $table->unsignedBigInteger('article_id');
@@ -61,6 +76,8 @@ afterEach(function (): void {
     Schema::dropIfExists(TranslatedDocumentTranslation::TABLE);
     Schema::dropIfExists(TranslatedDocument::TABLE);
     Schema::dropIfExists(EpochArticle::PIVOT_TABLE);
+    Schema::dropIfExists(VersionedRelationRoot::PIVOT_TABLE);
+    Schema::dropIfExists(VersionedRelationRoot::TABLE);
     Schema::dropIfExists(VersionedRelationSubject::TABLE);
     Schema::dropIfExists(EpochArticle::TABLE);
 });
@@ -189,4 +206,46 @@ it('reads the translation columns that are the state of the owner', function ():
     expect(array_column($definition['columns'], 'name'))->toBe(['code', 'id'])
         ->and(array_column($definition['translation_columns'], 'name'))->toBe(['body', 'title'])
         ->and($definition['relations'])->toBe([]);
+});
+
+it('anchors a record again at its first save after an epoch change, in the new epoch (D33)', function (): void {
+    $article = create_epoch_article('Before');
+
+    Schema::table(EpochArticle::TABLE, function (Blueprint $table): void {
+        $table->string('subtitle')->nullable();
+    });
+    app(VersionEpochs::class)->flush();
+    DB::transaction(static fn (): bool => $article->update(['title' => 'After']));
+
+    $set = VersionSet::query()->latest('id')->firstOrFail();
+    $new_epoch = VersionEpoch::query()->latest('id')->firstOrFail();
+
+    expect($set->kind)->toBe(VersionSetKind::Baseline)
+        ->and($set->baseline_from_sequence)->not->toBeNull()
+        ->and($set->versions()->pluck('epoch_id')->unique()->values()->all())->toBe([$new_epoch->id]);
+});
+
+it('anchors a root at its first pivot change after an epoch change (D45)', function (): void {
+    $root = DB::transaction(static fn (): VersionedRelationRoot => VersionedRelationRoot::query()->create(['title' => 'Root']));
+    $subject = VersionedRelationSubject::query()->create(['name' => 'A']);
+    $older_epoch = VersionEpoch::factory()->create(['root_type' => $root->getMorphClass()]);
+    Version::query()->update(['epoch_id' => $older_epoch->id]);
+    app(VersionEpochs::class)->flush();
+
+    app(VersionSetManagerInterface::class)->run(
+        VersionSetRoot::forModel($root),
+        fn () => $root->categories()->attach($subject->getKey(), ['position' => 1]),
+    );
+
+    expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Baseline);
+});
+
+it('writes no baseline at a save in the epoch the record was last written in', function (): void {
+    $article = create_epoch_article('Before');
+    VersionEpoch::factory()->create(['root_type' => $article->getMorphClass()]);
+    app(VersionEpochs::class)->flush();
+
+    DB::transaction(static fn (): bool => $article->update(['title' => 'After']));
+
+    expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Change);
 });

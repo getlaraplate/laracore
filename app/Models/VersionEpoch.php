@@ -22,6 +22,7 @@ use Override;
  */
 final class VersionEpoch extends Model
 {
+    /** @use HasFactory<VersionEpochFactory> */
     use HasFactory;
 
     public const CREATED_AT = null;
