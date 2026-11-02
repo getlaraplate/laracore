@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Modules\Core\Contracts\IHidesAttributesFromAnonymous;
@@ -142,6 +143,26 @@ final class Version extends Model
     public function scopeOrderOldestFirst(Builder $query): Builder
     {
         return $query->oldest()->oldest('id');
+    }
+
+    /**
+     * Leaves out the rows of the aggregate image a baseline set appends after its own rows (D45).
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeWithoutBaselineImage(Builder $query): Builder
+    {
+        $versions = $this->getTable();
+        $sets = (new VersionSet)->getTable();
+
+        return $query->whereNotExists(static function (QueryBuilder $image) use ($versions, $sets): void {
+            $image->selectRaw('1')
+                ->from($sets)
+                ->whereColumn($sets . '.id', $versions . '.version_set_id')
+                ->whereNotNull($sets . '.baseline_from_sequence')
+                ->whereColumn($versions . '.sequence', '>=', $sets . '.baseline_from_sequence');
+        });
     }
 
     /**

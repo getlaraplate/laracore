@@ -155,14 +155,15 @@ trait HasVersions
     }
 
     /**
-     * The versions, latest first. Declared with its relation type: a relation a request names is called only
-     * when its declaration says it returns a relation.
+     * The versions, latest first, without the aggregate image a baseline appends after its own rows: it restates the
+     * record, it is no change. Declared with its relation type: a relation a request names is called only when its
+     * declaration says it returns a relation.
      *
      * @return MorphMany<Version, $this>
      */
     public function history(): MorphMany
     {
-        return $this->latestVersions();
+        return $this->latestVersions()->withoutBaselineImage();
     }
 
     /**
@@ -561,6 +562,47 @@ trait HasVersions
         );
     }
 
+    /**
+     * The aggregate as rows, read back from the database: the root's image, one row per locale, one per link of a
+     * registered relation with its authoritative pivot columns. Each image is in `contents`. A root whose row is gone has
+     * no image. The hard-delete snapshot
+     * (D55) and the baseline (D45) are both written from it.
+     *
+     * @return list<VersionChange>
+     */
+    public function aggregateImage(VersionChangeType $rootType, VersionChangeType $partType, VersionChangeType $linkType): array
+    {
+        $stored = $this->newQueryWithoutScopes()->whereKey($this->getKey())->toBase()->first();
+
+        if ($stored === null) {
+            return [];
+        }
+
+        $image = [
+            $this->imageRow($rootType, VersionChange::encryptSelected($this->filterVersionableImage((array) $stored), $this->encryptedVersionable)),
+        ];
+
+        if (method_exists($this, 'translations')) {
+            $translations = $this->translations();
+            $parent_key = $translations->getForeignKeyName();
+
+            foreach ($translations->withoutGlobalScopes()->orderBy($translations->getRelated()->getKeyName())->get() as $translation) {
+                $locale_image = method_exists($translation, 'imageOnOwner')
+                    ? $translation->imageOnOwner()
+                    : Arr::except($translation->getAttributes(), [$translation->getKeyName(), $parent_key, 'locale', 'created_at', 'updated_at']);
+                $image[] = $this->imageRow($partType, $locale_image, 'translations', ['locale' => $translation->getAttribute('locale')]);
+            }
+        }
+
+        if (method_exists($this, 'currentVersionedMembership')) {
+            foreach ($this->currentVersionedMembership() as $link) {
+                $image[] = $this->imageRow($linkType, $link['pivot'], $link['relation'], ['id' => $link['id']]);
+            }
+        }
+
+        return $image;
+    }
+
     protected static function bootHasVersions(): void
     {
         static::created(function (Model $model): void {
@@ -856,58 +898,42 @@ trait HasVersions
     }
 
     /**
-     * The aggregate as the hard delete finds it, in the rows of the snapshot set (D55): the root's image, one row per
-     * locale, one per link of a registered relation with its authoritative pivot columns, one per origin. Read after
-     * the scope locked the root, before the delete and its cascades remove the parts.
+     * The aggregate as the hard delete finds it, in the rows of the snapshot set (D55): the aggregate image as
+     * `deleted` rows with the image in `original_contents`, and one row per origin. Read after the scope locked the
+     * root, before the delete and its cascades remove the parts.
      *
      * @return list<VersionChange>
      */
     private function hardDeleteSnapshot(): array
     {
-        $snapshot = [
-            $this->snapshotRow(VersionChange::encryptSelected($this->filterVersionableImage($this->getRawOriginal()), $this->encryptedVersionable)),
-        ];
-
-        if (method_exists($this, 'translations')) {
-            $translations = $this->translations();
-            $parent_key = $translations->getForeignKeyName();
-
-            foreach ($translations->withoutGlobalScopes()->orderBy($translations->getRelated()->getKeyName())->get() as $translation) {
-                $image = method_exists($translation, 'imageOnOwner')
-                    ? $translation->imageOnOwner()
-                    : Arr::except($translation->getAttributes(), [$translation->getKeyName(), $parent_key, 'locale', 'created_at', 'updated_at']);
-                $snapshot[] = $this->snapshotRow($image, 'translations', ['locale' => $translation->getAttribute('locale')]);
-            }
-        }
-
-        if (method_exists($this, 'currentVersionedMembership')) {
-            foreach ($this->currentVersionedMembership() as $link) {
-                $snapshot[] = $this->snapshotRow($link['pivot'], $link['relation'], ['id' => $link['id']]);
-            }
-        }
+        $snapshot = array_map(
+            fn (VersionChange $row): VersionChange => $this->imageRow(VersionChangeType::Deleted, [], $row->relationPath, $row->subjectKey, $row->contents),
+            $this->aggregateImage(VersionChangeType::Deleted, VersionChangeType::Deleted, VersionChangeType::Deleted),
+        );
 
         $origin = new RecordOrigin;
         $origin->setConnection($this->getConnectionName());
         $origin_fields = array_values(array_diff($origin->getFillable(), ['referable_type', 'referable_id']));
 
         foreach ($origin->newQuery()->where('referable_type', $this->getMorphClass())->where('referable_id', $this->getKey())->orderBy('id')->get() as $record_origin) {
-            $snapshot[] = $this->snapshotRow(Arr::only($record_origin->getAttributes(), $origin_fields), 'origin', ['id' => $record_origin->getKey()]);
+            $snapshot[] = $this->imageRow(VersionChangeType::Deleted, [], 'origin', ['id' => $record_origin->getKey()], Arr::only($record_origin->getAttributes(), $origin_fields));
         }
 
         return $snapshot;
     }
 
     /**
-     * @param  array<string, mixed>  $image
+     * @param  array<string, mixed>  $contents
      * @param  array<string, mixed>|null  $subjectKey
+     * @param  array<string, mixed>  $originalContents
      */
-    private function snapshotRow(array $image, ?string $relationPath = null, ?array $subjectKey = null): VersionChange
+    private function imageRow(VersionChangeType $type, array $contents, ?string $relationPath = null, ?array $subjectKey = null, array $originalContents = []): VersionChange
     {
         return new VersionChange(
             model: $this,
-            type: VersionChangeType::Deleted,
-            originalContents: $image,
-            contents: [],
+            type: $type,
+            originalContents: $originalContents,
+            contents: $contents,
             strategy: VersionStrategy::SNAPSHOT,
             userId: $this->getVersionUserId(),
             encryptedAttributes: $relationPath === null ? $this->encryptedVersionable : [],

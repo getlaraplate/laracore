@@ -28,8 +28,11 @@ beforeEach(function (): void {
         $table->softDeletes();
     });
 
-    $this->first = VersionedDocument::query()->create(['title' => 'First']);
-    $this->second = VersionedDocument::query()->create(['title' => 'Second']);
+    // Created inside a transaction, so their creation is an atomic baseline and no write of the tests adds one (D47).
+    [$this->first, $this->second] = (new VersionedDocument)->getConnection()->transaction(static fn (): array => [
+        VersionedDocument::query()->create(['title' => 'First']),
+        VersionedDocument::query()->create(['title' => 'Second']),
+    ]);
     $this->manager = app(VersionSetManagerInterface::class);
     $this->sets_before = VersionSet::query()->max('id') ?? 0;
 });

@@ -26,6 +26,11 @@ final class ActiveVersionSet
      */
     private ?VersionSetKind $stored_kind = null;
 
+    /**
+     * The sequence of the first row of the aggregate image appended to a set stored as a baseline (D45).
+     */
+    private ?int $baseline_from_sequence = null;
+
     private int $sequence = 0;
 
     private bool $sequence_allocated = false;
@@ -47,7 +52,16 @@ final class ActiveVersionSet
         private readonly string $connection_name,
         private readonly VersionSetOptions $options,
         private readonly VersionCaptureQuality $capture = VersionCaptureQuality::Atomic,
+        private readonly bool $locked = true,
     ) {}
+
+    /**
+     * Whether the scope locked the root's row when the set opened: a set opened by another root's write is not.
+     */
+    public function isLocked(): bool
+    {
+        return $this->locked;
+    }
 
     public function capture(): VersionCaptureQuality
     {
@@ -104,6 +118,29 @@ final class ActiveVersionSet
         if (! $this->version_set instanceof VersionSet && $this->options->kind === VersionSetKind::Change) {
             $this->stored_kind = VersionSetKind::Baseline;
         }
+    }
+
+    /**
+     * Stores the set as a baseline whose whole aggregate is appended from the next row on, after the set's own rows
+     * (D45, D53). The set row may already exist: `finish()` writes the kind and the first sequence of the image.
+     * Never for a revert or a set that is not a change.
+     */
+    public function storeAsBaselineFromNextRow(): void
+    {
+        if ($this->options->kind === VersionSetKind::Change) {
+            $this->stored_kind = VersionSetKind::Baseline;
+            $this->baseline_from_sequence = $this->sequence + 1;
+        }
+    }
+
+    public function isStoredAsBaseline(): bool
+    {
+        return $this->stored_kind === VersionSetKind::Baseline;
+    }
+
+    public function hasWrittenVersions(): bool
+    {
+        return $this->version_written;
     }
 
     public function markBeingHardDeleted(bool $being_hard_deleted): void
@@ -201,10 +238,17 @@ final class ActiveVersionSet
         }
 
         $this->version_set->forceFill([
+            'kind' => $this->stored_kind ?? $this->options->kind,
             'root_type' => $this->root->type(),
             'root_id' => $root_id,
             'root_connection_ref' => $this->root->connectionName(),
             'root_table_ref' => $this->root->tableName(),
-        ])->saveOrFail();
+        ]);
+
+        if ($this->baseline_from_sequence !== null) {
+            $this->version_set->setAttribute('baseline_from_sequence', $this->baseline_from_sequence);
+        }
+
+        $this->version_set->saveOrFail();
     }
 }
