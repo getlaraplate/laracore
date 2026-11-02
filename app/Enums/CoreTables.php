@@ -40,6 +40,7 @@ enum CoreTables: string
     // History: the schema came from overtrue/laravel-versionable, absorbed into Core (D14, D15).
     case VersionSets = 'core_versions_sets';
     case Versions = 'core_versions';
+    case VersionsEpochs = 'core_versions_epochs';
 
     // generic or vendors models
     case Roles = 'vend_roles';

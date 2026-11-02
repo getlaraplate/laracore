@@ -14,6 +14,7 @@ use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Version;
+use Modules\Core\Models\VersionEpoch;
 use Modules\Core\Models\VersionSet;
 
 it('creates version sets before versions with the expected columns', function (): void {
@@ -111,6 +112,8 @@ it('keeps every new explicit index and foreign key name within portable limits',
         'vsets_reverted_FK',
         'versions_set_sequence_UN',
         'versions_set_FK',
+        'vepochs_type_fingerprint_UN',
+        'versions_epoch_FK',
     ];
 
     expect($version_sets_migration)->toBeString()
@@ -279,4 +282,62 @@ it('stores the capture quality of a set, best effort by default', function (): v
 
     expect($set->fresh()->capture)->toBe(VersionCaptureQuality::BestEffort)
         ->and($set->fresh()->kind)->toBe(VersionSetKind::Baseline);
+});
+
+it('creates the epochs table with one row per root class and fingerprint', function (): void {
+    $table_name = CoreTables::VersionsEpochs->value;
+    $columns = collect(Schema::getColumns($table_name))
+        ->keyBy(static fn (array $column): string => mb_strtolower($column['name']));
+    $unique = collect(Schema::getIndexes($table_name))->first(
+        static fn (array $index): bool => $index['columns'] === ['root_type', 'fingerprint'],
+    );
+
+    expect($table_name)->toBe('core_versions_epochs')
+        ->and(Schema::hasColumns($table_name, ['id', 'root_type', 'fingerprint', 'definition', 'first_seen_at']))->toBeTrue()
+        ->and(Schema::hasColumn($table_name, 'updated_at'))->toBeFalse()
+        ->and(Schema::hasColumn($table_name, 'deleted_at'))->toBeFalse()
+        ->and($columns['root_type']['nullable'])->toBeFalse()
+        ->and($columns['fingerprint']['nullable'])->toBeFalse()
+        ->and($unique)->not->toBeNull()
+        ->and($unique['name'])->toBe('vepochs_type_fingerprint_un')
+        ->and($unique['unique'])->toBeTrue();
+});
+
+it('links every version row to an optional epoch that cannot be removed', function (): void {
+    $columns = collect(Schema::getColumns(CoreTables::Versions->value))
+        ->keyBy(static fn (array $column): string => mb_strtolower($column['name']));
+    $epoch_foreign_key = collect(Schema::getForeignKeys(CoreTables::Versions->value))->first(
+        static fn (array $foreign_key): bool => $foreign_key['columns'] === ['epoch_id'],
+    );
+
+    expect($columns['epoch_id']['nullable'])->toBeTrue()
+        ->and($epoch_foreign_key)->not->toBeNull()
+        ->and($epoch_foreign_key['foreign_table'])->toBe(CoreTables::VersionsEpochs->value)
+        ->and($epoch_foreign_key['foreign_columns'])->toBe(['id'])
+        ->and(mb_strtolower((string) $epoch_foreign_key['on_delete']))->toBeIn(['restrict', 'no action']);
+});
+
+it('refuses to delete an epoch a version row carries', function (): void {
+    $epoch = VersionEpoch::factory()->create();
+    $version_set = VersionSet::query()->forceCreate(['uuid' => (string) Str::uuid(), 'kind' => VersionSetKind::Change]);
+    $version = Version::query()->create([
+        'version_set_id' => $version_set->getKey(),
+        'sequence' => 1,
+        'change_type' => VersionChangeType::Updated,
+        'versionable_type' => VersionSet::class,
+        'versionable_id' => $version_set->getKey(),
+        'version_strategy' => VersionStrategy::DIFF,
+        'epoch_id' => $epoch->getKey(),
+    ]);
+
+    expect($version->fresh()->epoch->is($epoch))->toBeTrue()
+        ->and(fn (): ?bool => $epoch->delete())->toThrow(QueryException::class);
+});
+
+it('casts the epoch definition and never updates an epoch row', function (): void {
+    $epoch = VersionEpoch::factory()->create(['definition' => ['columns' => [['name' => 'title']]]]);
+
+    expect($epoch->fresh()->definition)->toBe(['columns' => [['name' => 'title']]])
+        ->and($epoch->fresh()->first_seen_at)->not->toBeNull()
+        ->and(VersionEpoch::UPDATED_AT)->toBeNull();
 });
