@@ -88,13 +88,15 @@ search is served as `fast` with `degraded_reason: rate_limited` and a 200, not r
 
 ```text
 AdvancedSearchService::search()
-  1. IQueryIntentParser::parse()        -> optional query expansion
+  1. IQueryIntentParser::parse()        -> optional query expansion, date_range and recent
   2. ISearchPlanner::safePlan()         -> the plan (which strategies, weights, rerank)
      applyEngineCapabilities()          -> plan downgraded to keyword if engine lacks kNN
      TextMatchOptionsResolver::resolve() -> ResolvedTextMatch (lexical only, carries the query analysis)
      RetrievalTuningProfile::apply()    -> measured profile per QueryClass, only when search.adaptive_tuning is on
-  3. resolveVector()                    -> query embedding, or null
-  4. EnsembleSearchService::search()
+  3. resolveVector()                    -> query embedding of the full question, or null
+  4. dateFilterFor() / searchWithDates() -> date interval as a filter, widened when it finds too little
+     SearchQueryAnalyzer::withoutRequestWords() -> keyword query without request words
+     EnsembleSearchService::search()
        executeScoutSearch() x1 or x3    -> keyword | vector | hybrid, SEQUENTIAL
        RankFusion::fuse()               -> weighted normalized score + RRF + agreement
   5. rerankTopK()                       -> IReranker over the fused top-K
@@ -167,6 +169,102 @@ validation and the noise check and holds the same `default` and class sets (chec
 `Modules/AI/docs/rag/MODULE.md`. The tuner holds out a share of its cases to validate the winner and
 withholds class overrides backed by too few cases, and it declares no winner when the gain over the committed profile is no bigger than what one flipped case of its sample could produce (the noise margin), so a profile is not just the best fit to its dataset.
 
+### Step 2c: dates in the query
+
+A query that names a date can narrow the search to it. The filter applies only to a model that declares
+which of its columns holds the date, so a model without the declaration is unaffected.
+
+**The declaration.** The model sets `protected ?string $searchDateField = 'valid_from';`. `Searchable::searchDateField()`
+reads it through `property_exists()` (like `$embed`; the trait does not declare the property) and returns `null`
+for a model without it, or with an empty value. The column must be one the engine can filter on. If the engine refuses the filter, the search runs without the date
+(logged as a warning), never as an error.
+
+**Reading the dates.** `DateExpressionResolver` (rules, no model call) holds one pattern table per language, `en` and
+`it`. The table of the requested locale (`LocaleContext`) is tried first, then the other; a locale with no table
+tries every table. It recognises:
+
+| Kind | English examples | Italian examples |
+|------|------------------|------------------|
+| year, after a preposition | "of 2024", "in 2024", "during the year 2024" | "del 2024", "nel 2024", "dell'anno 2024" |
+| month and year | "March 2025", "in March of 2025" | "marzo 2025", "dicembre del 2023" |
+| previous month | "last month", "previous month" | "il mese scorso", "lo scorso mese" |
+| previous year | "last year", "previous year" | "l'anno scorso", "lo scorso anno" |
+| recency | "recent", "latest", "newest", "most recent" | "recenti", "ultimi", "ultime", "i più recenti" |
+
+Years run from 1900 to 2199. A year alone needs a preposition before it, so a bare number ("iphone 2024") is not a
+year; a month needs its year and is not read without it. Both apostrophes (`'` and `’`) are accepted. The result is an inclusive interval
+(`from`, `to` as `YYYY-MM-DD`), which the intent parser returns as `date_range` (`SimpleQueryIntentParser`) together
+with a `recent` flag; `FallbackSearchPlanner` carries them in `plan.filters` (`date_range`, `recent`,
+`recency_windows_days`). The AI module's LLM intent parser keeps the same rules first and uses the interval of the
+model only when the rules read none (see `Modules/AI/docs/rag/MODULE.md`).
+
+**Choosing the source** (`AdvancedSearchService::dateFilterFor()`), first match wins:
+
+1. The model declares no date field: no filter.
+2. The request's own filters already hold a condition on that field (`field` or `table.field`, at any depth of the
+   group): no filter. A date passed explicitly in the request wins over a date read from the text.
+3. The `date_range` of the intent, else the one of the plan. Only valid `YYYY-MM-DD` sides count, and one side may be
+   open.
+4. A recency request (`recent` in the intent or the plan): the last N days up to today, for each window N.
+
+Reading the dates never costs the search: any failure there is logged and the search runs without a date filter.
+
+**Widening.** A date read from the text must not empty a result by itself, so `searchWithDates()` runs the ensemble
+under a list of intervals and stops at the first one that finds enough, then falls through to one run with no date
+filter and the original keyword query:
+
+| Request | Intervals tried, in order | Stops when |
+|---------|---------------------------|------------|
+| a named interval | the interval as read; then it widened on both sides by each window (`[from - N, to + N]`); then no filter | the run has at least one hit |
+| recency | `[today - N, today]` for each window N; then no filter | the run has at least `min(perPage, core.search.recency_min_results)` hits |
+
+"Hits" is `AdvancedSearchResult::total`, not the page, so every page of a search picks the same window. Each interval
+reaches the engine as two column filters, `>= from` and `< the day after to` (a date-time on the last day is inside),
+AND-ed with the request filters, which stay untouched. They go through the same advanced-filters path for every engine
+(a `range` clause on Elasticsearch, a query callback on the database engine); Typesense takes the same path but the
+date filter was not tested on it. On the dated attempts the date words are taken out of the keyword query
+(`DateExpressionResolver::withoutDateExpressions()`), otherwise "reports of 2024" would require the term "2024" in the
+text; when nothing else would be left the full keyword query is kept. The final run with no filter keeps the date
+words. The vector branch always embeds the full question.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `core.search.recency_windows_days` | `[90, 365]` | the windows, in days, in the order they are tried; an entry that is not a positive whole number is dropped, no valid entry gives the default |
+| `core.search.recency_min_results` | `3` | hits a recency window needs before the search stops widening |
+
+Both are code defaults read with `config()`; no setting row is seeded. A plan can carry its own list
+(`filters.recency_windows_days`), which wins over the configuration.
+
+**`meta['date_filter']`** is present only when a date filter was considered:
+
+```php
+['field' => 'valid_from', 'source' => 'query'|'recent', 'from' => '2024-01-01'|null, 'to' => '2024-12-31'|null,
+ 'widened' => 0, 'applied' => true]
+```
+
+`from` and `to` are the interval that gave the result, `widened` is how many widenings it took (0 is the interval as
+read). When the search ended without a date filter, `applied` is `false`, `from` and `to` are `null`, `widened` is the
+number of intervals tried, and `reason` is `field_not_filterable` if the engine refused the filter.
+
+### Step 2d: request words in the keyword query
+
+A reader types how they ask ("find me", "articoli su") as well as what they want. `core.search.request_words` is a map
+from language to a list of words or phrases (English and Italian ship). `SearchQueryAnalyzer::withoutRequestWords()`
+removes them from the **keyword** query only:
+
+- The list of the locale's language applies (`it_IT` reads `it`), no other; a language without a list removes nothing.
+- A word or phrase matches whole, case-insensitively, with or without the accents of its vowels, and with either
+  apostrophe ("c'e" matches "c'è"). Longer phrases go first.
+- The query is never emptied: when only request words and stopwords would be left (judged by `analyze()`), the query is
+  returned unchanged.
+- The vector branch embeds the full question; the request words carry meaning for an embedding.
+- The query class that picks the tuning profile is still read from the full query. The terms sent to the keyword and
+  hybrid branches, the text-match options resolved for them, and the query the reranker receives are the ones without
+  the request words.
+
+Extend the list in `Modules/Core/config/config.php` (`search.request_words`) to add a language or a phrase. It is
+configuration, not a runtime setting.
+
 ### Step 3 — the query vector is an AI-module capability
 
 ```php
@@ -222,8 +320,41 @@ Index documents carry the vectors of one model only: `Searchable::toSearchableAr
 embedding rows whose `model_key` equals `VectorProfileContext::modelKey()`, which is the key of the
 `IVectorProfileProvider::current()` profile unless code runs inside `VectorProfileContext::using($profile, ...)`
 (the switch does, to write documents with the target's vectors; the override replaces the whole profile: key,
-dimensions and similarity). With no profile `toSearchableArray()` emits no `embeddings` at all and no vector
+dimensions, similarity and floor). With no profile `toSearchableArray()` emits no `embeddings` at all and no vector
 field is indexed: the document is keyword-only.
+
+### The similarity floor
+
+A `VectorProfile` may carry `minSimilarity`, the lowest similarity a vector hit needs to count. It belongs to the
+profile, not to a setting, because score scales change with the model and a floor left over from another model cuts
+silently. Null (the default) means no floor.
+
+**Scale.** The floor is on the scale of the similarity function itself: the cosine for `cosine`, the dot product of
+unit vectors for `dot_product`. It is not the engine score: Elasticsearch reports `(1 + cosine) / 2` for a cosine hit,
+so a cosine of 0.6 scores 0.8. It is not the scale of the AI module's documentation threshold either
+(`ai.features.faq.min_similarity`), which is applied to the score the documentation store returns.
+
+**`VectorProfile::similarityFloor()`** is what the engines read: `minSimilarity` for a `cosine` or `dot_product`
+profile, `null` for any other (`l2_norm` is a distance, so a minimum similarity there would be a maximum distance).
+
+| Engine | What the floor does |
+|--------|---------------------|
+| Elasticsearch | sent as `similarity` in the kNN clause (`cosine` and `dot_product` profiles); with no floor the clause is unchanged |
+| Database, PostgreSQL with pgvector | `cosine` profile only (the only similarity the pgvector path supports): the predicate `distance <= 1 - floor` on the cosine distance; with no floor there is no cut |
+| Database, MySQL and SQLite | `cosine` profile only: the match needs a cosine `>= floor`. With no floor, or with another similarity, the built-in cut stays: a cosine above 0.7 |
+| Typesense | not read |
+
+On MySQL and SQLite the floor replaces the built-in 0.7 cut, it is not combined with it. A floor below 0.7 therefore
+returns rows the fixed cut used to drop; a floor above it is stricter. The 0.7 is a constant that does not know the
+model, which is the thing a profile floor is for.
+
+**`IReportsVectorSimilarity::vectorSimilarity(float $score, VectorProfile $profile): ?float`** is the inverse of an
+engine's score transform: it turns the score of a pure vector hit back into the similarity, so a floor can be measured
+on the right scale (`test:ai:tune-retrieval` of the AI module uses it to recommend a value; it never writes one).
+Elasticsearch gives `2 * score - 1` for `cosine` and `dot_product`; the database engine gives the score itself on MySQL
+and SQLite and `2 - 1 / score` on PostgreSQL, for a `cosine` profile; anything else gives `null`. An engine without the
+contract gives no similarity. How a profile sets `min_similarity` and how the recommendation is read:
+`Modules/AI/docs/rag/MODULE.md`.
 
 ### PostgreSQL with pgvector
 
@@ -364,6 +495,67 @@ the cluster cannot be asked. A caller that names its own fields in the text-matc
 consequence for ranking is deliberate: a word that only matches the text of another language no longer counts,
 so a request in Italian ranks on Italian text and on the vectors.
 
+## Text fields: stemmed and exact
+
+A text field analysed by a language analyzer is stemmed: "Rossi" and "rosso" share a stem in Italian. So a proper name is
+not matched only through its stem, `ElasticsearchTranslator` gives such a field an **exact sub-field**, analysed
+without stemming (`standard` analyzer):
+
+```text
+title.it          text, analyzer italian          (stemmed)
+title.it.exact    text, analyzer standard         (ElasticsearchTranslator::EXACT_SUB_FIELD = 'exact')
+```
+
+It applies to the per-locale `locale_properties` objects and to plain `FieldType::Text` fields with a stemming analyzer.
+A field analysed by a built-in analyzer that does not stem (`standard`, `simple`, `whitespace`, `keyword`, `stop`,
+`pattern`) gets no sub-field, so a slug analysed with `keyword` stays whole.
+
+**Querying.** The text fields of a query come from the live mapping of the index (`ElasticsearchLocaleTextFields`). A
+field whose live mapping has `fields.exact` is listed with its exact sibling right after it and with the same boost
+(`title.it^2`, `title.it.exact^2`), so the `multi_match` of `buildFreeTextMatchQuery()` queries both. The
+`exact_match_boost` phrase clause uses the exact field in place of the stemmed one: a word that only shares the stem of
+a name gets no exact boost. A field without a sibling, the wildcard fallback (`title.*^2`, `*`) and fields named by the
+caller are unchanged; an index without the sub-field is queried exactly as before.
+
+**Existing indexes.** The sub-field exists only in an index built with it. `MappingStructureComparator::diff()` now
+checks the sub-fields (`fields`) that the model declares, and also the keyword sub-field of date fields. A missing one is
+reported as `sub-field 'title.it.exact' is declared by the model but missing from the live index; rebuild the index to
+analyse the documents into it`, a sub-field of another type with the usual type message. Sub-fields that exist only in
+the live index (dynamic `keyword`) are ignored. `scout:check-index` reports every such index as stale until it is
+rebuilt (`scout:delete-index` + `scout:index`, then `scout:reindex` to fill it); `scout:sync-mapping` can add the
+multi-field but the documents already stored are analysed into it only on reindex. Component fields mapped dynamically
+(not in the default translation when the mapping was built) get no exact sub-field and are queried as before.
+
+## Embedding context header
+
+A chunk retrieved alone should still say what it belongs to. A model can declare a one-line header that is put in front
+of every chunk of its text before the embedding:
+
+```php
+public function embedHeader(?string $locale = null): ?string
+{
+    return 'Article | ' . $this->title . ' | ' . $this->published_at?->format('Y-m-d');
+}
+```
+
+`Searchable::embedHeader()` returns `null` by default, so a model that does not override it embeds its text as it is. A
+model opts in by overriding it; the method is not part of `IEmbeddableModel`.
+
+- **Per locale.** `$locale` is the locale of the text being embedded; read the translated title of that locale.
+- **Embedding input only.** The header is not in the text `prepareDataToEmbedByLocale()` returns, nor in the indexed
+  document, nor in the chunk text (which is never stored).
+- **Normalised by the AI module.** `ModelEmbeddingSynchronizer::headerFor()` collapses whitespace to one line and cuts
+  it at `HEADER_LIMIT` (300 characters); an empty result means no header.
+- **Read only what every embedding path has loaded.** The header is part of the content hash, so a header that depends
+  on a relation loaded on one path only (the bulk import loads relations, a per-model job reloads the model) would make
+  the hash differ between paths and the content would be embedded again each time the other path ran.
+- **Hash consequence.** With a header the content hash is `sha256(header . "\0" . text)`; without one it is `sha256(text)`
+  as before. A header that appears, changes or goes away re-embeds the locale; unchanged text with the same header is
+  skipped. A save of the model, a reindex of the model (its bulk path skips by hash) and the embedding model switch
+  re-embed; `ai:embeddings:repair` does not, because it never compares hashes.
+- The splitter now runs on the original line structure and the whitespace is collapsed inside each chunk afterwards.
+  The consumer side (chunking, hashing, the switch corpus) is documented in `Modules/AI/docs/rag/MODULE.md`.
+
 ## Response metadata
 
 `AdvancedSearchResult->meta` carries:
@@ -377,6 +569,7 @@ so a request in Italian ranks on Italian text and on the vectors.
 | `matching` | resolved text-match decision plus engine degradations |
 | `per_strategy` | per-strategy ordered hits (`id`, `score`, `rank`), consumed by `test:ai:evaluate-retrieval-strategies` and `test:ai:tune-retrieval` |
 | `tuning` | present only when the tuning profile was applied: `{applied, profile_version, query_class}` |
+| `date_filter` | present only when a date filter was considered: `{field, source, from, to, widened, applied[, reason]}`, see [Step 2c](#step-2c-dates-in-the-query) |
 | `search` | always present: `{mode_requested, mode_applied, degraded_reason, retries_used}`, see [Search modes](#search-modes-how-much-a-request-spends) |
 | `unsupported_driver` | present when the engine cannot orchestrate |
 | `vector_disabled` | present when the plan wanted vectors and the guard refused them: `disabled`, `suspended`, `dimension_mismatch` or `no_vectors` |
@@ -469,11 +662,15 @@ Consumed at runtime:
 | Key | Env | Where it is read |
 |-----|-----|------------------|
 | vector profile (`VectorProfile`: `modelKey`, `dimensions`, `similarity`) | not a Core setting: `IVectorProfileProvider::current()`, bound by a module (AI: `ActiveEmbeddingProfileProvider`, from `features.embeddings.enabled` and `features.embeddings.serving_model`) | `FallbackSearchPlanner`, engines, `ElasticsearchTranslator`, `VectorSearchAvailability`, `Searchable` |
+| vector profile floor (`VectorProfile::$minSimilarity`) | not a Core setting: the profile provider fills it (AI: `min_similarity` of the embedding model profile) | `ElasticsearchEngine`, `DatabaseEngine` via `similarityFloor()` |
 | `search.analyzers` | `SEARCH_ANALYZER_IT`, `SEARCH_ANALYZER_EN` | per-locale text mappings |
 | `core.search.reranker.enabled` | runtime setting | `EnsembleSearchService` (plan fallback) |
 | `core.search.reranker.top_k` | runtime setting | `EnsembleSearchService` |
 | `core.search.reranker.weight` | runtime setting | `EnsembleSearchService` (rerank blend when the plan sets none) |
 | `core.search.adaptive_tuning` | runtime setting | `RetrievalTuningProfile` (switch) |
+| `core.search.request_words` | none (config, per language) | `SearchQueryAnalyzer::withoutRequestWords()` |
+| `core.search.recency_windows_days` | none (code default `[90, 365]`) | `DateExpressionResolver::recencyWindows()` |
+| `core.search.recency_min_results` | none (code default `3`) | `AdvancedSearchService` (recency widening) |
 | `core.search.debug_timings` | runtime setting | `AdvancedSearchService` (adds `meta['timings']`) |
 | `search_tuning.*` | — (committed file) | `RetrievalTuningProfile`, `test:ai:tune-retrieval` |
 | `search.text_matching.*` | — | `TextMatchOptionsResolver` |
@@ -507,7 +704,26 @@ See `Modules/AI/docs/rag/MODULE.md` for datasets, metrics and baseline locations
 | `meta.vector_disabled` = `no_vectors` | nothing embedded with the serving model yet: run `ai:embeddings:repair --all` |
 | Vector results are noise | records with embeddings but none of the active `model_key`; run `ai:embeddings:repair --stale` |
 | Hybrid ranks worse than keyword alone | measure with `test:ai:evaluate-retrieval-strategies` before changing weights |
+| A dated query returns results outside the date | `meta['date_filter']`: `applied: false` means the search widened to no filter (too few hits) or the engine refused the field (`reason`); the model must declare `$searchDateField` |
+| A query with a date is not narrowed | the model declares no `$searchDateField`, the request already filters on that field, or the pattern does not match (a year needs a preposition: "of 2024") |
+| `scout:check-index` reports a missing `.exact` sub-field | the index predates the sub-field: rebuild and reindex the model, see [Text fields: stemmed and exact](#text-fields-stemmed-and-exact) |
+| Fewer or more vector matches after setting a floor | `VectorProfile::similarityFloor()` for the active profile; on MySQL and SQLite it replaces the fixed 0.7 cut |
 | Ranking changed after flipping `search.adaptive_tuning` | read `meta['tuning']` (profile version, query class); switch it off to return to L0 without a deploy |
+
+## Upgrading
+
+Changes of the retrieval improvements that touch an installation already running:
+
+1. **Rebuild the search indexes.** The text fields of a model get the `exact` sub-field only when the index is built.
+   Until then `scout:check-index` lists the index as stale and queries behave as they did (no exact field is used).
+   Per model: `scout:delete-index "{Model}"`, `scout:index "{Model}"`, then `scout:reindex "{Model}"`.
+2. **Re-embed after a header.** A model that starts declaring `embedHeader()` changes the content hash of every row, so
+   all its contents are embedded again on their next embedding pass (a save, a reindex, a model switch). On a large
+   installation that is a cost: reindex off peak. `ai:embeddings:repair` does not do it.
+3. **MySQL and SQLite behaviour change.** A `cosine` profile with a `minSimilarity` replaces the fixed 0.7 cut of the
+   database engine. Profiles without a floor keep the 0.7 cut; PostgreSQL with pgvector never had it.
+4. **No action needed** for dates and request words: a model without `$searchDateField` is unaffected, and the request
+   word lists only shorten the keyword query.
 
 ## FAQ prompts for RAG
 
@@ -521,3 +737,9 @@ See `Modules/AI/docs/rag/MODULE.md` for datasets, metrics and baseline locations
 - Which query class does a query with an invoice code fall into?
 - Which search configuration keys are declared but unused?
 - Do the evaluation reports influence search at runtime?
+- How does a model declare the date a query like "reports of 2024" filters on, and what happens when nothing matches?
+- What is `meta['date_filter']` and how do the recency windows widen?
+- Which words are removed from the keyword query, and why does the vector query keep them?
+- What is the `exact` sub-field, and why does `scout:check-index` report an index as stale after the upgrade?
+- On which scale is `minSimilarity`, and how does each engine apply it?
+- How does a model add an embedding context header, and what does it do to the content hash?
