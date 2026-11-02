@@ -368,6 +368,21 @@ trait Searchable
     }
 
     /**
+     * A one-line context (type, title, date, ...) the embedding of every chunk of this model's text starts
+     * with, so a chunk retrieved alone still says what it belongs to. It is embedding input only: it is
+     * not part of the text {@see prepareDataToEmbedByLocale()} returns nor of the indexed document. Null by
+     * default, so the text is embedded as it is; a model opts in by overriding this method, reading only
+     * attributes and relations it has on every path that embeds it, since the header is part of the
+     * content hash that decides whether a locale is re-embedded.
+     *
+     * @param  string|null  $locale  The locale of the text being embedded; null for the default locale
+     */
+    public function embedHeader(?string $locale = null): ?string
+    {
+        return null;
+    }
+
+    /**
      * Relationship with model embeddings.
      * ModelEmbedding is in Core (structure), AI module handles generation/population.
      *
@@ -502,6 +517,19 @@ trait Searchable
     public function getEmbedFields(): array
     {
         return $this->embed ?? [];
+    }
+
+    /**
+     * The date field a search filters on when its query names a date ("of 2024", "last month", "latest"),
+     * declared by the model as `protected ?string $searchDateField`. Null when the model declares none: its
+     * searches are never filtered by a date read from the query. The property is checked with
+     * property_exists(), so a model without it never reaches Eloquent's attribute lookup.
+     */
+    public function searchDateField(): ?string
+    {
+        $field = property_exists($this, 'searchDateField') ? $this->searchDateField : null;
+
+        return is_string($field) && $field !== '' ? $field : null;
     }
 
     /**

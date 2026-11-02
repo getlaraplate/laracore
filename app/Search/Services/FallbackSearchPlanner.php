@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Modules\Core\Search\Services;
 
+use Carbon\CarbonImmutable;
+use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Search\Contracts\ISearchPlanner;
 use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Support\VectorProfileContext;
@@ -13,9 +15,19 @@ use Modules\Core\Search\Support\VectorProfileContext;
  *
  * Adjusts retrieval strategy weights and sizes based on simple query
  * heuristics (length, presence of numbers).
+ *
+ * `filters` carries the dates of the query: the interval it names
+ * (`date_range`), whether it asks for recent results (`recent`), and the
+ * windows, in days, the search widens through when the date filter finds
+ * nothing or too little (`recency_windows_days`). The search runs them in
+ * order, then without a date filter.
  */
 final readonly class FallbackSearchPlanner implements ISearchPlanner
 {
+    public function __construct(
+        private DateExpressionResolver $dates = new DateExpressionResolver,
+    ) {}
+
     /**
      * {@inheritDoc}
      *
@@ -63,7 +75,9 @@ final readonly class FallbackSearchPlanner implements ISearchPlanner
                 'weight' => $is_short ? 0.4 : 0.2,
             ],
             'filters' => [
-                'date_range' => null,
+                'date_range' => $this->dates->resolve($query, CarbonImmutable::now(), LocaleContext::get()),
+                'recent' => $this->dates->asksForRecent($query, LocaleContext::get()),
+                'recency_windows_days' => $this->dates->recencyWindows(),
             ],
             'retry_policy' => [
                 'enabled' => true,

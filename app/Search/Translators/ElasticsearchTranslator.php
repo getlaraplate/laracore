@@ -13,6 +13,24 @@ use Modules\Core\Search\Support\VectorProfileContext;
 
 class ElasticsearchTranslator implements ISchemaTranslator
 {
+    /**
+     * The sub-field of a text field analysed without stemming: `title.it.exact` next to the stemmed `title.it`.
+     */
+    public const string EXACT_SUB_FIELD = 'exact';
+
+    /**
+     * The analyzer of the exact sub-field: it splits into words and lowercases, and does not stem.
+     */
+    private const string EXACT_ANALYZER = 'standard';
+
+    /**
+     * Built-in analyzers that do not stem: a text field analysed by one of them gets no exact sub-field, which
+     * would only repeat it (or, for `keyword`, split what is meant to stay whole).
+     *
+     * @var list<string>
+     */
+    private const array NON_STEMMING_ANALYZERS = ['standard', 'simple', 'whitespace', 'keyword', 'stop', 'pattern'];
+
     public function translate(SchemaDefinition $schema): array
     {
         $mapping = [
@@ -40,10 +58,7 @@ class ElasticsearchTranslator implements ISchemaTranslator
             $properties = [];
 
             foreach ($field->options['locale_properties'] as $locale => $definition) {
-                $properties[(string) $locale] = [
-                    'type' => 'text',
-                    'analyzer' => (string) ($definition['analyzer'] ?? 'standard'),
-                ];
+                $properties[(string) $locale] = $this->textProperty((string) ($definition['analyzer'] ?? 'standard'));
             }
 
             return ['type' => 'object', 'properties' => $properties];
@@ -72,10 +87,7 @@ class ElasticsearchTranslator implements ISchemaTranslator
         }
 
         $esField = match ($field->type) {
-            FieldType::Text => [
-                'type' => 'text',
-                'analyzer' => $field->options['analyzer'] ?? 'standard',
-            ],
+            FieldType::Text => $this->textProperty((string) ($field->options['analyzer'] ?? 'standard')),
             FieldType::Keyword => [
                 'type' => 'keyword',
             ],
@@ -137,6 +149,25 @@ class ElasticsearchTranslator implements ISchemaTranslator
         }
 
         return $esField;
+    }
+
+    /**
+     * A text field with its analyzer. When the analyzer may stem, the field also carries an exact sub-field
+     * analysed without stemming, so a proper name is not matched only through its stem ("Rossi" and "rosso"
+     * share one in Italian). An index built before the sub-field existed is reported by the mapping comparator
+     * and gets it on its next rebuild.
+     *
+     * @return array<string, mixed>
+     */
+    private function textProperty(string $analyzer): array
+    {
+        $property = ['type' => 'text', 'analyzer' => $analyzer];
+
+        if (! in_array($analyzer, self::NON_STEMMING_ANALYZERS, true)) {
+            $property['fields'] = [self::EXACT_SUB_FIELD => ['type' => 'text', 'analyzer' => self::EXACT_ANALYZER]];
+        }
+
+        return $property;
     }
 
     /**

@@ -13,6 +13,7 @@ use InvalidArgumentException;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\DatabaseEngine as BaseDatabaseEngine;
 use Modules\Core\Models\ModelEmbedding;
+use Modules\Core\Search\Contracts\IReportsVectorSimilarity;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Services\DatabaseTextMatchCompiler;
@@ -20,14 +21,39 @@ use Modules\Core\Search\Services\TextMatchOptionsResolver;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
+use Override;
 
-final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
+final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorSimilarity, ISearchEngine
 {
     use CommonEngineFunctions;
+
+    /**
+     * The cosine a vector match must exceed on MySQL and SQLite when the profile sets no floor.
+     */
+    private const float BUILT_IN_COSINE_CUT = 0.7;
 
     public function checkIndex(string|Model $model): bool
     {
         return true;
+    }
+
+    /**
+     * The cosine behind the `_score` of a vector match, for a `cosine` profile only. MySQL and SQLite
+     * score with the cosine itself; pgvector scores `1 / (1 + distance)` with the cosine distance
+     * `1 - cosine`. Other similarity functions are not computed here as such, so they give none.
+     */
+    #[Override]
+    public function vectorSimilarity(float $score, VectorProfile $profile): ?float
+    {
+        if ($profile->similarity !== 'cosine') {
+            return null;
+        }
+
+        if ($this->getDatabaseDriver() !== 'pgsql') {
+            return $score;
+        }
+
+        return $score > 0.0 ? 2.0 - 1.0 / $score : null;
     }
 
     /**
@@ -540,6 +566,13 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
             $query->whereRaw("vector_dims(\"embedding\") = {$dimensions}");
         }
 
+        $floor = $this->cosineFloor();
+
+        if ($floor !== null) {
+            // The cosine distance is `1 - cosine`: a cosine of at least the floor is a distance of at most `1 - floor`.
+            $query->whereRaw("{$distance} <= ?", [$vector_string, 1.0 - $floor]);
+        }
+
         if ($candidateIds !== null) {
             $query->whereIn('model_id', $candidateIds);
         }
@@ -579,6 +612,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
     private function mySQLVectorSearchQuery(array $queryVector, Model $model, ?array $candidateIds = null): EloquentBuilder
     {
         $query_vector_json = json_encode($queryVector, JSON_THROW_ON_ERROR);
+        $floor = $this->cosineFloor();
 
         $query = ModelEmbedding::query()
             ->where('model_type', $model::class)
@@ -592,7 +626,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
                 ) AS similarity_score",
                 [$query_vector_json],
             )
-            ->having('similarity_score', '>', 0.7)
+            ->having('similarity_score', $floor === null ? '>' : '>=', $floor ?? self::BUILT_IN_COSINE_CUT)
             ->orderBy('similarity_score', 'desc');
 
         if ($candidateIds !== null) {
@@ -618,6 +652,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
 
         /** @var list<array{id: int|null, similarity_score: float, embedding: list<float>}> $results */
         $results = [];
+        $floor = $this->cosineFloor();
         $query = ModelEmbedding::query()->where('model_type', $model::class);
 
         if ($candidateIds !== null) {
@@ -639,7 +674,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
 
             $similarity = $this->calculateCosineSimilarity($queryVector, $normalized_embedding);
 
-            if ($similarity <= 0.7) {
+            if ($floor === null ? $similarity <= self::BUILT_IN_COSINE_CUT : $similarity < $floor) {
                 continue;
             }
 
@@ -658,6 +693,20 @@ final class DatabaseEngine extends BaseDatabaseEngine implements ISearchEngine
         }
 
         return $results;
+    }
+
+    /**
+     * The profile floor where this engine can apply it: every driver here measures the cosine (pgvector
+     * through the cosine distance of a `cosine` profile, MySQL and SQLite by computing it whatever the
+     * profile says), so the floor applies to a `cosine` profile only. For any other similarity function
+     * there is no floor, and MySQL and SQLite keep their built-in cut: a floor read on another scale would
+     * cut the wrong rows.
+     */
+    private function cosineFloor(): ?float
+    {
+        $profile = VectorProfileContext::get();
+
+        return $profile instanceof VectorProfile && $profile->similarity === 'cosine' ? $profile->similarityFloor() : null;
     }
 
     /**

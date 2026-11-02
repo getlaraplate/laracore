@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Modules\Core\Search\Services;
 
+use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
+use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FiltersGroup;
+use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\Contracts\ISearchStrategyResolver;
 use Modules\Core\Search\Contracts\ITextEmbedder;
@@ -20,6 +24,7 @@ use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Enums\QueryClass;
 use Modules\Core\Search\Enums\SearchMode;
 use Modules\Core\Search\Enums\TextMatchPreference;
+use Modules\Core\Search\Support\QueryDateFilter;
 use Modules\Core\Search\Support\SearchDegradations;
 use Modules\Core\Search\Support\SearchStageTimings;
 use Modules\Core\Search\Support\VectorProfileContext;
@@ -33,6 +38,7 @@ final readonly class AdvancedSearchService
         private Application $app,
         private ?RetrievalTuningProfile $tuning = null,
         private ?IVectorSearchAvailability $vector_availability = null,
+        private ?DateExpressionResolver $dates = null,
     ) {}
 
     public function available(?Model $model = null): bool
@@ -59,6 +65,14 @@ final readonly class AdvancedSearchService
      * `$retries` is how many times the caller lets a poor result be searched again, capped by the strategy
      * (`max_retries`, zero for `fast`). A retry is judged by {@see SearchQualityEvaluator} and is not the same
      * query again: see {@see self::relaxedPlan()}.
+     *
+     * The keyword search runs without the request words of the locale ("find me", "articoli su"), the vector
+     * search on the whole question: see {@see SearchQueryAnalyzer::withoutRequestWords()}. The query class that
+     * picks the tuning is read from the whole query, which is the shape of the question.
+     *
+     * A date the query names becomes a filter on the date field the model declares (`searchDateField()`), and
+     * `meta['date_filter']` reports it: see {@see self::searchWithDates()}. A model that declares none, a query
+     * that names no date, and a request that filters on the date field itself search as they always did.
      *
      * @param  array<int, \Modules\Core\Casts\Sort>  $sort
      */
@@ -96,25 +110,29 @@ final readonly class AdvancedSearchService
         $plan = $this->stage($timings, SearchStageTimings::PLAN, fn (): array => $strategy->planner->safePlan($query));
         $plan['intent'] = $intent;
         $plan['retrieval']['size'] = $perPage;
-        $run = function (array $plan, string $search_query) use ($model, $engine, $strategy, $query, $page, $perPage, $filters, $sort, $matching, $matchingOptions, $timings): array {
+        $date_filter = $this->dateFilterFor($model, $intent, $plan, $filters, $perPage);
+        $run = function (array $plan, string $search_query) use ($model, $engine, $strategy, $query, $page, $perPage, $filters, $sort, $matching, $matchingOptions, $timings, $date_filter): array {
             $plan = $this->applyEngineCapabilities($engine, $plan);
             $text_match = app(TextMatchOptionsResolver::class)->resolve($search_query, $matching, $matchingOptions);
             $plan = $this->tuningProfile()->apply($plan, QueryClass::fromAnalysis($text_match->analysis));
             $availability = $this->vectorAvailability($model, $plan, $strategy);
             $vector = $availability->available ? $this->resolveVector($query, $plan, $strategy, $timings) : null;
+            $keyword_query = app(SearchQueryAnalyzer::class)->withoutRequestWords($search_query, LocaleContext::get());
 
-            $result = $this->stage($timings, SearchStageTimings::ENSEMBLE, fn (): AdvancedSearchResult => $this->ensemble_search->search(
+            $ensemble = fn (?FiltersGroup $attempt_filters, string $attempt_query): AdvancedSearchResult => $this->ensemble_search->search(
                 model: $model,
-                query: $search_query,
+                query: $attempt_query,
                 plan: $plan,
                 vector: $vector,
                 page: $page,
                 perPage: $perPage,
-                filters: $filters,
+                filters: $attempt_filters,
                 sort: $sort,
-                textMatch: $text_match,
+                textMatch: $attempt_query === $search_query ? $text_match : app(TextMatchOptionsResolver::class)->resolve($attempt_query, $matching, $matchingOptions),
                 reranker: $strategy->reranker,
-            ));
+            );
+
+            $result = $this->stage($timings, SearchStageTimings::ENSEMBLE, fn (): AdvancedSearchResult => $this->searchWithDates($date_filter, $ensemble, $filters, $keyword_query));
 
             return [$result, $availability, $plan];
         };
@@ -149,6 +167,150 @@ final readonly class AdvancedSearchService
             totalPages: $result->totalPages,
             meta: $meta,
         );
+    }
+
+    /**
+     * Runs the ensemble under the date filter of the query: each interval in turn, the date words taken out of
+     * the keyword query, until a run finds enough hits; then once more without a date filter and with the date
+     * words kept. `$search_query` is the keyword query, the request words already out. An engine that cannot filter on the declared field (it refuses the filter) gets the search without
+     * the date, never an error. With no date filter this is the plain ensemble call.
+     *
+     * @param  Closure(?FiltersGroup, string): AdvancedSearchResult  $ensemble
+     */
+    private function searchWithDates(?QueryDateFilter $date_filter, Closure $ensemble, ?FiltersGroup $filters, string $search_query): AdvancedSearchResult
+    {
+        if (! $date_filter instanceof QueryDateFilter) {
+            return $ensemble($filters, $search_query);
+        }
+
+        $dated_query = $this->dateResolver()->withoutDateExpressions($search_query, LocaleContext::get());
+        $dated_query = $dated_query !== '' ? $dated_query : $search_query;
+        $widened = count($date_filter->intervals);
+        $reason = null;
+
+        foreach (array_keys($date_filter->intervals) as $attempt) {
+            try {
+                $result = $ensemble($date_filter->filters($attempt, $filters), $dated_query);
+            } catch (InvalidArgumentException $exception) {
+                Log::warning('The search engine cannot filter on the search date field; searching without the date', [
+                    'field' => $date_filter->field,
+                    'error' => $exception->getMessage(),
+                ]);
+                $widened = $attempt;
+                $reason = QueryDateFilter::FIELD_NOT_FILTERABLE;
+
+                break;
+            }
+
+            if ($date_filter->isEnough($result->total)) {
+                return $this->withMeta($result, ['date_filter' => $date_filter->appliedMeta($attempt)]);
+            }
+        }
+
+        return $this->withMeta($ensemble($filters, $search_query), ['date_filter' => $date_filter->unappliedMeta($widened, $reason)]);
+    }
+
+    /**
+     * The date filter of the query, or null when there is none to apply: the model declares no date field, the
+     * request already filters on it (dates passed explicitly win over dates read from the text), or the query
+     * names no date. The interval comes from the intent, else from the plan; a recency request uses the
+     * windows of the plan (`filters.recency_windows_days`), else the configured ones. A failure here costs the
+     * date filter, never the search.
+     *
+     * @param  array<string, mixed>  $intent
+     * @param  array<string, mixed>  $plan
+     */
+    private function dateFilterFor(Model $model, array $intent, array $plan, ?FiltersGroup $filters, int $per_page): ?QueryDateFilter
+    {
+        try {
+            $field = method_exists($model, 'searchDateField') ? $model->searchDateField() : null;
+
+            if (! is_string($field) || $field === '' || $this->filtersOn($filters, $model, $field)) {
+                return null;
+            }
+
+            $plan_filters = $this->planSection($plan, 'filters');
+            $windows = $this->recencyWindows($plan_filters['recency_windows_days'] ?? null);
+
+            foreach ([$intent['date_range'] ?? null, $plan_filters['date_range'] ?? null] as $range) {
+                $date_filter = is_array($range) ? QueryDateFilter::forInterval($field, $range['from'] ?? null, $range['to'] ?? null, $windows) : null;
+
+                if ($date_filter instanceof QueryDateFilter) {
+                    return $date_filter;
+                }
+            }
+
+            if (($intent['recent'] ?? false) !== true && ($plan_filters['recent'] ?? false) !== true) {
+                return null;
+            }
+
+            $minimum = config('core.search.recency_min_results', 3);
+
+            return QueryDateFilter::forRecency($field, CarbonImmutable::today(), $windows, min($per_page, is_numeric($minimum) ? (int) $minimum : 3));
+        } catch (Throwable $exception) {
+            Log::warning('Reading the dates of the query failed; searching without a date filter', ['error' => $exception->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Whether the request filters hold a condition on the field, at any depth.
+     */
+    private function filtersOn(?FiltersGroup $filters, Model $model, string $field): bool
+    {
+        if (! $filters instanceof FiltersGroup) {
+            return false;
+        }
+
+        foreach ($filters->filters as $node) {
+            if ($node instanceof FiltersGroup && $this->filtersOn($node, $model, $field)) {
+                return true;
+            }
+
+            if ($node instanceof Filter && in_array($node->property, [$field, $model->getTable() . '.' . $field], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The windows of the plan when it carries a list, else the configured ones.
+     *
+     * @return list<int>
+     */
+    private function recencyWindows(mixed $planned): array
+    {
+        if (! is_array($planned)) {
+            return $this->dateResolver()->recencyWindows();
+        }
+
+        return array_values(array_filter(
+            array_map(static fn (mixed $days): int => is_numeric($days) ? (int) $days : 0, $planned),
+            static fn (int $days): bool => $days > 0,
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    private function withMeta(AdvancedSearchResult $result, array $meta): AdvancedSearchResult
+    {
+        return new AdvancedSearchResult(
+            hits: $result->hits,
+            total: $result->total,
+            page: $result->page,
+            perPage: $result->perPage,
+            totalPages: $result->totalPages,
+            meta: [...$result->meta, ...$meta],
+        );
+    }
+
+    private function dateResolver(): DateExpressionResolver
+    {
+        return $this->dates ?? $this->app->make(DateExpressionResolver::class);
     }
 
     /**

@@ -15,7 +15,11 @@ interface IQueryIntentParser
     /**
      * Parse a raw query into structured intent.
      *
-     * @return array{keywords: list<string>, date_range: ?array<string, string>, query: array{expanded: string}}
+     * `date_range` is the interval the query names (`from` and `to`, ISO dates), null when it names none;
+     * `recent` says whether it asks for recent results. Both are optional for the search: an intent that
+     * lacks them searches without a date filter.
+     *
+     * @return array{keywords: list<string>, date_range: ?array<string, string>, recent?: bool, query: array{expanded: string}}
      */
     public function parse(string $query): array;
 }

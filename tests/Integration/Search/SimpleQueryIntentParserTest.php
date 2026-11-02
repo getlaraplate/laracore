@@ -52,3 +52,17 @@ it('filters single-character words', function (): void {
 
     expect($result['keywords'])->toBe(['testing']);
 });
+
+it('reads the date interval the query names, relative to today', function (): void {
+    $this->travelTo(new DateTimeImmutable('2026-11-02 09:00:00'));
+
+    expect((new SimpleQueryIntentParser)->parse('fatture del mese scorso')['date_range'])
+        ->toBe(['from' => '2026-10-01', 'to' => '2026-10-31'])
+        ->and((new SimpleQueryIntentParser)->parse('reports of 2024')['date_range'])
+        ->toBe(['from' => '2024-01-01', 'to' => '2024-12-31']);
+});
+
+it('says whether the query asks for recent results', function (): void {
+    expect((new SimpleQueryIntentParser)->parse('ultime notizie')['recent'])->toBeTrue()
+        ->and((new SimpleQueryIntentParser)->parse('notizie')['recent'])->toBeFalse();
+});
