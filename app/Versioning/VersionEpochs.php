@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Modules\Core\Versioning;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Modules\Core\Models\VersionEpoch;
 
 /**
@@ -23,6 +25,13 @@ final class VersionEpochs
      */
     private array $several = [];
 
+    /**
+     * The epochs this process inserted inside a transaction still open, by cache key.
+     *
+     * @var array<string, mixed>
+     */
+    private array $pending = [];
+
     public function __construct(private readonly EpochFingerprint $fingerprint) {}
 
     public function currentFor(Model $root): VersionEpoch
@@ -40,12 +49,23 @@ final class VersionEpochs
         // One read answers both questions, so that hasSeveral() costs no query at the writes that follow.
         $known = $query->clone()->where('root_type', $root_type)->get();
         $current = $known->firstWhere('fingerprint', $fingerprint)
-            // createOrFirst absorbs the unique violation of two processes seeing a new shape at once.
-            ?? $query->createOrFirst(
-                ['root_type' => $root_type, 'fingerprint' => $fingerprint],
-                ['definition' => $definition, 'first_seen_at' => now()],
-            );
-        $this->several[$root_type] = $known->count() + ($current->wasRecentlyCreated ? 1 : 0) > 1;
+            ?? $this->create($query, $root_type, $fingerprint, $definition);
+        $this->several[$root_type] = $known->count() + ($known->contains($current) ? 0 : 1) > 1;
+        $connection = $root->getConnection();
+
+        // An epoch this process inserted is kept only once its transaction commits: a rollback removes the row, and
+        // a cached id of it would fail every later write of the class on the foreign key.
+        if ($connection->transactionLevel() > 0 && ($current->wasRecentlyCreated || ($this->pending[$key] ?? null) === $current->getKey())) {
+            $this->pending[$key] = $current->getKey();
+            $connection->afterCommit(function () use ($key, $current): void {
+                unset($this->pending[$key]);
+                $this->current[$key] = $current;
+            });
+
+            return $current;
+        }
+
+        unset($this->pending[$key]);
 
         return $this->current[$key] = $current;
     }
@@ -62,5 +82,24 @@ final class VersionEpochs
     {
         $this->current = [];
         $this->several = [];
+        $this->pending = [];
+    }
+
+    /**
+     * Inserts a new shape. Another process may insert it first: its row is then read with a locking read, since the
+     * snapshot of a repeatable-read transaction (InnoDB) does not see a row committed after it began.
+     *
+     * @param  Builder<VersionEpoch>  $query
+     * @param  array<string, mixed>  $definition
+     */
+    private function create(Builder $query, string $rootType, string $fingerprint, array $definition): VersionEpoch
+    {
+        $identity = ['root_type' => $rootType, 'fingerprint' => $fingerprint];
+
+        try {
+            return $query->clone()->createOrFirst($identity, ['definition' => $definition, 'first_seen_at' => now()]);
+        } catch (UniqueConstraintViolationException $exception) {
+            return $query->clone()->where($identity)->sharedLock()->first() ?? throw $exception;
+        }
     }
 }

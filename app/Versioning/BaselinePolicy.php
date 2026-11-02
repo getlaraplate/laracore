@@ -20,10 +20,7 @@ final readonly class BaselinePolicy
 {
     public function __construct(private VersionEpochs $epochs) {}
 
-    /**
-     * @param  int|null  $openSetId  the set being closed, whose own rows already carry the current epoch
-     */
-    public function isDue(VersionSetRoot $root, ?int $openSetId = null): bool
+    public function isDue(VersionSetRoot $root): bool
     {
         $version_set = new VersionSet;
         $version_set->setConnection($root->connectionName());
@@ -46,14 +43,16 @@ final readonly class BaselinePolicy
             return true;
         }
 
-        return $this->epochChanged($root, $openSetId);
+        return $this->epochChanged($root, $latest_baseline);
     }
 
     /**
-     * Whether the root's latest row before the open set was written in another schema epoch than the current one of
-     * its class (D33). A class that has known one shape only has nothing to compare, and is asked nothing more.
+     * Whether the root's latest complete anchor was written in another schema epoch than the current one of its class
+     * (D33). The anchor, not the latest row: a revert or a write through another root's scope stamps the new epoch
+     * without carrying a baseline, and must leave it due (D60). A class that has known one shape only has nothing to
+     * compare, and is asked nothing more.
      */
-    private function epochChanged(VersionSetRoot $root, ?int $openSetId): bool
+    private function epochChanged(VersionSetRoot $root, int $baselineSetId): bool
     {
         $current = $this->epochs->currentFor($root->model());
 
@@ -61,22 +60,15 @@ final readonly class BaselinePolicy
             return false;
         }
 
-        $version_set = new VersionSet;
-        $version_set->setConnection($root->connectionName());
-        $sets = $version_set->getTable();
-        $versions = new Version()->getTable();
+        $version = new Version;
+        $version->setConnection($root->connectionName());
 
-        $latest_epoch = $version_set->newQuery()
+        $anchor_epoch = $version->newQuery()
             ->toBase()
-            ->join($versions, "{$versions}.version_set_id", '=', "{$sets}.id")
-            ->where("{$sets}.root_type", $root->type())
-            ->where("{$sets}.root_id", $root->id())
-            ->where("{$sets}.root_table_ref", $root->tableName())
-            ->when($openSetId !== null, static fn ($query) => $query->where("{$sets}.id", '<>', $openSetId))
-            ->orderByDesc("{$sets}.id")
-            ->orderByDesc("{$versions}.sequence")
-            ->value("{$versions}.epoch_id");
+            ->where('version_set_id', $baselineSetId)
+            ->orderByDesc('sequence')
+            ->value('epoch_id');
 
-        return ! is_numeric($latest_epoch) || (int) $latest_epoch !== $current->getKey();
+        return ! is_numeric($anchor_epoch) || (int) $anchor_epoch !== $current->getKey();
     }
 }

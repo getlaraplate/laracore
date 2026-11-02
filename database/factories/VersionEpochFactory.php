@@ -6,7 +6,6 @@ namespace Modules\Core\Database\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Modules\Core\Models\VersionEpoch;
-use Modules\Core\Models\VersionSet;
 use Override;
 
 /**
@@ -23,7 +22,7 @@ final class VersionEpochFactory extends Factory
     public function definition(): array
     {
         return [
-            'root_type' => VersionSet::class,
+            'root_type' => 'Tests\\EpochRoot\\' . fake()->unique()->word(),
             'fingerprint' => fake()->sha256(),
             'definition' => ['columns' => [], 'translation_columns' => [], 'relations' => []],
             'first_seen_at' => now(),

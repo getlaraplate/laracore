@@ -249,3 +249,74 @@ it('writes no baseline at a save in the epoch the record was last written in', f
 
     expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Change);
 });
+
+it('forgets an epoch whose first write rolled back, so the next write of the class succeeds', function (): void {
+    create_epoch_article('Before');
+    Schema::table(EpochArticle::TABLE, function (Blueprint $table): void {
+        $table->string('subtitle')->nullable();
+    });
+    app(VersionEpochs::class)->flush();
+
+    try {
+        DB::transaction(static function (): void {
+            EpochArticle::query()->create(['title' => 'Rolled back']);
+
+            throw new RuntimeException('The write fails after its version rows.');
+        });
+    } catch (RuntimeException) {
+    }
+
+    $after = create_epoch_article('After');
+
+    expect(VersionEpoch::query()->count())->toBe(2)
+        ->and(array_unique(epochs_of_rows($after)))->toBe([VersionEpoch::query()->latest('id')->firstOrFail()->id]);
+});
+
+it('keeps a baseline due after an epoch change until a set that can carry it (D33, D60)', function (): void {
+    $article = create_epoch_article('Before');
+    $created = Version::query()->where('versionable_id', $article->getKey())->firstOrFail();
+    DB::transaction(static fn (): bool => $article->update(['title' => 'Middle']));
+
+    Schema::table(EpochArticle::TABLE, function (Blueprint $table): void {
+        $table->string('subtitle')->nullable();
+    });
+    app(VersionEpochs::class)->flush();
+    $article->revertToVersion($created->getKey());
+
+    expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Revert);
+
+    DB::transaction(static fn (): bool => $article->refresh()->update(['title' => 'After']));
+
+    expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Baseline);
+});
+
+it('keeps a baseline due after an epoch change written through another root\'s scope', function (): void {
+    $article = create_epoch_article('Before');
+    $other = create_epoch_article('Other');
+
+    Schema::table(EpochArticle::TABLE, function (Blueprint $table): void {
+        $table->string('subtitle')->nullable();
+    });
+    app(VersionEpochs::class)->flush();
+    app(VersionSetManagerInterface::class)->run(
+        VersionSetRoot::forModel($other),
+        static fn (): bool => $article->update(['title' => 'Through the other root']),
+    );
+    DB::transaction(static fn (): bool => $article->update(['title' => 'After']));
+
+    expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Baseline);
+});
+
+it('anchors once a record whose rows predate the epochs, when its class has several', function (): void {
+    $article = create_epoch_article('Before');
+    Version::query()->update(['epoch_id' => null]);
+    VersionEpoch::factory()->create(['root_type' => $article->getMorphClass()]);
+    app(VersionEpochs::class)->flush();
+
+    DB::transaction(static fn (): bool => $article->update(['title' => 'First']));
+    $first = VersionSet::query()->latest('id')->firstOrFail()->kind;
+    DB::transaction(static fn (): bool => $article->update(['title' => 'Second']));
+
+    expect($first)->toBe(VersionSetKind::Baseline)
+        ->and(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Change);
+});
