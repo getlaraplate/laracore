@@ -107,12 +107,12 @@ AdvancedSearchService::search()
 ```php
 $is_short   = mb_strlen($query) < 20;
 $has_numbers = (bool) preg_match('/\d/', $query);
-$use_vector  = config('core.search.vector.enabled', false) && ! $has_numbers;
+$use_vector  = VectorProfileContext::get() instanceof VectorProfile && ! $has_numbers;
 ```
 
 | Condition | Strategies executed |
 |-----------|---------------------|
-| `core.search.vector.enabled` = false | `keyword` only |
+| no vector profile (`IVectorProfileProvider::current()` returns `null`) | `keyword` only |
 | query contains any digit | `keyword` only |
 | engine without `supportsOrchestratedVectorSearch()` | `keyword` only (plan downgraded by `applyEngineCapabilities()`) |
 | the strategy has no embedder (`fast`, or the AI module absent or its overlay disabled) | `keyword` only (`$vector === null`) |
@@ -178,7 +178,7 @@ if (($retrieval['use_vector'] ?? false) !== true || ! $embedder instanceof IText
 The embedder comes from the `SearchStrategy`, not from the container. Core's strategy has none, so a `fast`
 search is keyword-only; the AI module's resolver supplies `SearchEmbedder` for `balanced` and `deep`. Without the AI
 module the query vector is `null` and the pipeline stays keyword-only. This is independent of
-`core.search.vector.enabled`: both must hold. An embedder that throws is logged (`Query embedding failed`) and
+the vector profile: both must hold. An embedder that throws is logged (`Query embedding failed`) and
 the search continues on keywords.
 
 What is lost without the AI module, per contract:
@@ -199,17 +199,21 @@ Before the query is embedded, `AdvancedSearchService` asks `IVectorSearchAvailab
 whether vectors may be used. It asks only when the plan wants vectors and `ITextEmbedder` is bound,
 so a keyword-only search never reports a reason. When the answer is no, the query vector is `null`,
 the search runs keyword-only (no engine error), and the result carries `meta['vector_disabled']`
-with the reason. Reasons, checked in this order:
+with the reason. Core defines the profile contract and has no vector setting: vector search is available
+only when a module binds an `IVectorProfileProvider` that returns a `VectorProfile` (the AI module does);
+Core's default binding, `NullVectorProfileProvider`, returns `null`. Core's `VectorSearchAvailability` answers
+`disabled`, `dimension_mismatch` or `yes`, and modules decorate it to add reasons. Reasons, checked in this order:
 
 | Reason | Cause | Checked by |
 |--------|-------|------------|
-| `disabled` | `core.search.vector.enabled` is false | Core `VectorSearchAvailability` |
-| `suspended` | `core.search.vector.suspended_reason` is a non-empty string: an embedding model switch is running, or failed after its start | Core |
-| `dimension_mismatch` | the engine's index maps vectors of another length than `core.search.vector.dimensions` | Core, for engines implementing `IReportsVectorDimensions` (Elasticsearch: `embeddings.properties.vector.dims` of the model's index), cached 60 s per model class |
-| `no_vectors` | no `core_model_embeddings` row carries the active profile's `model_key`, or no active profile resolves | AI `EmbeddingVectorSearchAvailability`, which decorates Core's guard and runs after it |
+| `disabled` | there is no vector profile: `IVectorProfileProvider::current()` returns `null` (no module provides one, or the AI module's embeddings feature is off) | Core `VectorSearchAvailability` |
+| `dimension_mismatch` | the engine's index maps vectors of another length than the profile's `dimensions` | Core `VectorSearchAvailability`, for engines implementing `IReportsVectorDimensions` (Elasticsearch: `embeddings.properties.vector.dims` of the model's index), cached 60 s per model class |
+| `suspended` | an embedding model switch is running, or failed after its start (`EmbeddingSwitchStore::isSwitching()`, derived from the state in `features.embeddings.switch`; a failure in the `preflight` phase does not suspend) | AI `EmbeddingVectorSearchAvailability`, which decorates Core's guard |
+| `no_vectors` | no `core_model_embeddings` row carries the active profile's `model_key` | AI `EmbeddingVectorSearchAvailability` |
+| `yes` | none of the above | |
 
-Without the AI module only the first three exist. With it, `no_vectors` also answers when the
-embeddings feature is off or nothing has been embedded yet. The AI model switch calls
+Without the AI module only `disabled`, `dimension_mismatch` and `yes` exist. With it, `suspended` and
+`no_vectors` are added, and `no_vectors` also answers when nothing has been embedded yet. The AI model switch calls
 `VectorSearchAvailability::forget()` at activation, so the new dimensions are read at once instead
 of after the cache expires. Engines that do not report dimensions (database, Typesense) skip the
 `dimension_mismatch` check.
@@ -217,7 +221,9 @@ of after the cache expires. Engines that do not report dimensions (database, Typ
 Index documents carry the vectors of one model only: `Searchable::toSearchableArray()` keeps the
 embedding rows whose `model_key` equals `VectorProfileContext::modelKey()`, which is the key of the
 `IVectorProfileProvider::current()` profile unless code runs inside `VectorProfileContext::using($profile, ...)`
-(the switch does, to write documents with the target's vectors). With no profile every row is kept.
+(the switch does, to write documents with the target's vectors; the override replaces the whole profile: key,
+dimensions and similarity). With no profile `toSearchableArray()` emits no `embeddings` at all and no vector
+field is indexed: the document is keyword-only.
 
 ### PostgreSQL with pgvector
 
@@ -248,11 +254,12 @@ the switch's `indexes` phase and, once per process, by the AI synchronizer befor
 the active profile; it is dropped with its rows at activation and by `ai:embeddings:prune`.
 
 `DatabaseEngine` searches with the same cast, operator and predicate, so the planner can use the
-index: `"embedding"::vector(N) <op> ?::vector`, with N from `core.search.vector.dimensions`, the
-operator from `core.search.vector.similarity`, and `"model_key" = '<core.search.vector.model>'` as a
-literal (not a binding, so a generic plan still matches the partial predicate). Without a configured
-model it filters `vector_dims("embedding") = N` instead, because a row of another length would make
-the cast fail. A non-positive or non-numeric dimension throws.
+index: `"embedding"::vector(N) <op> ?::vector`, with N from the profile's `dimensions`, the
+operator from its `similarity`, and `"model_key" = '<profile model_key>'` as a
+literal (not a binding, so a generic plan still matches the partial predicate). With a profile whose model
+key is empty it filters `vector_dims("embedding") = N` instead, because a row of another length would make
+the cast fail. With no profile, or a profile with a non-positive dimension, it throws `InvalidArgumentException`
+(the first names the missing profile); the availability guard keeps the search from reaching it.
 
 Caveats, none verified on a real PostgreSQL yet (open point of the design spec): the build is not
 `CONCURRENTLY`, so it blocks writes to `core_model_embeddings` while it runs; the `pg_indexes` check
@@ -461,11 +468,7 @@ Consumed at runtime:
 
 | Key | Env | Where it is read |
 |-----|-----|------------------|
-| `core.search.vector.enabled` | runtime setting (Filament > Settings) | `FallbackSearchPlanner`, engines |
-| `core.search.vector.dimensions` | managed setting (written by the AI model switch) | ES `dense_vector` mapping, guard, pgvector query cast |
-| `core.search.vector.similarity` | managed setting (written by the AI model switch) | ES mapping, pgvector operator |
-| `core.search.vector.model` | managed setting (written by the AI model switch) | pgvector query filter |
-| `core.search.vector.suspended_reason` | managed setting (`switching` during a switch, else null) | vector guard |
+| vector profile (`VectorProfile`: `modelKey`, `dimensions`, `similarity`) | not a Core setting: `IVectorProfileProvider::current()`, bound by a module (AI: `ActiveEmbeddingProfileProvider`, from `features.embeddings.enabled` and `features.embeddings.serving_model`) | `FallbackSearchPlanner`, engines, `ElasticsearchTranslator`, `VectorSearchAvailability`, `Searchable` |
 | `search.analyzers` | `SEARCH_ANALYZER_IT`, `SEARCH_ANALYZER_EN` | per-locale text mappings |
 | `core.search.reranker.enabled` | runtime setting | `EnsembleSearchService` (plan fallback) |
 | `core.search.reranker.top_k` | runtime setting | `EnsembleSearchService` |
@@ -495,12 +498,13 @@ See `Modules/AI/docs/rag/MODULE.md` for datasets, metrics and baseline locations
 
 | Symptom | Check |
 |---------|-------|
-| `strategies_executed = 1` when vectors were expected | digits in the query, `core.search.vector.enabled`, AI module present, engine kNN support |
+| `strategies_executed = 1` when vectors were expected | digits in the query, a vector profile available (AI `features.embeddings.enabled` on), AI module present, engine kNN support |
 | `reranked = false` | reranker service reachable; look for the `Reranker failed` warning (its context carries the reranker's own report context, such as a `request_id`, when the failure has one) |
 | `unsupported_driver = true` | Scout driver is not an orchestration-capable `ISearchEngine` |
+| `meta.vector_disabled` = `disabled` | no vector profile: the AI module is absent, `features.embeddings.enabled` is off, or `features.embeddings.serving_model` names an unknown model (logged once per key) |
 | `meta.vector_disabled` = `suspended` | an embedding model switch runs or failed: `ai:embeddings:status`, then `ai:embeddings:switch --resume` or `--abandon` |
-| `meta.vector_disabled` = `dimension_mismatch` | the index maps another length than `core.search.vector.dimensions`: finish the switch, or recreate the index |
-| `meta.vector_disabled` = `no_vectors` | nothing embedded with the active model: embeddings feature off, or run `ai:embeddings:repair --all` |
+| `meta.vector_disabled` = `dimension_mismatch` | the index maps another length than the profile's `dimensions`: finish the switch, or recreate the index |
+| `meta.vector_disabled` = `no_vectors` | nothing embedded with the serving model yet: run `ai:embeddings:repair --all` |
 | Vector results are noise | records with embeddings but none of the active `model_key`; run `ai:embeddings:repair --stale` |
 | Hybrid ranks worse than keyword alone | measure with `test:ai:evaluate-retrieval-strategies` before changing weights |
 | Ranking changed after flipping `search.adaptive_tuning` | read `meta['tuning']` (profile version, query class); switch it off to return to L0 without a deploy |
@@ -508,7 +512,7 @@ See `Modules/AI/docs/rag/MODULE.md` for datasets, metrics and baseline locations
 ## FAQ prompts for RAG
 
 - How many retrieval strategies run for a query with a number in it?
-- Why is vector search inactive even though `core.search.vector.enabled` is true?
+- Why is vector search inactive, and where does the vector profile come from?
 - What does `meta.vector_disabled` mean, and what are its reasons?
 - How does PostgreSQL store vectors of two embedding models, and which index serves a query?
 - Does `matching=tolerant` change how results are fused?

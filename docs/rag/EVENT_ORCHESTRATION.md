@@ -58,8 +58,8 @@ Models with `Modules\Core\Search\Traits\Searchable` call `queueMakeSearchable()`
 
 | Layer | Keys |
 |-------|------|
-| Scout | `SCOUT_DRIVER`, `core.search.vector.enabled`, model `$embed` |
-| AI | `ai.features.embeddings.enabled` |
+| Scout | `SCOUT_DRIVER`, model `$embed`; vector fields are indexed only when `IVectorProfileProvider::current()` returns a `VectorProfile` (Core has no vector setting; its default provider returns `null`, so search is keyword-only) |
+| AI | `ai.features.embeddings.enabled` (its `ActiveEmbeddingProfileProvider` returns the profile of `features.embeddings.serving_model` only while this is on) |
 | Per model | `translations.auto.{table}` via `PerModelSettingResolver` |
 
 ## InternalFlow — modification moderation

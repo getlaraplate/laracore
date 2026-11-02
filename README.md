@@ -130,7 +130,7 @@ OLLAMA_MODEL="llama3.2:3b"						#ollama model (deprecated - use AI module config
 
 #search
 SCOUT_DRIVER=typesense                          #actually supperted drivers with full functionalities (typesense, elasticsearch)
-#embeddings are produced by the AI module: the model is the setting features.embeddings.model (provider:model), not an env var. Core's search.vector.dimensions|similarity|model are managed settings the AI model switch writes (ai:embeddings:switch).
+#embeddings are produced by the AI module: the model is the setting features.embeddings.model (provider:model), not an env var. Core has no vector settings: it defines the VectorProfile contract (IVectorProfileProvider) and vector search runs only when a module provides a profile (the AI module does, from features.embeddings.serving_model); without one, search is keyword-only.
 SEARCH_ENGINE=elasticsearch						#default search engine
 SEARCH_DATABASE_PG_TRGM_ENABLED=false             #enable PostgreSQL pg_trgm matching for the database Scout driver
 SEARCH_ANALYZER_IT=italian                        #Elasticsearch analyzer for the it locale sub-field
@@ -418,6 +418,21 @@ If you need to override the Core Module or dependencies configs you can publish 
 -   **Rebuild existing installations with `php artisan migrate:fresh --seed`.** There is no migration of roles or permissions: every permission now exists for both the `web` and the `api` guard, the users table gains `is_service_account`, and `personal_access_tokens` gains `allowed_cidrs`, all folded into their create migrations. Re-seeding an existing database is not enough: the seeder creates missing roles only and never revokes a grant, so the old `guest` role of `web` keeps its `select` permissions (it no longer affects `/api`, but an anonymous `/app` session can still read those entities). A freshly seeded `guest` on `web` holds no permission, and `guest` on `api` holds the public list. The anonymous user is cached: clear the cache after seeding if it was cached before its roles existed.
 -   **Related records obey their own permission.** A user who read a relation through its parent without holding the related entity's `select` permission loses it (the seeded roles were given the related permissions their screens need). Clients that send `method` columns now get `400` unless the model declares the method in `crudComputedDependencies()`; no production model does.
 -   Rebuild the CMS search indexes after upgrading (see the CMS README).
+
+### Vector search owned by the AI module
+
+-   **Core has no `search.vector.*` settings.** Core defines `Modules\Core\Search\DTOs\VectorProfile` (`modelKey`, `dimensions`, `similarity`) and `Modules\Core\Search\Contracts\IVectorProfileProvider::current(): ?VectorProfile`. The default binding, `NullVectorProfileProvider`, returns `null`: no vector field is indexed and search is keyword-only. Vector search is available only when a module binds a provider that returns a profile; the AI module does (`ActiveEmbeddingProfileProvider`, from `features.embeddings.enabled` and `features.embeddings.serving_model`). The search engines, `FallbackSearchPlanner`, `AdvancedSearchService`, `VectorSearchAvailability` and the `Searchable` trait read the profile through `VectorProfileContext::get()`. Dimensions and similarity belong to the embedding profile (`ai.features.embeddings.models.*`), not to settings.
+-   **No migration.** On an existing database delete the five obsolete rows, seed the AI module so `features.embeddings.serving_model` exists, and flush the settings cache. A fresh install or `php artisan migrate:fresh --seed` needs nothing.
+
+    ```sql
+    DELETE FROM core_settings WHERE name IN ('search.vector.enabled','search.vector.model','search.vector.dimensions','search.vector.similarity','search.vector.suspended_reason');
+    ```
+
+    ```bash
+    php artisan db:seed --class="Modules\AI\Database\Seeders\AIDatabaseSeeder"
+    ```
+
+    Without the `serving_model` row, `ai:embeddings:switch` fails in its `activate` phase: seed and resume.
 
 ## PHP Attributes
 
@@ -758,7 +773,7 @@ The Core Module utilizes several packages to enhance its functionality. Below is
 
 ### Environment (principali variabili)
 
--   Feature toggles: `FORCE_HTTPS`. User and CRUD toggles are runtime settings (Filament > Settings), not env vars: `auth.email_verification.enabled`, `auth.registration.enabled`, `auth.two_factor.enabled`, `auth.licenses.enabled`, `auth.social_login.enabled`, `auth.passkeys.enabled`, `crud.dynamic_entities`, `expose_api` (gates every `/api` route, Core and modules), `soft_deletes.expiration_days` (0 = never purge), `search.vector.enabled` (embeddings generation requires AI module). Search ranking is tuned from the `search` settings group too: `search.reranker.enabled`, `search.reranker.top_k`, `search.reranker.weight` (rerank blend, seeded `0.6`) and `search.adaptive_tuning` (seeded off: applies the committed `config/search_tuning.php` profile per query class; see `docs/rag/SEARCH_RETRIEVAL_PIPELINE.md`). Settings are listed without the module prefix (the module is a column) and read from config as `core.<name>`.
+-   Feature toggles: `FORCE_HTTPS`. User and CRUD toggles are runtime settings (Filament > Settings), not env vars: `auth.email_verification.enabled`, `auth.registration.enabled`, `auth.two_factor.enabled`, `auth.licenses.enabled`, `auth.social_login.enabled`, `auth.passkeys.enabled`, `crud.dynamic_entities`, `expose_api` (gates every `/api` route, Core and modules), `soft_deletes.expiration_days` (0 = never purge). Search ranking is tuned from the `search` settings group too: `search.reranker.enabled`, `search.reranker.top_k`, `search.reranker.weight` (rerank blend, seeded `0.6`) and `search.adaptive_tuning` (seeded off: applies the committed `config/search_tuning.php` profile per query class; see `docs/rag/SEARCH_RETRIEVAL_PIPELINE.md`). Settings are listed without the module prefix (the module is a column) and read from config as `core.<name>`.
 -   Timing settings (runtime, Filament > Settings, read as `core.<name>`; a stored `0` or negative value reads as `1`, except `media.draft_ttl_hours`, where it disables pruning): `media.draft_ttl_hours` (pending-media draft TTL, default 24), `validity.expiring_within_hours` (lead time for the `expiring` scope, default 48), `filament.tabs_counts_ttl_seconds` (seconds the backoffice caches tab counts and filter options on the Modifications, Permissions and Settings lists, default 60).
 -   CRUD aggregate route: `CORE_AGGREGATE_MAX_MEASURES` (default 3), `CORE_AGGREGATE_MAX_GROUPS` (50), `CORE_AGGREGATE_MAX_POINTS` (400), `CORE_AGGREGATE_MAX_PERIOD_DAYS` (1096) and `CORE_AGGREGATE_RATE_PER_MINUTE` (60), plus `CORE_AGGREGATE_MAX_OBJECTS_PER_MESSAGE` (6, reserved: nothing reads it yet); see [Aggregate route configuration](#aggregate-route-configuration).
 -   Standard stack: `DB_*`, `REDIS_*`, `SESSION_*`, `CACHE_STORE=redis`, `CACHE_PREFIX`, `QUEUE_CONNECTION=redis`, `HORIZON_MEMORY_LIMIT`, `FILESYSTEM_DISK`, `LOG_*`.
