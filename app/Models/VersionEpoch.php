@@ -16,6 +16,7 @@ use Override;
  *
  * @property int $id
  * @property string $root_type
+ * @property string $root_table
  * @property string $fingerprint
  * @property array<string, mixed> $definition
  * @property \Carbon\CarbonImmutable $first_seen_at
@@ -41,6 +42,7 @@ final class VersionEpoch extends Model
     #[Override]
     protected $fillable = [
         'root_type',
+        'root_table',
         'fingerprint',
         'definition',
         'first_seen_at',

@@ -56,7 +56,7 @@ final readonly class BaselinePolicy
     {
         $current = $this->epochs->currentFor($root->model());
 
-        if (! $this->epochs->hasSeveral($root->type())) {
+        if (! $this->epochs->hasSeveral($root->model())) {
             return false;
         }
 

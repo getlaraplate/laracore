@@ -112,7 +112,7 @@ it('keeps every new explicit index and foreign key name within portable limits',
         'vsets_reverted_FK',
         'versions_set_sequence_UN',
         'versions_set_FK',
-        'vepochs_type_fingerprint_UN',
+        'vepochs_root_fingerprint_UN',
         'versions_epoch_FK',
     ];
 
@@ -289,17 +289,17 @@ it('creates the epochs table with one row per root class and fingerprint', funct
     $columns = collect(Schema::getColumns($table_name))
         ->keyBy(static fn (array $column): string => mb_strtolower($column['name']));
     $unique = collect(Schema::getIndexes($table_name))->first(
-        static fn (array $index): bool => $index['columns'] === ['root_type', 'fingerprint'],
+        static fn (array $index): bool => $index['columns'] === ['root_type', 'root_table', 'fingerprint'],
     );
 
     expect($table_name)->toBe('core_versions_epochs')
-        ->and(Schema::hasColumns($table_name, ['id', 'root_type', 'fingerprint', 'definition', 'first_seen_at']))->toBeTrue()
+        ->and(Schema::hasColumns($table_name, ['id', 'root_type', 'root_table', 'fingerprint', 'definition', 'first_seen_at']))->toBeTrue()
         ->and(Schema::hasColumn($table_name, 'updated_at'))->toBeFalse()
         ->and(Schema::hasColumn($table_name, 'deleted_at'))->toBeFalse()
         ->and($columns['root_type']['nullable'])->toBeFalse()
         ->and($columns['fingerprint']['nullable'])->toBeFalse()
         ->and($unique)->not->toBeNull()
-        ->and($unique['name'])->toBe('vepochs_type_fingerprint_un')
+        ->and($unique['name'])->toBe('vepochs_root_fingerprint_un')
         ->and($unique['unique'])->toBeTrue();
 });
 

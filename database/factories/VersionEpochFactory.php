@@ -23,6 +23,7 @@ final class VersionEpochFactory extends Factory
     {
         return [
             'root_type' => 'Tests\\EpochRoot\\' . fake()->unique()->word(),
+            'root_table' => 'core_test_epoch_roots',
             'fingerprint' => fake()->sha256(),
             'definition' => ['columns' => [], 'translation_columns' => [], 'relations' => []],
             'first_seen_at' => now(),

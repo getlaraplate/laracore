@@ -30,6 +30,11 @@ final class EpochArticle extends Model
      */
     public static array $descriptors = [];
 
+    /**
+     * The pivot column holding the article's key in {@see self::subjects()}.
+     */
+    public static string $subjectsForeignPivotKey = 'article_id';
+
     protected $table = self::TABLE;
 
     protected $guarded = [];
@@ -51,7 +56,7 @@ final class EpochArticle extends Model
      */
     public function subjects(): BelongsToMany
     {
-        return $this->belongsToMany(VersionedRelationSubject::class, self::PIVOT_TABLE, 'article_id', 'subject_id');
+        return $this->belongsToMany(VersionedRelationSubject::class, self::PIVOT_TABLE, self::$subjectsForeignPivotKey, 'subject_id');
     }
 
     /**

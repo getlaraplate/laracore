@@ -30,6 +30,7 @@ use Modules\Core\Versioning\VersionEpochs;
 beforeEach(function (): void {
     config()->set('versionable.version_model', Version::class);
     EpochArticle::$descriptors = [];
+    EpochArticle::$subjectsForeignPivotKey = 'article_id';
 
     Schema::create(EpochArticle::TABLE, function (Blueprint $table): void {
         $table->id();
@@ -73,6 +74,8 @@ beforeEach(function (): void {
 
 afterEach(function (): void {
     EpochArticle::$descriptors = [];
+    EpochArticle::$subjectsForeignPivotKey = 'article_id';
+    Schema::dropIfExists(EPOCH_ARTICLE_COPY_TABLE);
     Schema::dropIfExists(TranslatedDocumentTranslation::TABLE);
     Schema::dropIfExists(TranslatedDocument::TABLE);
     Schema::dropIfExists(EpochArticle::PIVOT_TABLE);
@@ -81,6 +84,17 @@ afterEach(function (): void {
     Schema::dropIfExists(VersionedRelationSubject::TABLE);
     Schema::dropIfExists(EpochArticle::TABLE);
 });
+
+/**
+ * A second table of the same shape as the articles', for a class whose table varies per instance.
+ */
+/**
+ * Queries the first write of a class in a process adds to a warm write: the schema of its table and the epochs of
+ * its class.
+ */
+const EPOCH_COLD_FIRST_WRITE_EXTRA_QUERIES = 3;
+
+const EPOCH_ARTICLE_COPY_TABLE = 'core_test_epoch_article_copies';
 
 function create_epoch_article(string $title): EpochArticle
 {
@@ -197,7 +211,7 @@ it('gives two classes on one table an epoch each', function (): void {
         (new EpochArticle)->getMorphClass(),
         (new EpochArticleTwin)->getMorphClass(),
     ])
-        ->and(app(VersionEpochs::class)->hasSeveral((new EpochArticle)->getMorphClass()))->toBeFalse();
+        ->and(app(VersionEpochs::class)->hasSeveral(new EpochArticle))->toBeFalse();
 });
 
 it('reads the translation columns that are the state of the owner', function (): void {
@@ -228,7 +242,7 @@ it('anchors a record again at its first save after an epoch change, in the new e
 it('anchors a root at its first pivot change after an epoch change (D45)', function (): void {
     $root = DB::transaction(static fn (): VersionedRelationRoot => VersionedRelationRoot::query()->create(['title' => 'Root']));
     $subject = VersionedRelationSubject::query()->create(['name' => 'A']);
-    $older_epoch = VersionEpoch::factory()->create(['root_type' => $root->getMorphClass()]);
+    $older_epoch = VersionEpoch::factory()->create(['root_type' => $root->getMorphClass(), 'root_table' => $root->getTable()]);
     Version::query()->update(['epoch_id' => $older_epoch->id]);
     app(VersionEpochs::class)->flush();
 
@@ -242,7 +256,7 @@ it('anchors a root at its first pivot change after an epoch change (D45)', funct
 
 it('writes no baseline at a save in the epoch the record was last written in', function (): void {
     $article = create_epoch_article('Before');
-    VersionEpoch::factory()->create(['root_type' => $article->getMorphClass()]);
+    VersionEpoch::factory()->create(['root_type' => $article->getMorphClass(), 'root_table' => $article->getTable()]);
     app(VersionEpochs::class)->flush();
 
     DB::transaction(static fn (): bool => $article->update(['title' => 'After']));
@@ -310,7 +324,7 @@ it('keeps a baseline due after an epoch change written through another root\'s s
 it('anchors once a record whose rows predate the epochs, when its class has several', function (): void {
     $article = create_epoch_article('Before');
     Version::query()->update(['epoch_id' => null]);
-    VersionEpoch::factory()->create(['root_type' => $article->getMorphClass()]);
+    VersionEpoch::factory()->create(['root_type' => $article->getMorphClass(), 'root_table' => $article->getTable()]);
     app(VersionEpochs::class)->flush();
 
     DB::transaction(static fn (): bool => $article->update(['title' => 'First']));
@@ -319,4 +333,64 @@ it('anchors once a record whose rows predate the epochs, when its class has seve
 
     expect($first)->toBe(VersionSetKind::Baseline)
         ->and(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Change);
+});
+
+it('changes the fingerprint when a registered relation is stored under other keys (D33)', function (): void {
+    EpochArticle::$descriptors = [new RelationDescriptor('subjects', RelationOwnership::Reference)];
+    $before = fingerprint_of_epoch_article();
+
+    EpochArticle::$subjectsForeignPivotKey = 'post_id';
+
+    expect(fingerprint_of_epoch_article())->not->toBe($before);
+});
+
+it('gives one class an epoch per table, so tables of one shape share nothing and none counts as several', function (): void {
+    Schema::create(EPOCH_ARTICLE_COPY_TABLE, function (Blueprint $table): void {
+        $table->id();
+        $table->string('title')->default('untitled');
+        $table->timestamps();
+    });
+    create_epoch_article('In the articles');
+    $copy = new EpochArticle(['title' => 'In the copies']);
+    $copy->setTable(EPOCH_ARTICLE_COPY_TABLE);
+    DB::transaction(static fn (): bool => $copy->save());
+
+    expect(VersionEpoch::query()->orderBy('root_table')->pluck('root_table')->all())->toBe([EPOCH_ARTICLE_COPY_TABLE, EpochArticle::TABLE])
+        ->and(app(VersionEpochs::class)->hasSeveral(new EpochArticle))->toBeFalse()
+        ->and(app(VersionEpochs::class)->hasSeveral($copy))->toBeFalse();
+});
+
+it('answers hasSeveral() on the root\'s own connection before any write of the process', function (): void {
+    VersionEpoch::factory()->count(2)->create(['root_type' => (new EpochArticle)->getMorphClass(), 'root_table' => EpochArticle::TABLE]);
+
+    expect(app(VersionEpochs::class)->hasSeveral(new EpochArticle))->toBeTrue();
+});
+
+it('reads the declared type of a column, without its length', function (): void {
+    $definition = (new EpochFingerprint)->definitionOf(new EpochArticle);
+
+    expect($definition['columns'])->toBe([
+        ['name' => 'id', 'type' => 'integer', 'nullable' => false],
+        ['name' => 'title', 'type' => 'varchar', 'nullable' => false],
+    ]);
+});
+
+it('costs a bounded number of queries at the first write of a class in a process', function (): void {
+    create_epoch_article('Warm-up');
+    $count_queries = static function (): int {
+        $queries = 0;
+        DB::listen(static function () use (&$queries): void {
+            $queries++;
+        });
+        create_epoch_article('Counted');
+        DB::flushQueryLog();
+
+        return $queries;
+    };
+
+    $warm = $count_queries();
+    app(VersionEpochs::class)->flush();
+    $cold = $count_queries();
+
+    expect($cold - $warm)->toBe(EPOCH_COLD_FIRST_WRITE_EXTRA_QUERIES);
 });

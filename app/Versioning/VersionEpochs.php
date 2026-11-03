@@ -44,13 +44,12 @@ final class VersionEpochs
 
         $definition = $this->fingerprint->definitionOf($root);
         $fingerprint = $this->fingerprint->fingerprintOf($definition);
-        $root_type = $root->getMorphClass();
-        $query = new VersionEpoch()->setConnection($root->getConnectionName())->newQuery();
+        $query = $this->epochsOf($root);
         // One read answers both questions, so that hasSeveral() costs no query at the writes that follow.
-        $known = $query->clone()->where('root_type', $root_type)->get();
+        $known = $query->clone()->get();
         $current = $known->firstWhere('fingerprint', $fingerprint)
-            ?? $this->create($query, $root_type, $fingerprint, $definition);
-        $this->several[$root_type] = $known->count() + ($known->contains($current) ? 0 : 1) > 1;
+            ?? $this->create($query, $root, $fingerprint, $definition);
+        $this->several[$this->shapeKey($root)] = $known->count() + ($known->contains($current) ? 0 : 1) > 1;
         $connection = $root->getConnection();
 
         // An epoch this process inserted is kept only once its transaction commits: a rollback removes the row, and
@@ -71,11 +70,12 @@ final class VersionEpochs
     }
 
     /**
-     * Whether the root class has known more than one shape: only then can a row of a root be of another epoch.
+     * Whether the root's class has known more than one shape on its table: only then can a row of a root be of
+     * another epoch.
      */
-    public function hasSeveral(string $rootType): bool
+    public function hasSeveral(Model $root): bool
     {
-        return $this->several[$rootType] ??= VersionEpoch::query()->where('root_type', $rootType)->limit(2)->count() > 1;
+        return $this->several[$this->shapeKey($root)] ??= $this->epochsOf($root)->limit(2)->count() > 1;
     }
 
     public function flush(): void
@@ -92,14 +92,31 @@ final class VersionEpochs
      * @param  Builder<VersionEpoch>  $query
      * @param  array<string, mixed>  $definition
      */
-    private function create(Builder $query, string $rootType, string $fingerprint, array $definition): VersionEpoch
+    private function create(Builder $query, Model $root, string $fingerprint, array $definition): VersionEpoch
     {
-        $identity = ['root_type' => $rootType, 'fingerprint' => $fingerprint];
+        $identity = ['root_type' => $root->getMorphClass(), 'root_table' => $root->getTable(), 'fingerprint' => $fingerprint];
 
         try {
             return $query->clone()->createOrFirst($identity, ['definition' => $definition, 'first_seen_at' => now()]);
         } catch (UniqueConstraintViolationException $exception) {
             return $query->clone()->where($identity)->sharedLock()->first() ?? throw $exception;
         }
+    }
+
+    /**
+     * The epochs of the root's class on its table, on the root's connection.
+     *
+     * @return Builder<VersionEpoch>
+     */
+    private function epochsOf(Model $root): Builder
+    {
+        return new VersionEpoch()->setConnection($root->getConnectionName())->newQuery()
+            ->where('root_type', $root->getMorphClass())
+            ->where('root_table', $root->getTable());
+    }
+
+    private function shapeKey(Model $root): string
+    {
+        return $root->getMorphClass() . '|' . $root->getConnectionName() . '|' . $root->getTable();
     }
 }

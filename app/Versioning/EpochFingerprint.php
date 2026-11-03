@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Modules\Core\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
+use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Modules\Core\Versioning\Data\RelationDescriptor;
 
 /**
@@ -16,7 +19,7 @@ use Modules\Core\Versioning\Data\RelationDescriptor;
 final readonly class EpochFingerprint
 {
     /**
-     * @return array{columns: list<array{name: string, type: string, nullable: bool}>, translation_columns: list<array{name: string, type: string, nullable: bool}>, relations: list<array{relation: string, ownership: string, coverage: string, pivot_columns: list<string>}>}
+     * @return array{columns: list<array{name: string, type: string, nullable: bool}>, translation_columns: list<array{name: string, type: string, nullable: bool}>, relations: list<array{relation: string, ownership: string, coverage: string, pivot_columns: list<string>, keys: array<string, string>}>}
      */
     public function definitionOf(Model $root): array
     {
@@ -49,7 +52,7 @@ final readonly class EpochFingerprint
             $name = (string) $column['name'];
 
             if ($keep($model, $name)) {
-                $columns[] = ['name' => $name, 'type' => mb_strtolower((string) $column['type']), 'nullable' => (bool) $column['nullable']];
+                $columns[] = ['name' => $name, 'type' => mb_strtolower((string) $column['type_name']), 'nullable' => (bool) $column['nullable']];
             }
         }
 
@@ -97,7 +100,7 @@ final readonly class EpochFingerprint
     }
 
     /**
-     * @return list<array{relation: string, ownership: string, coverage: string, pivot_columns: list<string>}>
+     * @return list<array{relation: string, ownership: string, coverage: string, pivot_columns: list<string>, keys: array<string, string>}>
      */
     private function relationsOf(Model $root): array
     {
@@ -105,21 +108,57 @@ final readonly class EpochFingerprint
             return [];
         }
 
-        $relations = array_map(static function (RelationDescriptor $descriptor): array {
-            $pivot_columns = $descriptor->pivotColumns;
-            sort($pivot_columns);
-
-            return [
-                'relation' => $descriptor->relation,
-                'ownership' => $descriptor->ownership->value,
-                'coverage' => $descriptor->coverage->value,
-                'pivot_columns' => $pivot_columns,
-            ];
-        }, $root->versionedRelationDescriptors());
+        $relations = array_map(fn (RelationDescriptor $descriptor): array => $this->relationDefinition($root, $descriptor), $root->versionedRelationDescriptors());
 
         usort($relations, static fn (array $left, array $right): int => strcmp($left['relation'], $right['relation']));
 
         return $relations;
+    }
+
+    /**
+     * @return array{relation: string, ownership: string, coverage: string, pivot_columns: list<string>, keys: array<string, string>}
+     */
+    private function relationDefinition(Model $root, RelationDescriptor $descriptor): array
+    {
+        $pivot_columns = $descriptor->pivotColumns;
+        sort($pivot_columns);
+
+        return [
+            'relation' => $descriptor->relation,
+            'ownership' => $descriptor->ownership->value,
+            'coverage' => $descriptor->coverage->value,
+            'pivot_columns' => $pivot_columns,
+            'keys' => $this->keysOf($root->{$descriptor->relation}()),
+        ];
+    }
+
+    /**
+     * Where the links of a relation are stored: a relation moved to another table or other key columns reads its
+     * past rows against a different shape.
+     *
+     * @return array<string, string>
+     */
+    private function keysOf(mixed $relation): array
+    {
+        if ($relation instanceof BelongsToMany) {
+            $keys = [
+                'table' => $relation->getTable(),
+                'foreign_pivot_key' => $relation->getForeignPivotKeyName(),
+                'related_pivot_key' => $relation->getRelatedPivotKeyName(),
+            ];
+
+            if ($relation instanceof MorphToMany) {
+                $keys['morph_type'] = $relation->getMorphType();
+            }
+
+            return $keys;
+        }
+
+        if ($relation instanceof HasOneOrMany) {
+            return ['foreign_key' => $relation->getForeignKeyName()];
+        }
+
+        return [];
     }
 
     private function normalized(mixed $value): mixed
