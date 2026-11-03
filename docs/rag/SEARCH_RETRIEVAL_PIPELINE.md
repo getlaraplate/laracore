@@ -522,9 +522,10 @@ checks the sub-fields (`fields`) that the model declares, and also the keyword s
 reported as `sub-field 'title.it.exact' is declared by the model but missing from the live index; rebuild the index to
 analyse the documents into it`, a sub-field of another type with the usual type message. Sub-fields that exist only in
 the live index (dynamic `keyword`) are ignored. `scout:check-index` reports every such index as stale until it is
-rebuilt (`scout:delete-index` + `scout:index`, then `scout:reindex` to fill it); `scout:sync-mapping` can add the
-multi-field but the documents already stored are analysed into it only on reindex. Component fields mapped dynamically
-(not in the default translation when the mapping was built) get no exact sub-field and are queried as before.
+repaired; `scout:sync-mapping` can add the multi-field but the documents already stored are analysed into it only on
+reindex. `scout:rebuild` does the whole repair, see [Rebuilding indexes](#rebuilding-indexes-scoutrebuild). Component
+fields mapped dynamically (not in the default translation when the mapping was built) get no exact sub-field and are
+queried as before.
 
 ## Embedding context header
 
@@ -706,7 +707,7 @@ See `Modules/AI/docs/rag/MODULE.md` for datasets, metrics and baseline locations
 | Hybrid ranks worse than keyword alone | measure with `test:ai:evaluate-retrieval-strategies` before changing weights |
 | A dated query returns results outside the date | `meta['date_filter']`: `applied: false` means the search widened to no filter (too few hits) or the engine refused the field (`reason`); the model must declare `$searchDateField` |
 | A query with a date is not narrowed | the model declares no `$searchDateField`, the request already filters on that field, or the pattern does not match (a year needs a preposition: "of 2024") |
-| `scout:check-index` reports a missing `.exact` sub-field | the index predates the sub-field: rebuild and reindex the model, see [Text fields: stemmed and exact](#text-fields-stemmed-and-exact) |
+| `scout:check-index` reports a missing `.exact` sub-field | the index predates the sub-field: run `scout:rebuild "{Model}"`, see [Rebuilding indexes](#rebuilding-indexes-scoutrebuild) |
 | Fewer or more vector matches after setting a floor | `VectorProfile::similarityFloor()` for the active profile; on MySQL and SQLite it replaces the fixed 0.7 cut |
 | Ranking changed after flipping `search.adaptive_tuning` | read `meta['tuning']` (profile version, query class); switch it off to return to L0 without a deploy |
 
@@ -716,7 +717,8 @@ Changes of the retrieval improvements that touch an installation already running
 
 1. **Rebuild the search indexes.** The text fields of a model get the `exact` sub-field only when the index is built.
    Until then `scout:check-index` lists the index as stale and queries behave as they did (no exact field is used).
-   Per model: `scout:delete-index "{Model}"`, `scout:index "{Model}"`, then `scout:reindex "{Model}"`.
+   Run `scout:rebuild` (every searchable model) or `scout:rebuild "{Model}"`, see
+   [Rebuilding indexes](#rebuilding-indexes-scoutrebuild).
 2. **Re-embed after a header.** A model that starts declaring `embedHeader()` changes the content hash of every row, so
    all its contents are embedded again on their next embedding pass (a save, a reindex, a model switch). On a large
    installation that is a cost: reindex off peak. `ai:embeddings:repair` does not do it.
@@ -724,6 +726,47 @@ Changes of the retrieval improvements that touch an installation already running
    database engine. Profiles without a floor keep the 0.7 cut; PostgreSQL with pgvector never had it.
 4. **No action needed** for dates and request words: a model without `$searchDateField` is unaffected, and the request
    word lists only shorten the keyword query.
+
+### Rebuilding indexes (`scout:rebuild`)
+
+After a change to what a model declares for its index (a new sub-field, a new language, a changed field type),
+`scout:rebuild {model?}` brings the indexes back in sync in one run. Without a model it covers every model that
+implements `ISearchableModel`. Per model, in order:
+
+1. **State.** The same check as `scout:check-index` (`SearchIndexInspector`): the index exists and its live mapping
+   matches the declared one. A model whose engine keeps no index of its own (the database engine) and an index already
+   in sync are skipped, with a line saying why.
+2. **In place, no downtime.** The mapping is patched (`syncMapping`, as `scout:sync-mapping`, on engines that have it),
+   the model is reindexed in the command (the work of `scout:reindex`, not queued) and the state is read again. The model
+   **fails** when the mapping cannot be patched (a changed field type, or a missing index), the reindex throws, or the
+   index is still out of sync afterwards.
+3. **Rebuild, with downtime.** The failed models are listed with their index name and the number of records the import
+   will write, and the command asks once for all of them. Once confirmed, each index is deleted, created from the
+   model's mapping and imported again (the steps of `scout:delete-index`, `scout:index` and `scout:import`), then
+   checked. **Search on such a model returns nothing from the delete until its import ends.**
+
+A table closes the run with the outcome of each model: `skipped`, `synced` (mapping patched and reindexed), `reindexed`
+(reindex alone, on an engine without mapping sync), `queued (unverified)`, `rebuilt` or `failed`.
+
+| Option | Effect |
+|--------|--------|
+| `--dry-run` | reads the state only and prints what the in-place step and the rebuild would do; changes nothing, asks nothing, exits with success |
+| `--force` | rebuilds the failed models without asking |
+| `--queue` | queues the reindex (`ReindexSearchJob`) instead of running it and skips the second check, so the result is not verified; a model can then fail only on the mapping sync |
+| `--no-interaction` | without `--force`, the rebuild is **not** run: the command says so and exits with failure |
+
+Exit code: success when every model ends in sync or skipped; failure when a model failed and was not rebuilt (the rebuild
+was declined, or not confirmed in a non-interactive run), when a rebuild did not bring the index in sync, or on an error.
+The command refuses to start while `ISearchMaintenanceGuard::blockedReason()` gives a reason. Core binds a guard that
+never blocks; a module whose own work rebuilds indexes (an embedding model switch) can bind one that blocks during it.
+
+**Embeddings are not touched.** They live in database rows, not in the search index, so a rebuild neither drops nor
+regenerates them. Content whose embedding text changed is embedded again by the bulk reindex only when the embeddings
+feature is on and a queue worker runs; `ai:embeddings:repair` does not detect such changes.
+
+The steps by hand, for a single model or an engine the command does not cover: `scout:sync-mapping "{Model}"`, then
+`scout:reindex "{Model}"` and `scout:check-index "{Model}"`; when the mapping cannot be patched,
+`scout:delete-index "{Model}"`, `scout:index "{Model}"` and `scout:import "{Model}"`.
 
 ## FAQ prompts for RAG
 
@@ -741,5 +784,6 @@ Changes of the retrieval improvements that touch an installation already running
 - What is `meta['date_filter']` and how do the recency windows widen?
 - Which words are removed from the keyword query, and why does the vector query keep them?
 - What is the `exact` sub-field, and why does `scout:check-index` report an index as stale after the upgrade?
+- What does `scout:rebuild` do, when does it drop an index, and what happens to search meanwhile?
 - On which scale is `minSimilarity`, and how does each engine apply it?
 - How does a model add an embedding context header, and what does it do to the content hash?
