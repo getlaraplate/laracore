@@ -16,13 +16,6 @@
       "email": "myentity@inwind.it"
     }
   ],
-  "repositories": [
-    {
-      "type": "vcs",
-      "url": "https://github.com/swolley/license-compliance-checker.git",
-      "no-api": true
-    }
-  ],
   "require": {
     "php": ">=8.5",
     "ext-curl": "*",
