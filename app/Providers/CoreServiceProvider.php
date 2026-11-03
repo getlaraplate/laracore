@@ -69,6 +69,7 @@ use Modules\Core\Filament\Generators\LaraplateResourceListRecordsPageClassGenera
 use Modules\Core\Filament\Generators\LaraplateResourceTableClassGenerator;
 use Modules\Core\Filament\ResourceSchemaContributorRegistry;
 use Modules\Core\Filament\Utils\AttributeLabelResolver;
+use Modules\Core\Filament\Utils\HiddenToggleHydrator;
 use Modules\Core\Graph\Contracts\GraphProviderRegistryInterface;
 use Modules\Core\Graph\Contracts\GraphToolGatewayInterface;
 use Modules\Core\Graph\GraphProviderRegistry;
@@ -650,6 +651,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         $this->app->singleton(AttributeLabelResolver::class);
         $this->app->make(AttributeLabelResolver::class)->register();
+        $this->app->make(HiddenToggleHydrator::class)->register();
 
         $this->bindLaraplateFilamentGenerators();
     }
