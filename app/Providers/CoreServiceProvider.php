@@ -20,6 +20,8 @@ use Filament\Commands\FileGenerators\Resources\Schemas\ResourceFormSchemaClassGe
 use Filament\Commands\FileGenerators\Resources\Schemas\ResourceInfolistSchemaClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Schemas\ResourceTableClassGenerator;
 use Filament\Forms\Components\Toggle;
+use Filament\Tables\Enums\FiltersLayout;
+use Filament\Tables\Table;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Application as ArtisanApplication;
 use Illuminate\Console\Scheduling\Schedule;
@@ -647,6 +649,10 @@ final class CoreServiceProvider extends ModuleServiceProvider
     {
         Toggle::configureUsing(
             static fn (Toggle $toggle): Toggle => $toggle->inline(false),
+        );
+
+        Table::configureUsing(
+            static fn (Table $table): Table => $table->filtersLayout(FiltersLayout::AfterContentCollapsible),
         );
 
         $this->app->singleton(AttributeLabelResolver::class);

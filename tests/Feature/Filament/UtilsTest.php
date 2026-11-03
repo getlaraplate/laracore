@@ -6,6 +6,7 @@ use Filament\Actions\CreateAction;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 use Filament\Tables\Contracts\HasTable as HasTableContract;
+use Filament\Tables\Enums\FiltersLayout;
 use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
@@ -83,6 +84,19 @@ it('allows Toggle inline override when the form is stacked', function (): void {
     $toggle = $schema->getComponents()[0];
 
     expect($toggle->isInline())->toBeTrue();
+});
+
+it('defaults table filters to a collapsible sidebar after the content', function (): void {
+    $table = Table::make($this->createStub(HasTableContract::class));
+
+    expect($table->getFiltersLayout())->toBe(FiltersLayout::AfterContentCollapsible);
+});
+
+it('allows a table to override the default filters layout', function (): void {
+    $table = Table::make($this->createStub(HasTableContract::class))
+        ->filters([], layout: FiltersLayout::Dropdown);
+
+    expect($table->getFiltersLayout())->toBe(FiltersLayout::Dropdown);
 });
 
 it('returns create action when user can create records', function (): void {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Search\Console;
 
 use function in_array;
+use function Laravel\Prompts\confirm;
 
 use Exception;
 use Illuminate\Support\Facades\Log;
@@ -252,7 +253,7 @@ final class RebuildIndexCommand extends Command
             return false;
         }
 
-        if (! $this->confirm('Delete, recreate and re-import the indexes listed above?', false)) {
+        if (! confirm('Delete, recreate and re-import the indexes listed above?', false)) {
             $this->warn('Rebuild declined: nothing was deleted.');
 
             return false;
