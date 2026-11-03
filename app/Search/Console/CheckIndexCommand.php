@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Search\Jobs\ReindexSearchJob;
+use Modules\Core\Search\Services\SearchIndexInspector;
 use Modules\Core\Search\Traits\Searchable;
 use Modules\Core\Search\Traits\SearchableCommandUtils;
 use Override;
@@ -30,7 +31,7 @@ final class CheckIndexCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(): int
+    public function handle(SearchIndexInspector $inspector): int
     {
         try {
             $model = $this->getModelClass();
@@ -52,27 +53,16 @@ final class CheckIndexCommand extends Command
                     continue;
                 }
 
-                $engine = $model_instance->searchableUsing();
+                $state = $inspector->inspect($model_instance);
 
-                // Index-existence verification lives on the engine (e.g. ElasticsearchEngine::checkIndex);
-                // engines without it (e.g. the database engine) are treated as always valid.
-                $index_ok = ! method_exists($engine, 'checkIndex') || (bool) $engine->checkIndex($model_instance);
-
-                if (! $index_ok) {
+                if (! $state->exists) {
                     $missing_indexes[] = $model;
                     $this->warn('Model ' . $model . ' has a wrong or missing index.');
 
                     continue;
                 }
 
-                // Existence is not enough: a field whose type drifted (e.g. text -> object)
-                // keeps the index present but breaks every write. Engines exposing
-                // structureMismatches list the fields whose live mapping diverges.
-                // method_exists rather than is_callable: both hold here, and only one
-                // narrows $engine to an object carrying the method.
-                $mismatches = method_exists($engine, 'structureMismatches')
-                    ? (array) $engine->structureMismatches($model_instance)
-                    : [];
+                $mismatches = $state->mismatches;
 
                 if ($mismatches !== []) {
                     $structure_mismatches[] = $model;
