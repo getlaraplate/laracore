@@ -83,6 +83,7 @@ use Modules\Core\Services\Crud\Aggregate\AggregateMeasure;
 use Modules\Core\Services\Crud\Aggregate\AggregateQuery;
 use Modules\Core\Services\Crud\Aggregate\AggregateResult;
 use Modules\Core\Services\Crud\Aggregate\AggregateScope;
+use Modules\Core\Services\Crud\Aggregate\CurrencyCheck;
 use Modules\Core\Services\Crud\Concerns\HasCrudOperations;
 use Modules\Core\Services\Crud\DTOs\CrudMeta;
 use Modules\Core\Services\Crud\DTOs\CrudResult;
@@ -1891,6 +1892,7 @@ class CrudService
 
         foreach ($query->measures as $index => $measure) {
             $this->assertMeasurable($model, $measure, 'measures.' . $index . '.field');
+            $this->assertReadableCurrency($model, $measure, 'measures.' . $index . '.field');
         }
 
         if ($group instanceof AggregateGroup && $group->bucket instanceof TimeBucket) {
@@ -2012,6 +2014,29 @@ class CrudService
     private function unknownAggregateField(string $path, string $field): AggregateException
     {
         return new AggregateException(AggregateErrorCode::InvalidField, sprintf('"%s" is not a column this aggregate can read.', $path), $field);
+    }
+
+    /**
+     * The currency column the engine reads beside an amount ({@see CurrencyCheck::columnOf()}) is read on behalf of
+     * the caller: its values reach the result as `meta.currency`, `meta.currencies` and the warnings. When the
+     * caller may not read it the measure is refused, since a figure whose currencies cannot be checked may add
+     * amounts of more than one currency. A `count`, a date and a key read no currency.
+     *
+     * @throws AggregateException UNREADABLE_FIELD
+     */
+    private function assertReadableCurrency(Model $model, AggregateMeasure $measure, string $field): void
+    {
+        $currency = CurrencyCheck::columnOf($model, $measure);
+
+        if ($currency === null || ReadableColumnGuard::isReadable($model, $currency)) {
+            return;
+        }
+
+        throw new AggregateException(
+            AggregateErrorCode::UnreadableField,
+            sprintf('The currency of "%s" cannot be read by this caller, so the figure cannot be checked for mixed currencies.', $measure->field),
+            $field,
+        );
     }
 
     /**

@@ -1346,6 +1346,10 @@ treated as an amount too (a known false positive), while `count`, dates and keys
   groups are the currencies.
 - A mix found only in the previous period gives a warning and a `null` in `compare`, but no `meta.currencies` and no
   `meta.currency`.
+- **A currency column the caller cannot read** refuses the amount paired with it: `UNREADABLE_FIELD` on its
+  `measures.N.field`, before any query runs. Its figure could add several currencies without anything to show it, and
+  `meta.currency`, `meta.currencies` and the warnings would carry values of a column the caller may not read. A `count`,
+  a date and a key read no currency and are not affected.
 
 ```json
 {
@@ -1401,7 +1405,7 @@ of the request that caused it, for example `measures`, `measures.0.fn`, `measure
 | Code | When |
 | --- | --- |
 | `INVALID_FIELD` | A malformed request (the first message and first key of the validation), a field that is not a column of the entity (or of a to-one relation, for a group), a period or bucket field that is not a date column, a bucket without a period or on another field than the period's, a combination the rules above refuse. |
-| `UNREADABLE_FIELD` | The caller cannot read the field. A filter column is reported as `filters.<property>`. |
+| `UNREADABLE_FIELD` | The caller cannot read the field, or the currency column paired with an amount (on `measures.N.field`). A filter column is reported as `filters.<property>`. |
 | `NOT_MEASURABLE` | The function does not suit the column (`sum` of a string or of a key, `min` of a string). |
 | `UNSUPPORTED_FUNCTION` | `fn` is not one of the five (`measures.N.fn`), or the database driver has no day expression for a bucket (`group_by.bucket`). |
 | `TOO_MANY_GROUPS` | A `limit`, or an unlimited grouping, above `max_groups`. |

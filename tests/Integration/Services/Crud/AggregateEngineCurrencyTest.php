@@ -3,18 +3,22 @@
 declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FiltersGroup;
+use Modules\Core\Exceptions\AggregateException;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Services\Crud\Aggregate\AggregateLimits;
 use Modules\Core\Services\Crud\Aggregate\AggregateQuery;
 use Modules\Core\Services\Crud\Aggregate\AggregateResult;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Tests\Stubs\Crud\AggregateCustomerStubModel;
+use Modules\Core\Tests\Stubs\Crud\AggregateHiddenCurrencyOrderStubModel;
 use Modules\Core\Tests\Stubs\Crud\AggregateOrderStubModel;
+use Modules\Core\Tests\Stubs\Crud\AggregateRestrictedOrderStubModel;
 use Modules\Core\Tests\Support\AggregateTestKit;
 
 beforeEach(function (): void {
@@ -28,12 +32,28 @@ beforeEach(function (): void {
  *
  * @param  array<string, mixed>  $request
  */
-function aggregate_currency_run(array $request): AggregateResult
+function aggregate_currency_run(array $request, ?Model $model = null): AggregateResult
 {
     return app(CrudService::class)->aggregate(
-        AggregateTestKit::listData(new AggregateOrderStubModel),
+        AggregateTestKit::listData($model ?? new AggregateOrderStubModel),
         AggregateQuery::fromArray($request, AggregateLimits::fromConfig()),
     );
+}
+
+/**
+ * The refusal of a request the service must not run.
+ *
+ * @param  array<string, mixed>  $request
+ */
+function aggregate_currency_refusal(array $request, Model $model): AggregateException
+{
+    try {
+        aggregate_currency_run($request, $model);
+    } catch (AggregateException $exception) {
+        return $exception;
+    }
+
+    throw new RuntimeException('The aggregate request was not refused.');
 }
 
 /**
@@ -557,4 +577,76 @@ it('the rows the caller may not see do not mix their currency into the figures',
     expect($result->total)->toBe(['sum_total' => 15])
         ->and($result->meta['currency'])->toBe('EUR')
         ->and($result->meta)->not->toHaveKeys(['currencies', 'warnings']);
+});
+
+it('an amount whose currency the caller cannot read is UNREADABLE_FIELD, in every path of the engine', function (array $request, string $field, string $amount): void {
+    $this->travelTo(CarbonImmutable::parse('2026-03-10 09:00:00', 'UTC'));
+    AggregateTestKit::seedOrders([
+        ['total' => '10', 'currency' => 'EUR'],
+        ['total' => '20', 'currency' => 'USD'],
+    ]);
+
+    $refusal = aggregate_currency_refusal($request, new AggregateHiddenCurrencyOrderStubModel);
+
+    expect($refusal->toArray())->toBe([
+        'code' => 'UNREADABLE_FIELD',
+        'message' => sprintf('The currency of "%s" cannot be read by this caller, so the figure cannot be checked for mixed currencies.', $amount),
+        'field' => $field,
+    ]);
+})->with([
+    'a sum' => [['measures' => [['fn' => 'sum', 'field' => 'total']]], 'measures.0.field', 'total'],
+    'an average' => [['measures' => [['fn' => 'avg', 'field' => 'total']]], 'measures.0.field', 'total'],
+    'a minimum' => [['measures' => [['fn' => 'min', 'field' => 'total']]], 'measures.0.field', 'total'],
+    'a maximum' => [['measures' => [['fn' => 'max', 'field' => 'total']]], 'measures.0.field', 'total'],
+    'an integer amount paired by its whole name' => [['measures' => [['fn' => 'sum', 'field' => 'quantity']]], 'measures.0.field', 'quantity'],
+    'the second measure after a count' => [['measures' => [['fn' => 'count'], ['fn' => 'sum', 'field' => 'total']]], 'measures.1.field', 'total'],
+    'a grouped request' => [['measures' => [['fn' => 'sum', 'field' => 'total']], 'group_by' => ['field' => 'status']], 'measures.0.field', 'total'],
+    'a grouped request with the rest of the groups' => [
+        ['measures' => [['fn' => 'sum', 'field' => 'total']], 'group_by' => ['field' => 'status'], 'limit' => 1, 'other' => true],
+        'measures.0.field',
+        'total',
+    ],
+    'a bucketed request' => [
+        [
+            'measures' => [['fn' => 'sum', 'field' => 'total']],
+            'group_by' => ['field' => 'ordered_at', 'bucket' => 'month'],
+            'period' => ['field' => 'ordered_at', 'from' => '2026-01-01', 'to' => '2026-02-28'],
+        ],
+        'measures.0.field',
+        'total',
+    ],
+    'a comparison with the previous period' => [
+        ['measures' => [['fn' => 'sum', 'field' => 'total']], 'period' => ['field' => 'ordered_at', 'preset' => 'last_month'], 'compare' => 'previous_period'],
+        'measures.0.field',
+        'total',
+    ],
+]);
+
+it('a count, a date and a key are measured when the caller cannot read the currency', function (): void {
+    AggregateTestKit::seedOrders([
+        ['total' => '10', 'currency' => 'EUR', 'ordered_at' => '2026-01-10 10:00:00'],
+        ['total' => '20', 'currency' => 'USD', 'ordered_at' => '2026-02-10 10:00:00'],
+    ]);
+
+    $result = aggregate_currency_run(['measures' => [
+        ['fn' => 'count'],
+        ['fn' => 'count', 'field' => 'total'],
+        ['fn' => 'min', 'field' => 'ordered_at'],
+        ['fn' => 'max', 'field' => 'id'],
+    ]], new AggregateHiddenCurrencyOrderStubModel);
+
+    expect($result->total)->toBe(['count' => 2, 'count_total' => 2, 'min_ordered_at' => '2026-01-10 10:00:00', 'max_id' => 2])
+        ->and($result->meta)->not->toHaveKeys(['currency', 'currencies', 'warnings']);
+});
+
+it('a caller who may read the currency of an amount still gets it checked', function (): void {
+    AggregateTestKit::seedOrders([
+        ['quantity' => 2, 'currency' => 'EUR'],
+        ['quantity' => 3, 'currency' => 'EUR'],
+    ]);
+
+    $result = aggregate_currency_run(['measures' => [['fn' => 'sum', 'field' => 'quantity']]], new AggregateRestrictedOrderStubModel);
+
+    expect($result->total)->toBe(['sum_quantity' => 5])
+        ->and($result->meta['currency'])->toBe('EUR');
 });

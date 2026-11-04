@@ -90,11 +90,7 @@ final class CurrencyCheck
         $amounts = [];
 
         foreach ($query->measures as $index => $measure) {
-            if ($measure->field === null || ! in_array($measure->fn, self::AMOUNT_FUNCTIONS, true) || ! self::isAmount($model, $measure->field)) {
-                continue;
-            }
-
-            $column = CurrencyColumns::for($model, $measure->field);
+            $column = self::columnOf($model, $measure);
 
             if ($column === null) {
                 continue;
@@ -108,6 +104,22 @@ final class CurrencyCheck
         }
 
         return new self($amounts);
+    }
+
+    /**
+     * The currency column the run reads beside the measure, or null when it reads none: the measure is a `sum`,
+     * `avg`, `min` or `max` over an amount (a numeric column that is not a key) and the table has a currency column
+     * for it ({@see CurrencyColumns::for()}). Its values reach the result as `meta.currency`, `meta.currencies` and
+     * the warnings, so the service refuses a measure whose currency column the caller may not read before any query
+     * runs.
+     */
+    public static function columnOf(Model $model, AggregateMeasure $measure): ?string
+    {
+        if ($measure->field === null || ! in_array($measure->fn, self::AMOUNT_FUNCTIONS, true) || ! self::isAmount($model, $measure->field)) {
+            return null;
+        }
+
+        return CurrencyColumns::for($model, $measure->field);
     }
 
     /**
