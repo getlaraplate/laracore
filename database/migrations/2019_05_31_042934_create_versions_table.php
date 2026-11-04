@@ -24,6 +24,7 @@ return new class() extends Migration
             $uuid ? $table->uuid('id')->primary() : $table->bigIncrements('id');
             $table->unsignedBigInteger('version_set_id');
             $table->unsignedInteger('sequence');
+            $table->unsignedBigInteger('epoch_id')->nullable()->comment('The schema epoch of the root class when the row was written (D32)');
             $table->enum(
                 'change_type',
                 array_map(static fn (VersionChangeType $case): string => $case->value, VersionChangeType::cases()),
@@ -59,6 +60,12 @@ return new class() extends Migration
                 ->references('id')
                 ->on(CoreTables::VersionSets->value)
                 ->cascadeOnDelete();
+            MigrateUtils::prefixIndex($table, 'epoch_id');
+            // Epochs are never removed: a row keeps the shape it was written in.
+            $table->foreign('epoch_id', 'versions_epoch_FK')
+                ->references('id')
+                ->on(CoreTables::VersionsEpochs->value)
+                ->restrictOnDelete();
         });
     }
 

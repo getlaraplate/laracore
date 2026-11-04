@@ -31,6 +31,7 @@ use Override;
  * @property int|string $id
  * @property int|null $version_set_id
  * @property int|null $sequence
+ * @property int|null $epoch_id
  * @property VersionChangeType $change_type
  * @property string|null $relation_path
  * @property mixed $subject_key
@@ -196,6 +197,16 @@ final class Version extends Model
     public function versionSet(): BelongsTo
     {
         return $this->belongsTo(VersionSet::class);
+    }
+
+    /**
+     * The schema epoch of the root class when the row was written.
+     *
+     * @return BelongsTo<VersionEpoch, $this>
+     */
+    public function epoch(): BelongsTo
+    {
+        return $this->belongsTo(VersionEpoch::class);
     }
 
     /**

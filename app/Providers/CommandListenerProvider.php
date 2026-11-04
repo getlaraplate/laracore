@@ -14,6 +14,7 @@ use Illuminate\Support\ServiceProvider;
 use Modules\Core\Helpers\HelpersCache;
 use Modules\Core\Inspector\ModelMetadataRegistry;
 use Modules\Core\Inspector\SchemaInspector;
+use Modules\Core\Versioning\VersionEpochs;
 use Override;
 
 final class CommandListenerProvider extends ServiceProvider
@@ -58,6 +59,7 @@ final class CommandListenerProvider extends ServiceProvider
             SchemaInspector::getInstance()->clearAll();
             ModelMetadataRegistry::getInstance()->clearAll();
             HelpersCache::clearAll();
+            app(VersionEpochs::class)->flush();
         });
     }
 

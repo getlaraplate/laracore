@@ -17,6 +17,17 @@ return new class() extends Migration
      */
     public function up(): void
     {
+        Schema::create(CoreTables::VersionsEpochs->value, static function (Blueprint $table): void {
+            $table->id();
+            $table->string('root_type');
+            $table->string('root_table')->comment('A class whose table varies per instance has an epoch per table');
+            $table->string('fingerprint', 64)->comment('sha256 of the versioned shape of the root class (D13, D33, D57)');
+            $table->json('definition')->comment('The versioned columns, translation columns and relations the fingerprint covers');
+            $table->timestamp('first_seen_at');
+
+            $table->unique(['root_type', 'root_table', 'fingerprint'], 'vepochs_root_fingerprint_UN');
+        });
+
         $table_name = CoreTables::VersionSets->value;
 
         Schema::create($table_name, static function (Blueprint $table) use ($table_name): void {
@@ -64,5 +75,6 @@ return new class() extends Migration
     public function down(): void
     {
         Schema::dropIfExists(CoreTables::VersionSets->value);
+        Schema::dropIfExists(CoreTables::VersionsEpochs->value);
     }
 };

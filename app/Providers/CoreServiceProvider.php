@@ -130,6 +130,7 @@ use Modules\Core\Support\Env\ConfigCacheRefresher;
 use Modules\Core\Support\OwnerTimestamp;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
+use Modules\Core\Versioning\VersionEpochs;
 use Modules\Core\Versioning\VersionSetManager;
 use Modules\Core\Versioning\VersionWriter;
 use Nwidart\Modules\Module as NwidartModule;
@@ -296,6 +297,9 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         $this->app->scoped(VersionSetManagerInterface::class, VersionSetManager::class);
         $this->app->scoped(VersionWriterInterface::class, VersionWriter::class);
+        // Per process on purpose: the shape of a root class is read at its first write, and a deploy that migrates
+        // restarts the workers (D33).
+        $this->app->singleton(VersionEpochs::class);
 
         // Register search clients
         $this->registerSearchClients();

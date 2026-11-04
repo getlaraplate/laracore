@@ -14,6 +14,7 @@ use Modules\Core\Models\OutboxEvent;
 use Modules\Core\Models\RecordOrigin;
 use Modules\Core\Models\SeedRun;
 use Modules\Core\Models\Version;
+use Modules\Core\Models\VersionEpoch;
 use Modules\Core\Models\VersionSet;
 use Override;
 
@@ -58,6 +59,7 @@ final class CorePermissions implements DeclaresPermissions
             // The history is read only through its root, with `history` and the root's ACL: a permission on the
             // table itself would list the past of records the reader is not allowed to see.
             Version::class,
+            VersionEpoch::class,
             VersionSet::class,
         ];
     }
