@@ -1384,7 +1384,7 @@ switches a limit off. The ceilings are checked before any query runs, except the
 | `max_groups` | `50` | Groups of a column one request may show. A `limit` above it is `TOO_MANY_GROUPS` on `limit`; with no `limit`, a grouping that gives more groups is `TOO_MANY_GROUPS` on `group_by.field`. |
 | `max_points` | `400` | Buckets of one series. The series of the period and, with `compare`, the series of the previous period are each held to it, so a result can hold up to twice this many. More is `PERIOD_TOO_LONG` on `group_by.bucket`, and the message names a coarser bucket that fits or asks for a shorter period. |
 | `max_period_days` | `1096` | Days of the requested period, both ends counted. More is `PERIOD_TOO_LONG` on `period`. The previous period is not measured by it. |
-| `max_objects_per_message` | `6` | Reserved: nothing reads it yet. The route ignores it; `AggregateLimits` carries it for a later consumer. |
+| `max_objects_per_message` | `6` | Objects the assistant may put in one message; read by the AI module's `show_widget` tool, ignored by the route. |
 | `rate_per_minute` | `60` | Requests a minute to the route, per user. |
 
 The rate is a named limiter, `aggregate`, defined next to the `api` limiter in `CoreServiceProvider` and attached by

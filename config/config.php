@@ -99,7 +99,8 @@ return [
         'max_period_days' => env('CORE_AGGREGATE_MAX_PERIOD_DAYS', 1096),
 
         /**
-         * Objects (widgets) the assistant may show in one message.
+         * Objects the assistant may put in one message; read by the AI module's `show_widget` tool, ignored by the
+         * route.
          */
         // @phpstan-ignore larastan.noEnvCallsOutsideOfConfig
         'max_objects_per_message' => env('CORE_AGGREGATE_MAX_OBJECTS_PER_MESSAGE', 6),
