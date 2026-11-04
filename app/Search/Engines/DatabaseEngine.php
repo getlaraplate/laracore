@@ -109,8 +109,28 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
 
     public function reindex(string $modelClass): void {}
 
-    public function supportsVectorSearch(): bool
+    /**
+     * Two callers, two questions, one name.
+     *
+     * {@see ISearchEngine::supportsVectorSearch()} asks, with no argument, whether this engine offers vector
+     * search at all: it always has. Scout 11 added its own `supportsVectorSearch($model)` to
+     * {@see \Laravel\Scout\Engines\Concerns\PerformsDatabaseVectorSearch}, which the parent engine uses to
+     * probe whether *that model's connection* is PostgreSQL with pgvector before building a vector query.
+     *
+     * Answering `true` to the second question would let the parent attempt `whereVectorSimilarTo` on a
+     * connection that cannot run it, so the model-aware call is delegated to the parent's probe.
+     *
+     * The parameter is deliberately untyped: the parent declares `$model` with no type, and narrowing it to
+     * `?Model` here is a contravariance error.
+     *
+     * @param  Model|null  $model  Null from this application's engine contract; a model from Scout's internals.
+     */
+    public function supportsVectorSearch($model = null): bool
     {
+        if ($model instanceof Model) {
+            return parent::supportsVectorSearch($model);
+        }
+
         return true;
     }
 
