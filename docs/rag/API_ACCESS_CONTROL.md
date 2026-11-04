@@ -267,7 +267,12 @@ key, a `sort`, a filter property or an aggregated column (`sum`, `average`, `min
 names a column the caller does not receive answers `400` before anything is queried. A dotted path is checked on each
 model along it. The aggregate route applies the same rule to every field of its request (measure, group key, label, period
 field, filter property) and answers `422` `UNREADABLE_FIELD` with the path of the field (`measures.0.field`,
-`filters.<property>`) instead of `400`. The rule (`Support\ReadableColumnGuard`) is:
+`filters.<property>`) instead of `400`. It checks one column the request does not name as well: the currency column
+paired with an amount (`currency`, or `currency_<suffix>`), whose values reach the result as `meta.currency`,
+`meta.currencies` and the warnings. When the caller cannot read it, a `sum`, `avg`, `min` or `max` over a numeric column
+that is not a key and is paired with it is `UNREADABLE_FIELD` on `measures.N.field` (a `count` is not affected). A
+`relation` filter node (`{ "relation", "filters" }`) is a different refusal: it is `INVALID_FIELD` on `filters`, at any
+depth, because the list would read it as a group of the main record. The rule (`Support\ReadableColumnGuard`) is:
 
 - the anonymous user may not name an attribute or relation the model lists in `anonymousHiddenAttributes()`
   (`facets/cms/comments?columns[]=user_id`, `contributors.shared_components`);

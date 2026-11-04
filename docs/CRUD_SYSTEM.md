@@ -1314,8 +1314,8 @@ A bucketed request with a comparison (`period: { "field": "ordered_at", "from": 
 (`decimal(15,4)` is `decimal`). The type names of PostgreSQL (`int4`, `float8`), Oracle (`NUMBER(p,s)`,
 `binary_double`, `binary_float`) and SQL Server (`smallmoney`, `datetime2`, `smalldatetime`, `datetimeoffset`) are
 known too; knowing a name says nothing about support for the driver ([database support](#aggregate-database-support)).
-A `time` column is not a date column. `tinyint` is never numeric, because MySQL stores a boolean in it. A temporal cast on a column the schema stores as a number (unix seconds cast as
-`timestamp`) is neither a date column nor a number.
+A `time` column is not a date column. `tinyint` is never numeric, because MySQL stores a boolean in it. A temporal cast
+on a column the schema stores as a number (unix seconds cast as `timestamp`) is neither a date column nor a number.
 
 | Function | Accepts |
 | --- | --- |
@@ -1356,8 +1356,11 @@ treated as an amount too (a known false positive), while `count`, dates and keys
   `meta.currency`.
 - **A currency column the caller cannot read** refuses the amount paired with it: `UNREADABLE_FIELD` on its
   `measures.N.field`, before any query runs. Its figure could add several currencies without anything to show it, and
-  `meta.currency`, `meta.currencies` and the warnings would carry values of a column the caller may not read. A `count`,
-  a date and a key read no currency and are not affected.
+  `meta.currency`, `meta.currencies` and the warnings would carry values of a column the caller may not read. The
+  pairing is by type, so the refusal covers a `sum`, `avg`, `min` or `max` over any numeric column that is not a key and
+  is paired with the unreadable column, `quantity` included: with `currency` unreadable, that is every such column of
+  the table that has no `currency_<suffix>` of its own. A `count`, a date and a key read no currency and are not
+  affected.
 
 ```json
 {
@@ -1398,8 +1401,8 @@ switches a limit off. The ceilings are checked before any query runs, except the
 The rate is a named limiter, `aggregate`, defined next to the `api` limiter in `CoreServiceProvider` and attached by
 `throttle:aggregate` in `routes/crud.php`, so it covers `/app` and `/api/v1` alike (on `/api/v1` it adds to the `api`
 limiter). It counts per signed-in user, and per client address for the anonymous user, a user with no email, a user of
-another kind than the Core user, or no user at all. The ceiling is read when a request arrives. Over it the route answers `429` with Laravel's default `{ message }`
-body, outside the `{ error }` envelope of this route.
+another kind than the Core user, or no user at all. The ceiling is read when a request arrives. Over it the route
+answers `429` with Laravel's default `{ message }` body, outside the `{ error }` envelope of this route.
 
 There is no hard timeout in v1: the code `TIMEOUT` is reserved and never emitted.
 
@@ -1428,11 +1431,13 @@ Other answers:
   column (or the JSON path of one) is `INVALID_FIELD` there. A property the list reads from outside the columns
   (a translated or a dynamic field) still narrows the figures. A dotted path is checked for readability only: an
   unknown column at its end is not refused up front, as in the list. A scope filter the list refuses (an undeclared
-  scope, for instance) is `INVALID_FIELD` on `filters`, and so is a relation node, at any depth: the message asks for a
-  dotted property instead.
+  scope, for instance) is `INVALID_FIELD` on `filters`, and so is a relation node, at any depth: for a well-formed node
+  the message asks for a dotted property instead. A malformed relation node, one whose `filters` is a list and not a
+  group for instance, is refused earlier, by the filter validator: still `INVALID_FIELD` on `filters`, but with the
+  message of the validator (it starts with the path of the node and ends with `"filters" must be a filters group`).
 - **`403` and `401`.** A missing `select` permission, or a related entity the caller may not select (a relation group, a
-  label, the relation of a dotted property in `filters`). The body is the refusal body of the list, not the envelope: `error` is a string and
-  `data` is `[]`.
+  label, the relation of a dotted property in `filters`). The body is the refusal body of the list, not the envelope:
+  `error` is a string and `data` is `[]`.
 - **An `InvalidArgumentException`** from the list machinery (its guards name fields, never SQL) is `422` `INVALID_FIELD`
   with its message and no `field`, and is logged at notice level (`Aggregate request refused`, with the exception
   class, message, module and entity).

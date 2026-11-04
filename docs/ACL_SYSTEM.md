@@ -286,7 +286,7 @@ An ACL can restrict a record by a condition on a **related record** (a `BelongsT
 
 Result on `vend_media`: only media whose owner is a content valid at the time of the request. A relation node is a `whereHas`, or a `whereHasMorph` when `morph_types` is set (a media owned by any other type never matches).
 
-- Only ACLs build relation nodes: filters sent in a request are parsed as column filters and cannot contain one.
+- Only ACLs build relation nodes: filters sent in a request are parsed as column filters and cannot contain one. The list parser (`ListRequestData::conformFilterNode()`) has no relation branch: a `{ "relation", "filters" }` node sent by a client is read as a plain group of the main record, so its conditions apply to the listed rows and not to the related record. The aggregate route refuses such a node, at any depth, with `INVALID_FIELD` on `filters`, instead of answering a figure of other rows; the list route has no such refusal.
 - In search the engine receives column conditions only. A relation node is not pushed to the engine (inside an OR group the whole group is left out, so the engine never drops what the relation allows); the records behind the hits are reloaded with the ACL applied, which is where the relation condition takes effect.
 - The ACL form edits the JSON; the validation rule accepts a relation node whose `filters` is a group.
 - At save, `Rules\AclRelationFilters` checks what the node names: the relation must be a relation method of the entity the ACL's permission is about (nested relation nodes are checked against the related entity), a `MorphTo` needs `morph_types` and any other relation must not carry them, and every morph type must be a model class or morph alias. A failing check rejects the ACL.
