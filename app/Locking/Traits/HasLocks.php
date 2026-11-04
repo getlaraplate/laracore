@@ -17,7 +17,7 @@ use Modules\Core\Locking\Locked;
 use Modules\Core\Services\PerModelSettingResolver;
 
 /**
- * Derived from sfolador/laravel-locked (MIT), see LICENSES/laravel-locked.md.
+ * Derived from sfolador/laravel-locked (MIT), see NOTICES/laravel-locked.md.
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  *

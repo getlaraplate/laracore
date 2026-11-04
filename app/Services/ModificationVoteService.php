@@ -24,7 +24,7 @@ use Modules\Core\Models\User;
  *
  * Shared by the CRUD API and the Filament panel so both vote through the same rules.
  *
- * Derived from cloudcake/laravel-approval (MIT), see LICENSES/laravel-approval.md: it took over the
+ * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md: it took over the
  * voting and application the package's ApprovesChanges trait performed on the user model.
  */
 final class ModificationVoteService

@@ -45,7 +45,7 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $created_at
  * @property \Carbon\CarbonImmutable|null $compacted_at
  *
- * Derived from overtrue/laravel-versionable (MIT), see LICENSES/laravel-versionable.md: the relation to the
+ * Derived from overtrue/laravel-versionable (MIT), see NOTICES/laravel-versionable.md: the relation to the
  * versioned record, the ordering scopes, revert() and the uuid key were the package's.
  */
 final class Version extends Model

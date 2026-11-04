@@ -20,7 +20,7 @@ use Override;
 /**
  * A write captured before it happened, with the votes cast on it.
  *
- * Derived from cloudcake/laravel-approval (MIT), see LICENSES/laravel-approval.md.
+ * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md.
  * The relations, the remaining-vote counters and the active/inactive scopes were the
  * package's; the unused parts of its model (`forceApprovalUpdate()`, the
  * `approvalsRemaining`/`disapprovalsRemaining` aliases, the `changes`/`creations`
