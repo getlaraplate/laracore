@@ -45,7 +45,7 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
     //    public array $config;
 
     #[Override]
-    public function supportsVectorSearch(): bool
+    public function offersVectorSearch(): bool
     {
         return true;
     }
@@ -633,7 +633,7 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
         // Add a vector field if needed
         $profile = VectorProfileContext::get();
 
-        if ($profile instanceof VectorProfile && $this->supportsVectorSearch()) {
+        if ($profile instanceof VectorProfile && $this->offersVectorSearch()) {
             $mapping['mappings']['properties']['embedding'] = [
                 'type' => 'dense_vector',
                 'dims' => $profile->dimensions,

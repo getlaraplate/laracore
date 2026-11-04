@@ -26,7 +26,7 @@ beforeEach(function (): void {
 
 it('emits one {vector} entry per ModelEmbedding row, with no locale in the payload', function (): void {
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(true);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(true);
 
     $model = new VectorEmbeddingsArrayStubModel();
     $model->withEngine($engine);
@@ -46,7 +46,7 @@ it('emits one {vector} entry per ModelEmbedding row, with no locale in the paylo
 
 it('omits the embeddings key when the model has no ModelEmbedding rows', function (): void {
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(true);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(true);
 
     $model = new VectorEmbeddingsArrayStubModel();
     $model->withEngine($engine);
@@ -59,7 +59,7 @@ it('omits the embeddings key when the model has no ModelEmbedding rows', functio
 
 it('does not add embeddings when the engine does not support vector search', function (): void {
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(false);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(false);
 
     $model = new VectorEmbeddingsArrayStubModel();
     $model->withEngine($engine);
@@ -75,7 +75,7 @@ it('does not add embeddings when the engine does not support vector search', fun
 it('does not add embeddings when there is no vector profile', function (): void {
     FakeVectorProfile::none();
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(true);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(true);
 
     $model = new VectorEmbeddingsArrayStubModel();
     $model->withEngine($engine);

@@ -34,7 +34,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
 
     //    public array $config;
 
-    public function supportsVectorSearch(): bool
+    public function offersVectorSearch(): bool
     {
         return true;
     }
@@ -390,7 +390,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
             ],
         ];
 
-        if (VectorProfileContext::get() instanceof VectorProfile && $this->supportsVectorSearch()) {
+        if (VectorProfileContext::get() instanceof VectorProfile && $this->offersVectorSearch()) {
             // Typesense vector field configuration
             // The embedding is pre-computed, so we just need to define it as float[]
             $mapping['fields']['embedding'] = [
