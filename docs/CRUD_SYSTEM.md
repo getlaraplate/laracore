@@ -487,18 +487,25 @@ A "dotless" aggregate names a relation on the main model itself: `{ "name": "com
 
 ### Filter Operators
 
-| Operator | Description | Example Value |
-|----------|-------------|---------------|
-| `=` | Equals | `"active"` |
-| `!=` | Not equals | `"deleted"` |
-| `>` | Greater than | `100` |
-| `>=` | Greater than or equal | `100` |
-| `<` | Less than | `100` |
-| `<=` | Less than or equal | `100` |
-| `like` | LIKE pattern | `"%john%"` |
-| `not like` | NOT LIKE pattern | `"%test%"` |
-| `in` | IN list | `["active", "pending"]` |
-| `between` | BETWEEN range | `["2024-01-01", "2024-12-31"]` |
+| Operator | Named spelling | Description | Example Value |
+|----------|----------------|-------------|---------------|
+| `=` | `eq` | Equals | `"active"` |
+| `!=` | `ne` | Not equals | `"deleted"` |
+| `>` | `gt` | Greater than | `100` |
+| `>=` | `ge` | Greater than or equal | `100` |
+| `<` | `lt` | Less than | `100` |
+| `<=` | `le` | Less than or equal | `100` |
+| `like` | `like` | LIKE pattern | `"%john%"` |
+| `not like` | `not like` | NOT LIKE pattern | `"%test%"` |
+| `in` | `in` | IN list | `["active", "pending"]` |
+| `between` | `between` | BETWEEN range | `["2024-01-01", "2024-12-31"]` |
+
+The symbol and the named spelling of an operator are the same operator: `{"operator": "!="}` and `{"operator": "ne"}` keep the same rows, on every route that reads filters (list, select, facets, search, aggregate and the assistant tools that wrap them). Both are matched exactly, in lowercase.
+
+- A filter with no `operator` and a `value` is an equality. The request validation (`Rules\QueryBuilder`) still requires the `operator` key on a `property` node, so only a caller that builds `ListRequestData` by hand can omit it.
+- An `operator` that is in neither spelling (`contains`, `EQ`, an empty string, `null`, a number, a list) is refused, never read as `=`. A request gets a `422` whose `filters` error names the failing node and the allowed operators (`filters.filters.1 "operator" must be one of: > (gt), >= (ge), ...`); the aggregate route answers its own `INVALID_FIELD` error with the same message. A tree parsed without the request validation raises a `ValidationException` with the allowed operators and without the offending value.
+- The operator of a nested group (`and` or `or`) is a different field and is not part of this list.
+- A filter on an ACL is stored with the symbols only (see [ACL_SYSTEM.md](ACL_SYSTEM.md#supported-operators)).
 
 ### Nested Filters
 

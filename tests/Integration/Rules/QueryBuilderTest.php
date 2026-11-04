@@ -74,6 +74,29 @@ it('fails when property is present but value missing', function (): void {
     expect($message)->toBe('filter "value" is required');
 });
 
+it('accepts every operator in either spelling', function (string $operator): void {
+    $failures = [];
+
+    (new QueryBuilder)->validate('filter', ['property' => 'name', 'operator' => $operator, 'value' => 'test'], function (string $message) use (&$failures): void {
+        $failures[] = $message;
+    });
+
+    expect($failures)->toBe([]);
+})->with(['=', '!=', '>', '>=', '<', '<=', 'eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like', 'not like', 'in', 'between']);
+
+it('fails with the allowed operators when the operator is in neither spelling', function (mixed $operator): void {
+    $failures = [];
+
+    (new QueryBuilder)->validate('filters', [
+        ['property' => 'name', 'operator' => '=', 'value' => 'a'],
+        ['operator' => 'or', 'filters' => [['property' => 'name', 'operator' => $operator, 'value' => 'b']]],
+    ], function (string $message) use (&$failures): void {
+        $failures[] = $message;
+    });
+
+    expect($failures)->toBe(['filters.1.filters.0 "operator" must be one of: > (gt), >= (ge), < (lt), <= (le), like, not like, = (eq), in, != (ne), between']);
+})->with(['an unknown word' => 'contains', 'a different case' => 'EQ', 'an empty string' => '', 'null' => null, 'a number' => 1, 'a list' => [['eq']]]);
+
 it('passes for nested filters list', function (): void {
     $rule = new QueryBuilder;
     $fail_called = false;

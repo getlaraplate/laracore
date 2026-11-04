@@ -181,15 +181,24 @@ class ListRequestData extends SelectRequestData
     }
 
     /**
+     * A filter without an operator is an equality; one that names an operator must name one the request accepts, in
+     * either spelling ({@see FilterOperator::tryFromRequestOperator()}). Reading an unknown one as equals would answer
+     * over the wrong rows.
+     *
      * @param  array<string, mixed>  $filter
+     *
+     * @throws ValidationException when the filter names an operator that is in neither spelling
      */
     protected function conformFilterOperators(array &$filter): void
     {
         if (array_key_exists('operator', $filter)) {
-            $operator = $filter['operator'];
-            $filter['operator'] = (is_string($operator) || $operator instanceof RequestFilterOperator
-                ? FilterOperator::tryFromRequestOperator($operator)
-                : null) ?? FilterOperator::Equals;
+            $operator = FilterOperator::tryFromRequestValue($filter['operator']);
+
+            if (! $operator instanceof FilterOperator) {
+                throw ValidationException::withMessages(['filters' => 'Unknown filter operator. Use one of: ' . FilterOperator::requestVocabulary() . '.']);
+            }
+
+            $filter['operator'] = $operator;
         } elseif (array_key_exists('value', $filter)) {
             $filter['operator'] = FilterOperator::Equals;
         }

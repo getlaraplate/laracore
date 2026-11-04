@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Support\Arr;
 use Modules\Core\Casts\Filter;
+use Modules\Core\Casts\FilterOperator;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\RelationFilter;
 use Modules\Core\Casts\ScopeFilter;
@@ -81,6 +82,8 @@ final class QueryBuilder implements ValidationRule
         if (array_key_exists('property', $value)) {
             if (! array_key_exists('operator', $value)) {
                 $fail($attribute . ' "operator" is required');
+            } elseif (! FilterOperator::tryFromRequestValue($value['operator']) instanceof FilterOperator) {
+                $fail($attribute . ' "operator" must be one of: ' . FilterOperator::requestVocabulary());
             }
 
             if (! array_key_exists('value', $value)) {
