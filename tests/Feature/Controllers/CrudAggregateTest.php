@@ -13,6 +13,7 @@ use Modules\Core\Enums\AggregateErrorCode;
 use Modules\Core\Exceptions\AggregateException;
 use Modules\Core\Http\Controllers\CrudController;
 use Modules\Core\Http\Requests\AggregateRequest;
+use Modules\Core\Models\License;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\Setting;
 use Modules\Core\Models\User;
@@ -267,6 +268,51 @@ it('answers a malformed scope filter with INVALID_FIELD on filters', function ()
     expect($response->json('error.code'))->toBe('INVALID_FIELD')
         ->and($response->json('error.field'))->toBe('filters');
 });
+
+it('refuses a relation filter node at any depth with INVALID_FIELD on filters', function (array $filters): void {
+    aggregateRouteSetting('agg_route_a');
+
+    $response = $this->actingAs(aggregateRouteViewer())->postJson(route('core.crud.aggregate', aggregateRouteParams()), [
+        'measures' => [['fn' => 'count']],
+        'filters' => $filters,
+    ]);
+
+    $response->assertUnprocessable();
+
+    expect($response->json('error'))->toBe([
+        'code' => 'INVALID_FIELD',
+        'message' => 'Relation filters are not supported on the aggregate route: filter on a dotted property such as "customer.country" instead.',
+        'field' => 'filters',
+    ]);
+})->with([
+    'at depth 0' => [[
+        ['relation' => 'modifications', 'filters' => ['operator' => 'and', 'filters' => [['property' => 'id', 'operator' => '=', 'value' => 5]]]],
+    ]],
+    'nested in a group' => [[
+        ['operator' => 'or', 'filters' => [
+            ['property' => 'group_name', 'operator' => '=', 'value' => 'agg_route_a'],
+            ['relation' => 'modifications', 'filters' => ['operator' => 'and', 'filters' => [['property' => 'id', 'operator' => '=', 'value' => 5]]]],
+        ]],
+    ]],
+]);
+
+it('still narrows the figures with a dotted relation property and with a model scope', function (array $filters): void {
+    $valid = License::factory()->create(['valid_from' => now()->subDay(), 'valid_to' => null]);
+    License::factory()->create(['valid_from' => now()->subWeeks(2), 'valid_to' => now()->subDay()]);
+    User::factory()->create(['name' => 'aggregate_license_holder', 'license_id' => $valid->id]);
+
+    $response = $this->actingAs(aggregateRouteViewer())->postJson(route('core.crud.aggregate', ['module' => 'core', 'entity' => 'licenses']), [
+        'measures' => [['fn' => 'count']],
+        'filters' => $filters,
+    ]);
+
+    $response->assertOk();
+
+    expect($response->json('data.total.count'))->toBe(1);
+})->with([
+    'a dotted relation property' => [[['property' => 'user.name', 'operator' => '=', 'value' => 'aggregate_license_holder']]],
+    'a model scope' => [[['scope' => 'valid']]],
+]);
 
 it('answers a scope filter the list data refuses with INVALID_FIELD on filters', function (): void {
     $request = Mockery::mock(AggregateRequest::class);

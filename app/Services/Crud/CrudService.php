@@ -462,7 +462,7 @@ class CrudService
      * helpers of the facets (ruling R5).
      *
      * @throws AuthorizationException when the caller may not select the entity, a relation the filters name, or the related entity of a relation group or of a group label
-     * @throws AggregateException when a field or a filter property is not one the aggregate can read, the caller cannot read it, or it does not suit its function
+     * @throws AggregateException when the filters hold a relation node, which the list parser reads as a group of the main record; when a field or a filter property is not one the aggregate can read, the caller cannot read it, or it does not suit its function
      */
     public function aggregate(ListRequestData $base, AggregateQuery $query): AggregateResult
     {
@@ -476,6 +476,14 @@ class CrudService
             'select',
             $model->getConnectionName(),
         );
+
+        if ($base->hasRelationFilterNode) {
+            throw new AggregateException(
+                AggregateErrorCode::InvalidField,
+                'Relation filters are not supported on the aggregate route: filter on a dotted property such as "customer.country" instead.',
+                'filters',
+            );
+        }
 
         if ($filters instanceof FiltersGroup) {
             $this->assertAggregateFilters($model, $filters);

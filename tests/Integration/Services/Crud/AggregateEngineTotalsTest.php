@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FiltersGroup;
+use Modules\Core\Casts\ListRequestData;
 use Modules\Core\Casts\WhereClause;
 use Modules\Core\Enums\AggregateErrorCode;
 use Modules\Core\Exceptions\AggregateException;
+use Modules\Core\Http\Requests\ListRequest;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Models\ACL;
 use Modules\Core\Models\Permission;
@@ -241,6 +244,22 @@ it('a filter on a column the user cannot read is UNREADABLE_FIELD', function (Fi
     ],
     'a relation path' => [new FiltersGroup([new Filter('customer.name', 'Ada')]), 'filters.customer.name'],
 ]);
+
+it('a relation node of filters parsed without the route is INVALID_FIELD on filters', function (): void {
+    $request = ListRequest::create('/app/crud/aggregate/core/licenses', 'POST');
+    $request->setUserResolver(static fn (): ?Authenticatable => auth()->user());
+    $data = new ListRequestData($request, 'licenses', ['filters' => [
+        ['operator' => 'and', 'filters' => [
+            ['relation' => 'user', 'filters' => ['operator' => 'and', 'filters' => [['property' => 'id', 'operator' => '=', 'value' => 5]]]],
+        ]],
+    ]], 'id', 'core');
+
+    expect(fn (): AggregateResult => app(CrudService::class)->aggregate($data, AggregateQuery::fromArray(['measures' => [['fn' => 'count']]], AggregateLimits::fromConfig())))
+        ->toThrow(function (AggregateException $exception): void {
+            expect($exception->errorCode)->toBe(AggregateErrorCode::InvalidField)
+                ->and($exception->field)->toBe('filters');
+        });
+});
 
 it('a filter on an unknown column is INVALID_FIELD', function (string $property, Model $model): void {
     $refusal = aggregate_totals_filter_refusal(new FiltersGroup([new Filter($property, 'x')]), $model);

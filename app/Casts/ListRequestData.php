@@ -48,6 +48,14 @@ class ListRequestData extends SelectRequestData
     public protected(set) ?FiltersGroup $filters;
 
     /**
+     * Whether a node of the client filters, at any depth, has a `relation` key. The parser has no relation node: it
+     * reads such a node as the group of its `filters`, applied to the main record. The aggregate refuses a request
+     * that holds one ({@see \Modules\Core\Services\Crud\CrudService::aggregate()}) instead of answering a figure
+     * of other rows.
+     */
+    public protected(set) bool $hasRelationFilterNode = false;
+
+    /**
      * @var array<int, string>
      */
     public protected(set) array $group_by = [];
@@ -355,6 +363,10 @@ class ListRequestData extends SelectRequestData
             }
 
             return $result;
+        }
+
+        if (array_key_exists('relation', $raw)) {
+            $this->hasRelationFilterNode = true;
         }
 
         if (array_key_exists('scope', $raw)) {

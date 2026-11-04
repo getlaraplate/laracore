@@ -1114,7 +1114,7 @@ The examples below use an illustrative `shop/orders` entity with the columns `st
 | `measures` | Required list of 1 to `max_measures` objects `{ "fn", "field"? }`. `fn` is `count`, `sum`, `avg`, `min` or `max`. `field` is a column of the entity itself and may be left out only for `count`, which then counts rows. A dotted field is refused (no measure on a related entity) and so is a figure asked twice. A measure is named `count` or `<fn>_<field>` in the result: `sum_total`, `count_total`. |
 | `group_by` | Optional, one dimension `{ "field", "bucket"?, "label"? }`: an own column; a column one `BelongsTo` hop away (`customer.country`), which is its own label; a foreign-key column with `label` naming a relation column (`customer_id` with `customer.name`); or a date column with `bucket` (`day`, `week`, `month`, `quarter`, `year`). |
 | `period` | `{ "field", ... }` over a date column of the entity, with exactly one of `last: { "n", "unit" }`, `preset`, or `from` with `to` ([periods](#aggregate-periods-and-time-zone)). |
-| `filters` | The list vocabulary, see [Filters](#filters): conditions, nested AND/OR groups, relation filters and [model scopes](#scope-filters-in-requests). |
+| `filters` | The list vocabulary, see [Filters](#filters): conditions, nested AND/OR groups, [dotted relation properties](#relation-filters) (`customer.country`) and [model scopes](#scope-filters-in-requests). A relation node (`{ "relation", "filters" }`, the shape of an [ACL relation filter](ACL_SYSTEM.md#relation-filters)) is refused with `INVALID_FIELD` on `filters`, at any depth: the list reads it as a group of the main record, so its figure would cover other rows. |
 | `sort` | `{ "by": "measure" \| "key", "dir": "asc" \| "desc" }`; `measure` is the first measure. `by` defaults to `key` for a bucketed group and to `measure` otherwise, and `dir` to `asc` for `key` and `desc` for `measure`. |
 | `limit` | Show only the first N groups of a column (at least 1, at most `max_groups`). |
 | `other` | `true` with a `limit`: add the figures of the groups left out. |
@@ -1420,9 +1420,10 @@ Other answers:
   column (or the JSON path of one) is `INVALID_FIELD` there. A property the list reads from outside the columns
   (a translated or a dynamic field) still narrows the figures. A dotted path is checked for readability only: an
   unknown column at its end is not refused up front, as in the list. A scope filter the list refuses (an undeclared
-  scope, for instance) is `INVALID_FIELD` on `filters`.
+  scope, for instance) is `INVALID_FIELD` on `filters`, and so is a relation node, at any depth: the message asks for a
+  dotted property instead.
 - **`403` and `401`.** A missing `select` permission, or a related entity the caller may not select (a relation group, a
-  label, a relation in `filters`). The body is the refusal body of the list, not the envelope: `error` is a string and
+  label, the relation of a dotted property in `filters`). The body is the refusal body of the list, not the envelope: `error` is a string and
   `data` is `[]`.
 - **An `InvalidArgumentException`** from the list machinery (its guards name fields, never SQL) is `422` `INVALID_FIELD`
   with its message and no `field`, and is logged at notice level (`Aggregate request refused`, with the exception
