@@ -15,7 +15,7 @@ use Override;
 /**
  * One vote against a captured write.
  *
- * Derived from cloudcake/laravel-approval (MIT), see LICENSES/laravel-approval.md.
+ * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md.
  */
 final class Disapproval extends Model implements IsPartOfParent
 {

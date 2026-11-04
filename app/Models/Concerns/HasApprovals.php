@@ -30,7 +30,7 @@ use TypeError;
 /**
  * Captures a write that its author may not apply alone, as a Modification waiting for approval.
  *
- * Derived from cloudcake/laravel-approval (MIT), see LICENSES/laravel-approval.md: the capture
+ * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md: the capture
  * body, the modifications relation and applyModificationChanges() were the package's.
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
@@ -73,7 +73,7 @@ trait HasApprovals
      * While a deletion waits, a Block model refuses to save and a Hide model is filtered out
      * for the users who cannot decide on it.
      *
-     * Derived from cloudcake/laravel-approval (MIT), see LICENSES/laravel-approval.md.
+     * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md.
      */
     public static function bootHasApprovals(): void
     {
@@ -344,7 +344,7 @@ trait HasApprovals
      * create or update writes its diff. Either way the modification is deactivated and kept.
      * Called only by ModificationVoteService, which wraps it in the vote's transaction.
      *
-     * Derived from cloudcake/laravel-approval (MIT), see LICENSES/laravel-approval.md.
+     * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md.
      */
     public function applyModificationChanges(Modification $modification, bool $approved): void
     {

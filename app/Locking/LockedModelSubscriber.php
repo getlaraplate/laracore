@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Auth;
 use Modules\Core\Locking\Exceptions\LockedModelException;
 
 /**
- * Derived from sfolador/laravel-locked (MIT), see LICENSES/laravel-locked.md.
+ * Derived from sfolador/laravel-locked (MIT), see NOTICES/laravel-locked.md.
  */
 final class LockedModelSubscriber
 {

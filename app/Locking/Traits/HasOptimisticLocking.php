@@ -10,7 +10,7 @@ use Modules\Core\Locking\Exceptions\MissingLockVersionException;
 use Modules\Core\Locking\Exceptions\StaleModelLockingException;
 
 /**
- * Derived from reshadman/laravel-optimistic-locking (MIT), see LICENSES/laravel-optimistic-locking.md.
+ * Derived from reshadman/laravel-optimistic-locking (MIT), see NOTICES/laravel-optimistic-locking.md.
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  */
