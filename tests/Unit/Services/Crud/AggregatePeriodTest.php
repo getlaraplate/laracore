@@ -172,6 +172,24 @@ it('shifts by days on the calendar across a change of the clock', function (): v
         ->and($previous->to->format('Y-m-d H:i:s'))->toBe('2026-10-25 00:00:00');
 });
 
+it('counts and shifts the days of a period across the spring change of the clock', function (): void {
+    config(['app.timezone' => 'Europe/Rome']);
+
+    // 2026-03-29 has 23 hours in Rome: the clock moves from 02:00 to 03:00.
+    $period = AggregatePeriod::resolve(
+        ['field' => 'created_at', 'from' => '2026-03-28', 'to' => '2026-03-30'],
+        CarbonImmutable::parse('2026-03-20', 'UTC'),
+    );
+    $previous = $period->previous();
+
+    expect($period->days())->toBe(3)
+        ->and($period->from->format('Y-m-d H:i:s'))->toBe('2026-03-28 00:00:00')
+        ->and($period->to->format('Y-m-d H:i:s'))->toBe('2026-03-30 00:00:00')
+        ->and($previous->from->format('Y-m-d H:i:s'))->toBe('2026-03-25 00:00:00')
+        ->and($previous->to->format('Y-m-d H:i:s'))->toBe('2026-03-27 00:00:00')
+        ->and($previous->days())->toBe(3);
+});
+
 it('names the units of last when it refuses one', function (): void {
     $resolve = static fn (): AggregatePeriod => AggregatePeriod::resolve(
         ['field' => 'created_at', 'last' => ['n' => 2, 'unit' => 'fortnight']],

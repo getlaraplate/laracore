@@ -297,6 +297,25 @@ it('the period limits the rows', function (array $group, array $series): void {
     ]],
 ]);
 
+it('the period ends at the midnight after its last day across the spring change of the clock', function (string $to, int $count): void {
+    config(['app.timezone' => 'Europe/Rome']);
+    AggregateTestKit::seedOrders([
+        ['ordered_at' => '2026-03-27 23:59:59'],
+        ['ordered_at' => '2026-03-28 00:00:00'],
+        ['ordered_at' => '2026-03-28 23:59:59'],
+        ['ordered_at' => '2026-03-29 00:00:00'],
+        ['ordered_at' => '2026-03-29 23:59:59'],
+        ['ordered_at' => '2026-03-30 00:00:00'],
+    ]);
+
+    $result = aggregate_buckets(['measures' => [['fn' => 'count']], 'period' => ['field' => 'ordered_at', 'from' => '2026-03-28', 'to' => $to]]);
+
+    expect($result->total)->toBe(['count' => $count]);
+})->with([
+    'a last day before the change ends at 2026-03-29 00:00:00' => ['2026-03-28', 2],
+    'the day of the change, 23 hours long, ends at 2026-03-30 00:00:00' => ['2026-03-29', 4],
+]);
+
 it('a stored date the database cannot read as a day fails the request', function (): void {
     AggregateTestKit::seedOrders([['ordered_at' => '2026-01-10 10:00:00']]);
     aggregate_buckets_raw_order('2026-01-15T25:99:00');

@@ -396,7 +396,6 @@ it('answers any other failure with the same generic message and reports it', fun
 
 it('limits the rate', function (): void {
     config(['core.aggregate.rate_per_minute' => 2]);
-    RateLimiter::clear('aggregate');
 
     $viewer = aggregateRouteViewer();
     $url = route('core.crud.aggregate', aggregateRouteParams());
