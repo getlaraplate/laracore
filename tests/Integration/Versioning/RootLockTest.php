@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Locking\Exceptions\StaleModelLockingException;
@@ -55,4 +56,26 @@ it('runs a root whose lock version matches the locked row and keeps it', functio
             expect($article->currentLockVersion())->toBe(2);
         },
     );
+});
+
+it('refuses a root whose row is gone, naming its class and key', function (): void {
+    $article = OptimisticVersionSetArticle::query()->create(['title' => 'Before']);
+    OptimisticVersionSetArticle::query()->whereKey($article->getKey())->toBase()->delete();
+    $ran = false;
+
+    try {
+        app(VersionSetManagerInterface::class)->run(
+            VersionSetRoot::forModel($article),
+            function () use (&$ran): void {
+                $ran = true;
+            },
+        );
+        $this->fail('The run should have been refused.');
+    } catch (ModelNotFoundException $exception) {
+        expect($exception->getModel())->toBe(OptimisticVersionSetArticle::class)
+            ->and($exception->getIds())->toBe([$article->getKey()]);
+    }
+
+    expect($ran)->toBeFalse()
+        ->and(VersionSet::query()->count())->toBe(0);
 });

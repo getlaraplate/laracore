@@ -276,18 +276,20 @@ final class VersionSetManager implements VersionSetManagerInterface
     {
         $model = $root->model();
 
-        if (! $model->exists || $model->getKey() === null) {
+        $key = $model->getKey();
+
+        if (! $model->exists || (! is_int($key) && ! is_string($key))) {
             return;
         }
 
         $dirty_attributes = $model->getDirty();
         $locked = $model->newQueryWithoutScopes()
-            ->whereKey($model->getKey())
+            ->whereKey($key)
             ->lockForUpdate()
             ->first();
 
         if ($locked === null) {
-            throw (new ModelNotFoundException)->setModel($model::class, [$model->getKey()]);
+            throw (new ModelNotFoundException)->setModel($model::class, [$key]);
         }
 
         // The version the instance carries is the one its caller read: a newer one on the locked row means the
