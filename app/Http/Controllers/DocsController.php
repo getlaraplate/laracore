@@ -4,14 +4,12 @@ declare(strict_types=1);
 
 namespace Modules\Core\Http\Controllers;
 
-use ArrayAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\ItemNotFoundException;
 use Modules\Core\Actions\Docs\MergeSwaggerDocsAction;
-use Override;
-use UnexpectedValueException;
+use Modules\Core\Overrides\MergedSwaggerFile;
 use Wotz\SwaggerUi\Http\Controllers\OpenApiJsonController;
 
 final class DocsController extends OpenApiJsonController
@@ -53,22 +51,8 @@ final class DocsController extends OpenApiJsonController
             return abort(404);
         }
 
-        $json = $this->configureServer($file, $json);
-        $json = $this->configureOAuth($file, $json);
+        $swagger_file = new MergedSwaggerFile($file['path'], $filename, $json);
 
-        return response()->json($json);
-    }
-
-    /**
-     * @throws UnexpectedValueException if no documentation is found
-     *
-     * @return ArrayAccess|array
-     *
-     * @psalm-return ArrayAccess|array{paths: mixed,...}
-     */
-    #[Override]
-    protected function getJson(string $version): array
-    {
-        return ($this->mergeSwaggerDocsAction)($version);
+        return response()->json($swagger_file->json());
     }
 }
