@@ -1860,8 +1860,8 @@ class CrudService
     /**
      * Refuses, before anything is queried, a field of an aggregate request the engine may not read (spec 4.2, 4.5):
      * a measure field is a column of the entity itself; a group field is a column of the entity or of a single-hop
-     * to-one relation (`customer.country`); a group label is a column of the to-one relation whose foreign key is the
-     * group field; a period field is a column of the entity. The caller must be able to read each of them, a
+     * to-one relation to another table (`customer.country`); a group label is a column of the to-one relation whose
+     * foreign key is the group field; a period field is a column of the entity. The caller must be able to read each of them, a
      * measure must suit its column, and a period field and the field of a time bucket must be date columns. The
      * sort names no field: it follows the first measure or the group.
      *
@@ -1880,6 +1880,16 @@ class CrudService
         if ($group instanceof AggregateGroup) {
             if (str_contains($group->field, '.')) {
                 $to_one = $this->resolveToOneColumn($model, $group->field);
+
+                // The group joins the related table without an alias, so a relation to the table itself cannot be read.
+                if ($to_one !== null && $to_one['relatedTable'] === $model->getTable()) {
+                    throw new AggregateException(
+                        AggregateErrorCode::InvalidField,
+                        sprintf('"%s" is a relation to the same table, which cannot be grouped on.', $group->field),
+                        'group_by.field',
+                    );
+                }
+
                 $this->assertAggregateColumn($model, $to_one['related'] ?? null, $to_one['column'] ?? '', $group->field, 'group_by.field');
             } else {
                 $this->assertAggregateColumn($model, $model, $group->field, $group->field, 'group_by.field');

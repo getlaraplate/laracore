@@ -1198,7 +1198,8 @@ with it, so a request is refused the same way wherever it comes from.
 - **An own column** keys a group by the stored value and gives it no label. A `null` value is a group of its own,
   with the key `null` and no label.
 - **A relation column** (`customer.country`) groups the rows joined to the related table, as the
-  [related-column facets](#related-column-facets) do: one `BelongsTo` hop only, a multi-hop path is refused. The value
+  [related-column facets](#related-column-facets) do: one `BelongsTo` hop only, a multi-hop path is refused, and so is
+  a relation to the entity's own table (`parent.name` on a tree), with `INVALID_FIELD` on `group_by.field`. The value
   is its own label (as text). The join is an inner one: a row with no related row, or whose related row the caller
   may not see, is in `total` but in no group, so `series` plus `other` can add up to less than `total`. Without
   `select` on the related entity the request is refused like a relation of the list (`403`, `401` for the anonymous

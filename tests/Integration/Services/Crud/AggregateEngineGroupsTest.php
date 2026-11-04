@@ -5,11 +5,14 @@ declare(strict_types=1);
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Enums\AggregateErrorCode;
 use Modules\Core\Enums\TimeBucket;
 use Modules\Core\Exceptions\AggregateException;
+use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Services\Crud\Aggregate\AggregateGroup;
 use Modules\Core\Services\Crud\Aggregate\AggregateLimits;
 use Modules\Core\Services\Crud\Aggregate\AggregateMeasure;
@@ -21,6 +24,7 @@ use Modules\Core\Tests\Stubs\Crud\AggregateCustomerTranslationStubModel;
 use Modules\Core\Tests\Stubs\Crud\AggregateLabelledOrderStubModel;
 use Modules\Core\Tests\Stubs\Crud\AggregateOrderStubModel;
 use Modules\Core\Tests\Stubs\Crud\AggregateRestrictedOrderStubModel;
+use Modules\Core\Tests\Stubs\Crud\AggregateTreeOrderStubModel;
 use Modules\Core\Tests\Support\AggregateTestKit;
 
 beforeEach(function (): void {
@@ -616,6 +620,22 @@ it('a hidden column in group_by or sort is UNREADABLE_FIELD', function (array $r
         'sort' => ['by' => 'measure', 'dir' => 'asc'],
     ], 'measures.0.field'],
 ]);
+
+it('a relation to the same table is INVALID_FIELD on group_by.field', function (): void {
+    Schema::table('aggregate_orders', function (Blueprint $table): void {
+        $table->unsignedBigInteger('parent_id')->nullable();
+    });
+    SchemaInspector::getInstance()->clearTable('aggregate_orders');
+    AggregateTestKit::seedOrders([['status' => 'new'], ['status' => 'paid']]);
+
+    $refusal = aggregate_groups_refusal(['measures' => [['fn' => 'count']], 'group_by' => ['field' => 'parent.status']], new AggregateTreeOrderStubModel);
+
+    expect($refusal->toArray())->toBe([
+        'code' => 'INVALID_FIELD',
+        'message' => '"parent.status" is a relation to the same table, which cannot be grouped on.',
+        'field' => 'group_by.field',
+    ]);
+});
 
 it('a multi-hop relation path is INVALID_FIELD', function (array $group, string $field): void {
     $refusal = aggregate_groups_refusal(['measures' => [['fn' => 'count']], 'group_by' => $group]);
