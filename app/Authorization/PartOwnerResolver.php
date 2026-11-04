@@ -50,10 +50,14 @@ final class PartOwnerResolver
             return self::$chains[$model::class];
         }
 
-        return self::$chains[$model::class] = self::climb($model);
+        return self::$chains[$model::class] = Relation::noConstraints(static fn (): ?array => self::climb($model));
     }
 
     /**
+     * Builds each relation without its constraints, so that it reads nothing of the instance it starts from: a
+     * record retrieved without its foreign key would otherwise throw where missing attributes are prevented, and
+     * the null answered for that one record would be memoized for its whole class.
+     *
      * @return non-empty-list<class-string<Model>>|null
      */
     private static function climb(Model $model): ?array
