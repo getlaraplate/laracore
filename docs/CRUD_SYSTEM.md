@@ -1391,8 +1391,8 @@ switches a limit off. The ceilings are checked before any query runs, except the
 
 The rate is a named limiter, `aggregate`, defined next to the `api` limiter in `CoreServiceProvider` and attached by
 `throttle:aggregate` in `routes/crud.php`, so it covers `/app` and `/api/v1` alike (on `/api/v1` it adds to the `api`
-limiter). It counts per signed-in user, and per client address for the anonymous user, a user with no email, or no user
-at all. The ceiling is read when a request arrives. Over it the route answers `429` with Laravel's default `{ message }`
+limiter). It counts per signed-in user, and per client address for the anonymous user, a user with no email, a user of
+another kind than the Core user, or no user at all. The ceiling is read when a request arrives. Over it the route answers `429` with Laravel's default `{ message }`
 body, outside the `{ error }` envelope of this route.
 
 There is no hard timeout in v1: the code `TIMEOUT` is reserved and never emitted.

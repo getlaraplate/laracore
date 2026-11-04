@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -19,6 +20,7 @@ use Modules\Core\Models\Setting;
 use Modules\Core\Models\User;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Support\DayTruncation;
+use Modules\Core\Tests\Stubs\FakeAuthUser;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -405,7 +407,7 @@ it('limits the rate', function (): void {
     $this->actingAs($viewer)->postJson($url, $body)->assertStatus(Response::HTTP_TOO_MANY_REQUESTS);
 });
 
-it('keys the limiter by user, and by address for a guest', function (): void {
+it('keys the limiter by user, and by address for a guest or a user of another kind', function (): void {
     config(['core.aggregate.rate_per_minute' => 7]);
 
     $limiter = RateLimiter::limiter('aggregate');
@@ -415,10 +417,12 @@ it('keys the limiter by user, and by address for a guest', function (): void {
         'username' => config('permission.users.guest'),
         'email' => 'aggregate_anonymous_' . uniqid() . '@example.com',
     ]);
+    $other_kind = new FakeAuthUser(['name' => 'aggregate_other_kind', 'email' => 'aggregate_other_kind@example.com']);
+    $other_kind->forceFill(['id' => 4242]);
 
-    $requestOf = static function (?User $user): Request {
+    $requestOf = static function (?Authenticatable $user): Request {
         $request = Request::create('/', 'POST', server: ['REMOTE_ADDR' => '203.0.113.7']);
-        $request->setUserResolver(static fn (): ?User => $user);
+        $request->setUserResolver(static fn (): ?Authenticatable => $user);
 
         return $request;
     };
@@ -426,6 +430,7 @@ it('keys the limiter by user, and by address for a guest', function (): void {
     expect($limiter($requestOf($viewer))->key)->toBe($viewer->id)
         ->and($limiter($requestOf($anonymous))->key)->toBe('203.0.113.7')
         ->and($limiter($requestOf(null))->key)->toBe('203.0.113.7')
+        ->and($limiter($requestOf($other_kind))->key)->toBe('203.0.113.7')
         ->and($limiter($requestOf($viewer))->maxAttempts)->toBe(7);
 
     config(['core.aggregate.rate_per_minute' => 9]);
