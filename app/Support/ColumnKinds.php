@@ -24,7 +24,9 @@ use Modules\Core\Inspector\SchemaInspector;
  *
  * `tinyint` is never numeric: on MySQL it is how a boolean is stored, and the precision that tells the two
  * apart is cut. `int4`, `float8` and the like are what PostgreSQL gives as `type_name`; the SQL name it gives
- * as `type` (`integer`, `double precision`) is not kept by the inspector.
+ * as `type` (`integer`, `double precision`) is not kept by the inspector. `number` (`NUMBER(p,s)` once cut),
+ * `binary_double` and `binary_float` are the names of Oracle, `smallmoney`, `datetime2`, `smalldatetime` and
+ * `datetimeoffset` those of SQL Server. A `time` column holds no date, so it is neither.
  */
 final class ColumnKinds
 {
@@ -34,12 +36,13 @@ final class ColumnKinds
 
     private const array NUMERIC_TYPES = [
         'int', 'integer', 'bigint', 'smallint', 'mediumint', 'decimal', 'numeric', 'float', 'double', 'real',
-        'double precision', 'money', 'int2', 'int4', 'int8', 'float4', 'float8',
+        'double precision', 'money', 'smallmoney', 'int2', 'int4', 'int8', 'float4', 'float8', 'number',
+        'binary_double', 'binary_float',
     ];
 
     private const array TEMPORAL_TYPES = [
-        'date', 'datetime', 'timestamp', 'timestamptz', 'datetimetz', 'timestamp with time zone',
-        'timestamp without time zone',
+        'date', 'datetime', 'datetime2', 'smalldatetime', 'datetimeoffset', 'timestamp', 'timestamptz', 'datetimetz',
+        'timestamp with time zone', 'timestamp without time zone',
     ];
 
     /**

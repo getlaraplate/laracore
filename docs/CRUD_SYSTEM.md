@@ -1305,8 +1305,10 @@ A bucketed request with a comparison (`period: { "field": "ordered_at", "from": 
 `Support\ColumnKinds` says what a column is: `numeric`, `temporal` or `other`. The cast of the model decides first
 (`int`, `integer`, `float`, `double`, `real`, `decimal` are numeric; `date`, `datetime`, `immutable_date`,
 `immutable_datetime`, `timestamp` are temporal) and the schema type second, with its precision cut
-(`decimal(15,4)` is `decimal`) and the PostgreSQL names (`int4`, `float8`) known. `tinyint` is never numeric, because
-MySQL stores a boolean in it. A temporal cast on a column the schema stores as a number (unix seconds cast as
+(`decimal(15,4)` is `decimal`). The type names of PostgreSQL (`int4`, `float8`), Oracle (`NUMBER(p,s)`,
+`binary_double`, `binary_float`) and SQL Server (`smallmoney`, `datetime2`, `smalldatetime`, `datetimeoffset`) are
+known too; knowing a name says nothing about support for the driver ([database support](#aggregate-database-support)).
+A `time` column is not a date column. `tinyint` is never numeric, because MySQL stores a boolean in it. A temporal cast on a column the schema stores as a number (unix seconds cast as
 `timestamp`) is neither a date column nor a number.
 
 | Function | Accepts |
