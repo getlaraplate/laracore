@@ -5,12 +5,8 @@ declare(strict_types=1);
 /**
  * Lightweight bindings for unit tests that use Modules\Core\Tests\TestCase (no Orchestra).
  * Composer autoload must already be loaded (phpunit.xml bootstrap = vendor/autoload.php).
+ * Load it once per process: it returns the container, which TestCase makes global before every test.
  */
-if (defined('CORE_MINIMAL_TEST_ENV_LOADED')) {
-    return;
-}
-
-define('CORE_MINIMAL_TEST_ENV_LOADED', true);
 
 /*
 |--------------------------------------------------------------------------
@@ -104,3 +100,5 @@ if (! function_exists('fake')) {
 if (! function_exists('Modules\Core\Database\Factories\fake')) {
     require_once __DIR__ . '/Fixtures/fake_factory_helper.php';
 }
+
+return $container;

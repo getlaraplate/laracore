@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Authorization\PartOwnerResolver;
 use Modules\Core\Tests\Stubs\Crud\RelationCyclicPartStub;
 use Modules\Core\Tests\Stubs\Crud\RelationMisdeclaredPartStub;
@@ -27,4 +28,19 @@ it('resolves no chain for a model that is not a part', function (): void {
 it('resolves no chain when it does not reach an owner', function (): void {
     expect(PartOwnerResolver::chainClassesOf(new RelationMisdeclaredPartStub))->toBeNull()
         ->and(PartOwnerResolver::chainClassesOf(new RelationCyclicPartStub))->toBeNull();
+});
+
+it('resolves the chain of a part from a record retrieved without its foreign key', function (): void {
+    new ReflectionProperty(PartOwnerResolver::class, 'chains')->setValue(null, []);
+    $strict = Model::preventsAccessingMissingAttributes();
+    Model::preventAccessingMissingAttributes();
+
+    try {
+        $retrieved_without_key = new RelationPartStub()->newFromBuilder(['id' => 1]);
+
+        expect(PartOwnerResolver::chainClassesOf($retrieved_without_key))->toBe([RelationOwnerStub::class])
+            ->and(PartOwnerResolver::chainClassesOf(new RelationPartStub))->toBe([RelationOwnerStub::class]);
+    } finally {
+        Model::preventAccessingMissingAttributes($strict);
+    }
 });
