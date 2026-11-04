@@ -1216,6 +1216,11 @@ with it, so a request is refused the same way wherever it comes from.
   group whose first measure is `null` sits where the database puts a null.
 - **Limit and rest.** `limit` keeps the first N groups in that order. A `key` sort with a `limit` can fold the `null`
   group into `other`, since it comes last.
+- **A mixed-currency amount under `sort.by = measure`.** The groups are ranked by the value the database computes for
+  the first measure. For an amount whose group [mixes currencies](#aggregate-currency) that value is a sum across
+  currencies, which the result then shows as `null`: the group keeps the place that hidden number gives it, and with
+  `limit` and `other` the first N groups can be chosen by it. To rank such an amount, sort by `key` or group by its
+  currency column instead.
 - **No limit.** A grouping that gives more than `max_groups` groups is `TOO_MANY_GROUPS`, and the message asks to
   narrow the request or to set a `limit`.
 
