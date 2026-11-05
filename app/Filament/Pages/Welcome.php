@@ -39,16 +39,17 @@ final class Welcome extends Page
         //
     }
 
+    /**
+     * The application card first, then the modules by name, ignoring letter case.
+     */
     public function getGroupedModules(): array
     {
         $moduleInfoService = resolve(ModuleInfoService::class);
+        $grouped = $moduleInfoService->groupedModules();
 
-        return $moduleInfoService->groupedModules();
-    }
+        uksort($grouped, static fn (string $first, string $second): int => [$first !== 'App', mb_strtolower($first)] <=> [$second !== 'App', mb_strtolower($second)]);
 
-    public function getTranslations(): array
-    {
-        return translations();
+        return $grouped;
     }
 
     #[Override]

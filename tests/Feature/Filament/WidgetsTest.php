@@ -7,10 +7,13 @@ use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Horizon\Contracts\MasterSupervisorRepository;
 use Laravel\Horizon\HorizonServiceProvider;
 use Laravel\Scout\EngineManager;
+use Modules\Core\Cache\CacheManager as CoreCacheManager;
+use Modules\Core\Filament\Widgets\CacheStoreHealthWidget;
 use Modules\Core\Filament\Widgets\CoreStatsWidget;
 use Modules\Core\Filament\Widgets\HorizonStatsWidget;
 use Modules\Core\Filament\Widgets\SearchEngineHealthTableWidget;
@@ -239,8 +242,9 @@ it('returns search engine health view data structure', function (): void {
     $method->setAccessible(true);
     $data = $method->invoke($widget);
 
-    expect($data)->toHaveKeys(['driver', 'models', 'error', 'cache_minutes'])
+    expect($data)->toHaveKeys(['driver', 'version', 'models', 'error', 'cache_minutes'])
         ->and($data['driver'])->toBe('collection')
+        ->and($data['version'])->toBeNull()
         ->and($data['error'])->toBeNull();
 
     if ($data['models'] !== []) {
@@ -250,6 +254,83 @@ it('returns search engine health view data structure', function (): void {
     }
 });
 
+it('describes the default cache store', function (): void {
+    config(['cache.default' => 'array']);
+
+    $data = new ReflectionMethod(CacheStoreHealthWidget::class, 'getViewData')->invoke(new CacheStoreHealthWidget());
+
+    expect($data['default'])->toBe('array')
+        ->and($data['failover'])->toBeFalse()
+        ->and($data['stores'])->toBe([[
+            'name' => 'array',
+            'driver' => 'array',
+            'connection' => null,
+            'version' => null,
+            'reachable' => true,
+        ]])
+        ->and($data['redis_connections'])->toBe([]);
+});
+
+it('lists the failover cache stores in order', function (): void {
+    config(['cache.default' => 'failover', 'cache.stores.failover.stores' => ['file', 'array']]);
+
+    $data = new ReflectionMethod(CacheStoreHealthWidget::class, 'getViewData')->invoke(new CacheStoreHealthWidget());
+
+    expect($data['failover'])->toBeTrue()
+        ->and(array_column($data['stores'], 'name'))->toBe(['file', 'array'])
+        ->and($data['stores'][0]['connection'])->toBe(config('cache.stores.file.path'));
+});
+
+it('names the database connection and its server version for a database cache store', function (): void {
+    config(['cache.default' => 'database', 'cache.stores.database.connection' => null]);
+
+    $data = new ReflectionMethod(CacheStoreHealthWidget::class, 'getViewData')->invoke(new CacheStoreHealthWidget());
+
+    expect($data['stores'][0]['connection'])->toBe(config('database.default'))
+        ->and($data['stores'][0]['version'])->toBe(DB::connection()->getServerVersion());
+});
+
+it('reports a cache store it cannot reach without failing', function (): void {
+    config([
+        'cache.default' => 'broken',
+        'cache.stores.broken' => ['driver' => 'redis', 'connection' => 'not-configured'],
+    ]);
+    app()->instance('cache', new CoreCacheManager(app()));
+    Cache::clearResolvedInstance();
+
+    $data = new ReflectionMethod(CacheStoreHealthWidget::class, 'getViewData')->invoke(new CacheStoreHealthWidget());
+
+    expect($data['stores'][0])->toMatchArray([
+        'driver' => 'redis',
+        'connection' => 'not-configured',
+        'version' => null,
+        'reachable' => false,
+    ]);
+});
+
+it('groups the redis connections sharing a database when a store in use runs on redis', function (): void {
+    config([
+        'cache.default' => 'unreachable-redis',
+        'cache.stores.unreachable-redis' => ['driver' => 'redis', 'connection' => 'default'],
+        'database.redis' => [
+            'client' => config('database.redis.client'),
+            'options' => [],
+            'default' => ['host' => '127.0.0.1', 'port' => 1, 'database' => '0', 'timeout' => 0.1],
+            'sessions' => ['host' => '127.0.0.1', 'port' => 1, 'database' => '3', 'timeout' => 0.1],
+            'horizon' => ['host' => '127.0.0.1', 'port' => 1, 'database' => '0', 'timeout' => 0.1],
+        ],
+    ]);
+    app()->forgetInstance('redis');
+    Redis::clearResolvedInstance();
+
+    $data = new ReflectionMethod(CacheStoreHealthWidget::class, 'getViewData')->invoke(new CacheStoreHealthWidget());
+
+    expect($data['redis_connections'])->toBe([
+        ['names' => ['default', 'horizon'], 'keys' => null, 'reachable' => false],
+        ['names' => ['sessions'], 'keys' => null, 'reachable' => false],
+    ]);
+});
+
 it('counts search engine health documents with the elasticsearch count api', function (): void {
     config(['scout.driver' => 'elasticsearch']);
 
@@ -257,7 +338,7 @@ it('counts search engine health documents with the elasticsearch count api', fun
     $engine->shouldReceive('checkIndex')->andReturnTrue();
     app()->instance(EngineManager::class, Mockery::mock(EngineManager::class, ['engine' => $engine]));
 
-    $http_client = new CountingElasticsearchHttpClient(42);
+    $http_client = new CountingElasticsearchHttpClient(42, '8.19.21');
     $reflection = new ReflectionClass(ElasticsearchService::class);
     $service = $reflection->newInstanceWithoutConstructor();
     $reflection->getProperty('client')->setValue($service, ClientBuilder::create()->setHttpClient($http_client)->build());
@@ -269,10 +350,16 @@ it('counts search engine health documents with the elasticsearch count api', fun
         $reflection->getProperty('instance')->setValue(null, null);
     }
 
+    $document_uris = array_values(array_filter(
+        $http_client->uris,
+        static fn (string $uri): bool => ! in_array(parse_url($uri, PHP_URL_PATH), [null, '', '/'], true),
+    ));
+
     expect($data['error'])->toBeNull()
+        ->and($data['version'])->toBe('8.19.21')
         ->and($data['models'])->not->toBeEmpty()
         ->and(array_column($data['models'], 'documents'))->each->toBe(42)
-        ->and($http_client->uris)->each->toContain('/_count');
+        ->and($document_uris)->not->toBeEmpty()->each->toContain('/_count');
 });
 
 it('counts search engine health documents through the engine total for other engines', function (): void {

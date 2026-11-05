@@ -50,12 +50,13 @@ final class SearchEngineHealthTableWidget extends Widget
     }
 
     /**
-     * @return array{driver: string|null, models: array<int, array>, error: string|null}
+     * @return array{driver: string|null, version: string|null, models: array<int, array>, error: string|null}
      */
     private function fetchSearchEngineData(): array
     {
         $data = [
             'driver' => null,
+            'version' => null,
             'models' => [],
             'error' => null,
         ];
@@ -63,6 +64,7 @@ final class SearchEngineHealthTableWidget extends Widget
         try {
             $engine = resolve(EngineManager::class)->engine();
             $data['driver'] = config('scout.driver', 'unknown');
+            $data['version'] = $this->serverVersion();
 
             $models = models(filter: static fn (string|object $model): bool => class_uses_trait($model, Searchable::class));
             $modelData = [];
@@ -102,6 +104,18 @@ final class SearchEngineHealthTableWidget extends Widget
         }
 
         return $data;
+    }
+
+    /**
+     * The search server version shown next to the driver name, when the engine exposes one.
+     */
+    private function serverVersion(): ?string
+    {
+        if (config('scout.driver') === 'elasticsearch') {
+            return ElasticsearchService::getInstance()->serverVersion();
+        }
+
+        return null;
     }
 
     /**

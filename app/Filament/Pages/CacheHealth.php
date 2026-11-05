@@ -7,6 +7,7 @@ namespace Modules\Core\Filament\Pages;
 use BackedEnum;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
+use Modules\Core\Filament\Widgets\CacheStoreHealthWidget;
 use Modules\Core\Filament\Widgets\SearchEngineHealthTableWidget;
 use Override;
 use UnitEnum;
@@ -45,6 +46,7 @@ final class CacheHealth extends Page
     protected function getHeaderWidgets(): array
     {
         return [
+            CacheStoreHealthWidget::class,
             SearchEngineHealthTableWidget::class,
         ];
     }

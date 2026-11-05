@@ -3,9 +3,12 @@
         <x-slot name="heading">
             <x-filament::icon icon="heroicon-o-magnifying-glass" class="w-5 h-5 inline mr-2" />
             {{ __('app.widgets.searchEngine') }}
-            @isset($cache_minutes)
-                <span class="fi-section-header-description text-sm font-normal text-gray-500 dark:text-gray-400">(cached ~{{ $cache_minutes }} min)</span>
-            @endisset
+            <span class="fi-section-header-description text-sm font-normal text-gray-500 dark:text-gray-400">
+                {{ ucfirst($driver ?? 'Unknown') }}@if(! empty($version)) v{{ $version }}@endif
+                @isset($cache_minutes)
+                    (cached ~{{ $cache_minutes }} min)
+                @endisset
+            </span>
         </x-slot>
 
         @isset($error)
@@ -25,9 +28,6 @@
                             <div class="fi-ta-content-ctn">
                                 <table class="fi-ta-table">
                                     <thead>
-                                        <tr>
-                                            <th colspan="5" class="fi-ta-header-cell text-center">{{ ucfirst($driver ?? 'Unknown') }}</th>
-                                        </tr>
                                         <tr>
                                             <th class="fi-ta-header-cell">{{ __('app.widgets.model') }}</th>
                                             <th class="fi-ta-header-cell">{{ __('app.widgets.index') }}</th>
