@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Actions\Fortify\UpdateUserProfileInformation;
 use Modules\Core\Models\Concerns\HasValidations;
@@ -14,7 +17,7 @@ it('updates user name and email when email unchanged', function (): void {
         'email_verified_at' => now(),
     ]);
 
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
     $action->update($user, [
         'id' => $user->id,
         'name' => 'New Name',
@@ -48,7 +51,7 @@ it('nulls email_verified_at and updates when email changed for MustVerifyEmail u
     $user->exists = true;
     $user->setRawAttributes(array_merge($base_user->getAttributes(), ['deleted_at' => null]), true);
 
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
     $action->update($user, [
         'id' => (string) $user->getKey(),
         'name' => 'User',
@@ -67,7 +70,7 @@ it('updates only name when input has no email change', function (): void {
         'email' => 'original@example.com',
     ]);
 
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
     $action->update($user, [
         'id' => $user->id,
         'name' => 'Updated Name',
@@ -81,7 +84,7 @@ it('updates only name when input has no email change', function (): void {
 
 it('throws validation exception when email is invalid', function (): void {
     $user = User::factory()->create(['email' => 'valid@example.com']);
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
 
     expect(fn () => $action->update($user, [
         'id' => $user->id,
@@ -92,7 +95,7 @@ it('throws validation exception when email is invalid', function (): void {
 
 it('throws validation exception when name exceeds max length', function (): void {
     $user = User::factory()->create();
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
 
     expect(fn () => $action->update($user, [
         'id' => $user->id,
@@ -123,7 +126,7 @@ it('removes password_confirmation and current_password before force fill', funct
     $user->exists = true;
     $user->setRawAttributes(array_merge($base_user->getAttributes(), ['deleted_at' => null]), true);
 
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
     $action->update($user, [
         'id' => (string) $user->getKey(),
         'name' => 'New Name',
@@ -158,7 +161,7 @@ it('uses validation rules from HasValidations trait when available', function ()
     $user->name = 'Initial Name';
     $user->email = 'initial@example.com';
 
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
     $action->update($user, [
         'name' => 'Updated Name',
         'email' => 'initial@example.com',
@@ -168,9 +171,9 @@ it('uses validation rules from HasValidations trait when available', function ()
 });
 
 it('uses fallback rules when user does not use HasValidations trait', function (): void {
-    $user = new class extends Illuminate\Database\Eloquent\Model implements Illuminate\Contracts\Auth\Authenticatable, Illuminate\Contracts\Auth\MustVerifyEmail
+    $user = new class extends Model implements Illuminate\Contracts\Auth\Authenticatable, MustVerifyEmail
     {
-        use Illuminate\Auth\Authenticatable;
+        use Authenticatable;
 
         public bool $saved = false;
 
@@ -211,6 +214,13 @@ it('uses fallback rules when user does not use HasValidations trait', function (
             return true;
         }
 
+        public function markEmailAsUnverified(): bool
+        {
+            $this->email_verified_at = null;
+
+            return true;
+        }
+
         public function getEmailForVerification(): string
         {
             return (string) $this->email;
@@ -220,7 +230,7 @@ it('uses fallback rules when user does not use HasValidations trait', function (
     $user->name = 'Fallback User';
     $user->email = 'fallback.old@example.test';
 
-    $action = new UpdateUserProfileInformation();
+    $action = new UpdateUserProfileInformation;
     $action->update($user, [
         'name' => 'Fallback Updated',
         'email' => 'fallback.new@example.test',
