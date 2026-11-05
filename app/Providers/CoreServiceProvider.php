@@ -765,7 +765,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
     private function registerConsoleCommandOverrides(): void
     {
         ArtisanApplication::starting(static function (ArtisanApplication $artisan): void {
-            $artisan->add(new InternalListCommand());
+            $artisan->addCommand(new InternalListCommand());
         });
 
         $this->app->booted(function (): void {
