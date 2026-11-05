@@ -5,7 +5,7 @@ declare(strict_types=1);
 use Modules\Core\Casts\WhereClause;
 
 it('reads the group operator of whatever a request sent', function (mixed $sent, ?WhereClause $expected): void {
-    expect(WhereClause::tryFromRequestValue($sent))->toBe($expected);
+    expect(WhereClause::fromInput($sent))->toBe($expected);
 })->with([
     'and' => ['and', WhereClause::And],
     'or' => ['or', WhereClause::Or],

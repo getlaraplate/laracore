@@ -13,7 +13,7 @@ enum WhereClause: string
      * The group operator of whatever a request sent as `operator`: an operator already read, or a string in any letter
      * case. Nothing usable (an unknown word, null, a number, a list) is null: the caller refuses it.
      */
-    public static function tryFromRequestValue(mixed $operator): ?self
+    public static function fromInput(mixed $operator): ?self
     {
         return match (true) {
             $operator instanceof self => $operator,

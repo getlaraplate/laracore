@@ -14,7 +14,7 @@ use Override;
  *
  * What is stored is in the syntax of the query builder: the operators of the filters are the symbols of
  * {@see FilterOperator} (`=`, `!=`, `>`, ...) and the operators of the groups are `and` or `or`, whichever spelling
- * the value was written in ({@see FilterOperator::tryFromRequestValue()}, {@see WhereClause::tryFromRequestValue()}).
+ * the value was written in ({@see FilterOperator::fromInput()}, {@see WhereClause::fromInput()}).
  * An operator in no spelling is refused.
  */
 final class FiltersGroupCast implements CastsAttributes
@@ -180,7 +180,7 @@ final class FiltersGroupCast implements CastsAttributes
             $nested[] = $this->hydrateNode($item);
         }
 
-        $operator = WhereClause::tryFromRequestValue($data['operator'] ?? 'and');
+        $operator = WhereClause::fromInput($data['operator'] ?? 'and');
 
         if (! $operator instanceof WhereClause) {
             throw new InvalidArgumentException('Unknown operator of a filters group.');
@@ -289,7 +289,7 @@ final class FiltersGroupCast implements CastsAttributes
             throw new InvalidArgumentException('The property of a filter must be a column name.');
         }
 
-        $operator = FilterOperator::tryFromRequestValue($operator_raw);
+        $operator = FilterOperator::fromInput($operator_raw);
 
         if (! $operator instanceof FilterOperator) {
             throw new InvalidArgumentException('Unknown operator of a filter.');

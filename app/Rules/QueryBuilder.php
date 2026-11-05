@@ -83,7 +83,7 @@ final class QueryBuilder implements ValidationRule
         if (array_key_exists('property', $value)) {
             if (! array_key_exists('operator', $value)) {
                 $fail($attribute . ' "operator" is required');
-            } elseif (! FilterOperator::tryFromRequestValue($value['operator']) instanceof FilterOperator) {
+            } elseif (! FilterOperator::fromInput($value['operator']) instanceof FilterOperator) {
                 $fail($attribute . ' "operator" must be one of: ' . FilterOperator::requestVocabulary());
             }
 
@@ -92,7 +92,7 @@ final class QueryBuilder implements ValidationRule
             }
         }
 
-        if (! array_key_exists('property', $value) && ($value['operator'] ?? null) !== null && ! WhereClause::tryFromRequestValue($value['operator']) instanceof WhereClause) {
+        if (! array_key_exists('property', $value) && ($value['operator'] ?? null) !== null && ! WhereClause::fromInput($value['operator']) instanceof WhereClause) {
             $fail($attribute . ' "operator" must be one of: ' . WhereClause::requestVocabulary());
         }
 

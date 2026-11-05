@@ -192,7 +192,7 @@ class ListRequestData extends SelectRequestData
     protected function conformFilterOperators(array &$filter): void
     {
         if (array_key_exists('operator', $filter)) {
-            $operator = FilterOperator::tryFromRequestValue($filter['operator']);
+            $operator = FilterOperator::fromInput($filter['operator']);
 
             if (! $operator instanceof FilterOperator) {
                 throw ValidationException::withMessages(['filters' => 'Unknown filter operator. Use one of: ' . FilterOperator::requestVocabulary() . '.']);
@@ -392,7 +392,7 @@ class ListRequestData extends SelectRequestData
             $operator = WhereClause::And;
 
             if (($raw['operator'] ?? null) !== null) {
-                $operator = WhereClause::tryFromRequestValue($raw['operator']);
+                $operator = WhereClause::fromInput($raw['operator']);
 
                 if (! $operator instanceof WhereClause) {
                     throw ValidationException::withMessages(['filters' => 'Unknown filter group operator. Use one of: ' . WhereClause::requestVocabulary() . '.']);

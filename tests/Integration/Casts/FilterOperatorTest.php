@@ -25,7 +25,7 @@ it('maps every symbol and every request name to the same operator', function ():
 });
 
 it('reads the operator of whatever a request sent', function (mixed $sent, ?FilterOperator $expected): void {
-    expect(FilterOperator::tryFromRequestValue($sent))->toBe($expected);
+    expect(FilterOperator::fromInput($sent))->toBe($expected);
 })->with([
     'a symbol' => ['!=', FilterOperator::NotEquals],
     'a request name' => ['ge', FilterOperator::GreatEquals],

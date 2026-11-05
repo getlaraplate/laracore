@@ -48,7 +48,7 @@ enum FilterOperator: string
      * The operator of whatever a request sent as `operator`: an operator already read, a string in either spelling, or
      * nothing usable (null, a number, a list), which is null.
      */
-    public static function tryFromRequestValue(mixed $operator): ?self
+    public static function fromInput(mixed $operator): ?self
     {
         return match (true) {
             $operator instanceof self => $operator,
