@@ -4,12 +4,26 @@
     <div class="fi-page-content p-6">
         @php
             $grouped_modules = $this->getGroupedModules();
-            $translations = $this->getTranslations();
         @endphp
 
         <div class="prose dark:prose-invert max-w-none">
             <main class="mt-6">
-                <div class="grid gap-6 lg:grid-cols-2 lg:gap-8">
+                {{-- Masonry: each card spans as many 1px rows as its height plus the gap, so grid
+                     auto-placement puts it in the shortest column while keeping the card order. --}}
+                <div
+                    x-data="{
+                        layout() {
+                            const gap = parseFloat(getComputedStyle($el).columnGap) || 0;
+                            $el.style.gridAutoRows = '1px';
+
+                            for (const card of $el.children) {
+                                card.style.gridRowEnd = `span ${Math.ceil(card.getBoundingClientRect().height + gap)}`;
+                            }
+                        },
+                    }"
+                    x-init="layout(); const observer = new ResizeObserver(() => layout()); [...$el.children].forEach((card) => observer.observe(card))"
+                    class="grid grid-cols-1 items-start gap-x-6 lg:grid-cols-2 lg:gap-x-8"
+                >
                     <div id="docs-card" class="flex flex-col items-start gap-4 overflow-hidden rounded-lg bg-white p-6 shadow-[0px_14px_34px_0px_rgba(0,0,0,0.08)] ring-1 ring-white/[0.05] transition duration-300 hover:text-black/70 hover:ring-black/20 focus:outline-none focus-visible:ring-[#a5ac56] dark:bg-zinc-900 dark:ring-zinc-800 dark:hover:text-white/70 dark:hover:ring-zinc-700 dark:focus-visible:ring-[#a5ac56]">
                         @php
                             $app_info = $grouped_modules['App'] ?? [];
@@ -23,18 +37,6 @@
 
                         <div class="relative flex flex-col items-center gap-6 lg:items-end w-full">
                             <div id="docs-card-content" class="flex items-start gap-2 flex-col w-full">
-                                <!-- language -->
-                                <div class="text-sm/relaxed w-full">
-                                    <i>{{ __('app.welcome.languages') }}</i>
-                                    <span style="float: right">{{ implode(', ', $translations) }}</span>
-                                </div>
-
-                                <!-- active modules -->
-                                <div class="text-sm/relaxed w-full">
-                                    <i>{{ __('app.welcome.activeModules') }}</i>
-                                    <span style="float: right">{{ implode(', ', modules(true)) }}</span>
-                                </div>
-
                                 <!-- migrations -->
                                 <div class="text-sm/relaxed w-full">
                                     @php
@@ -55,7 +57,7 @@
                                 <!-- api versions -->
                                 <div class="text-sm/relaxed w-full">
                                     <i>{{ __('app.welcome.apiVersions') }}</i>
-                                    <span style="float: right">{{ implode(', ', api_versions()) ?: 'v1' }}</span>
+                                    <span style="float: right">{{ implode(', ', api_versions()) ?: __('app.welcome.apiDisabled') }}</span>
                                 </div>
 
                                 <!-- debug mode -->
@@ -77,48 +79,6 @@
                                 <div class="text-sm/relaxed w-full">
                                     <i>{{ __('app.welcome.environment') }}</i>
                                     <span class="flex items-center" style="float: right">{{ config('app.env') }}</span>
-                                </div>
-
-                                <!-- database -->
-                                <div class="text-sm/relaxed w-full">
-                                    <i>{{ __('app.welcome.databaseDrivers') }}</i>
-                                    <span class="flex items-center" style="float: right">{{ implode(', ', connections()) }}</span>
-                                </div>
-
-                                <!-- user registration -->
-                                <div class="text-sm/relaxed w-full">
-                                    <i>{{ __('app.welcome.userRegistration') }}</i>
-                                    <div class="flex items-center" style="float: right">
-                                        @if (config('core.auth.registration.enabled'))
-                                            <x-core::check-icon style="color: var(--primary-400);" />
-                                        @else
-                                            <x-core::cancel-icon style="color: var(--color-gray-600);" />
-                                        @endif
-                                    </div>
-                                </div>
-
-                                <!-- user verification -->
-                                <div class="text-sm/relaxed w-full">
-                                    <i>{{ __('app.welcome.verifyNewUser') }}</i>
-                                    <div class="flex items-center" style="float: right">
-                                        @if (config('core.auth.email_verification.enabled'))
-                                            <x-core::check-icon style="color: var(--primary-400);" />
-                                        @else
-                                            <x-core::cancel-icon style="color: var(--color-gray-600);" />
-                                        @endif
-                                    </div>
-                                </div>
-
-                                <!-- dynamic entities -->
-                                <div class="text-sm/relaxed w-full">
-                                    <i>{{ __('app.welcome.dynamicEntities') }}</i>
-                                    <div class="flex items-center" style="float: right">
-                                        @if (config('core.crud.dynamic_entities'))
-                                            <x-core::check-icon style="color: var(--primary-400);" />
-                                        @else
-                                            <x-core::cancel-icon style="color: var(--color-gray-600);" />
-                                        @endif
-                                    </div>
                                 </div>
 
                                 <!-- maintenance -->
