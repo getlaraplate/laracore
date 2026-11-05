@@ -587,7 +587,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
     private function registerSearchEngines(): void
     {
         // Extend Laravel Scout with custom engines
-        $this->app->make(EngineManager::class)->extend('elasticsearch', static function (Application $app) {
+        $this->app->make(EngineManager::class)->extend('elasticsearch', function (Application $app) {
             $config = config('search.engines.elasticsearch');
 
             // Get the Elasticsearch client from the container
@@ -600,7 +600,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
             ]);
         });
 
-        $this->app->make(EngineManager::class)->extend('typesense', static function (Application $app) {
+        $this->app->make(EngineManager::class)->extend('typesense', function (Application $app) {
             $config = config('search.engines.typesense');
 
             // Get the Typesense client from the container
