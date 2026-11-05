@@ -82,7 +82,7 @@ it('accepts every operator in either spelling', function (string $operator): voi
     });
 
     expect($failures)->toBe([]);
-})->with(['=', '!=', '>', '>=', '<', '<=', 'eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like', 'not like', 'in', 'between']);
+})->with(['=', '!=', '>', '>=', '<', '<=', 'eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like', 'not like', 'in', 'between', 'EQ', 'Ne', 'LIKE', 'Not Like', 'BETWEEN']);
 
 it('fails with the allowed operators when the operator is in neither spelling', function (mixed $operator): void {
     $failures = [];
@@ -95,7 +95,30 @@ it('fails with the allowed operators when the operator is in neither spelling', 
     });
 
     expect($failures)->toBe(['filters.1.filters.0 "operator" must be one of: > (gt), >= (ge), < (lt), <= (le), like, not like, = (eq), in, != (ne), between']);
-})->with(['an unknown word' => 'contains', 'a different case' => 'EQ', 'an empty string' => '', 'null' => null, 'a number' => 1, 'a list' => [['eq']]]);
+})->with(['an unknown word' => 'contains', 'an empty string' => '', 'null' => null, 'a number' => 1, 'a list' => [['eq']]]);
+
+it('accepts the operator of a group in any letter case, or none', function (mixed $operator): void {
+    $failures = [];
+    $group = ['filters' => [['property' => 'name', 'operator' => '=', 'value' => 'a']]];
+
+    (new QueryBuilder)->validate('filters', $operator === 'none' ? $group : ['operator' => $operator] + $group, function (string $message) use (&$failures): void {
+        $failures[] = $message;
+    });
+
+    expect($failures)->toBe([]);
+})->with(['and', 'or', 'AND', 'Or', 'none' => 'none', 'null' => null]);
+
+it('fails with the allowed operators when the operator of a group is neither and nor or', function (mixed $operator): void {
+    $failures = [];
+
+    (new QueryBuilder)->validate('filters', [
+        'filters' => [['operator' => $operator, 'filters' => [['property' => 'name', 'operator' => '=', 'value' => 'b']]]],
+    ], function (string $message) use (&$failures): void {
+        $failures[] = $message;
+    });
+
+    expect($failures)->toBe(['filters.filters.0 "operator" must be one of: and, or']);
+})->with(['an unknown word' => 'xor', 'an empty string' => '', 'a number' => 1, 'a list' => [['or']]]);
 
 it('passes for nested filters list', function (): void {
     $rule = new QueryBuilder;

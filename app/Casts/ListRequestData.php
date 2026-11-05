@@ -389,10 +389,16 @@ class ListRequestData extends SelectRequestData
                 return new FiltersGroup([]);
             }
 
-            $raw_operator = $raw['operator'] ?? null;
-            $operator = is_string($raw_operator)
-                ? (WhereClause::tryFrom(mb_strtolower($raw_operator)) ?? WhereClause::And)
-                : WhereClause::And;
+            $operator = WhereClause::And;
+
+            if (($raw['operator'] ?? null) !== null) {
+                $operator = WhereClause::tryFromRequestValue($raw['operator']);
+
+                if (! $operator instanceof WhereClause) {
+                    throw ValidationException::withMessages(['filters' => 'Unknown filter group operator. Use one of: ' . WhereClause::requestVocabulary() . '.']);
+                }
+            }
+
             $conformed = $this->conformFilterNode($nested, $level + 1);
             $filters_list = is_array($conformed) ? $conformed : [$conformed];
 

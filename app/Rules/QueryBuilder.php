@@ -12,6 +12,7 @@ use Modules\Core\Casts\FilterOperator;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\RelationFilter;
 use Modules\Core\Casts\ScopeFilter;
+use Modules\Core\Casts\WhereClause;
 use Override;
 
 final class QueryBuilder implements ValidationRule
@@ -89,6 +90,10 @@ final class QueryBuilder implements ValidationRule
             if (! array_key_exists('value', $value)) {
                 $fail($attribute . ' "value" is required');
             }
+        }
+
+        if (! array_key_exists('property', $value) && ($value['operator'] ?? null) !== null && ! WhereClause::tryFromRequestValue($value['operator']) instanceof WhereClause) {
+            $fail($attribute . ' "operator" must be one of: ' . WhereClause::requestVocabulary());
         }
 
         if (array_key_exists('filters', $value)) {

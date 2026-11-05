@@ -20,10 +20,15 @@ enum FilterOperator: string
     /**
      * The operator a request names, in either spelling: the symbols of this enum (`=`, `!=`, `>`, `>=`, `<`, `<=`) or
      * the names of {@see RequestFilterOperator} (`eq`, `ne`, `gt`, `ge`, `lt`, `le`). `like`, `not like`, `in` and
-     * `between` are spelled the same in both. Anything else is null: the caller refuses it.
+     * `between` are spelled the same in both. A name matches in any letter case (`EQ`, `Not Like`). Anything else is
+     * null: the caller refuses it.
      */
     public static function tryFromRequestOperator(RequestFilterOperator|string $operator): ?self
     {
+        if (is_string($operator)) {
+            $operator = mb_strtolower($operator);
+        }
+
         return match ($operator) {
             RequestFilterOperator::Great, RequestFilterOperator::Great->value => self::Great,
             RequestFilterOperator::GreatEquals, RequestFilterOperator::GreatEquals->value => self::GreatEquals,

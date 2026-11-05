@@ -48,6 +48,24 @@ function opspell_cases(): array
     return $cases;
 }
 
+/**
+ * The cases of {@see opspell_cases()} whose spelling has letters, written in capitals: the symbols have no case.
+ *
+ * @return array<string, array{string, FilterOperator, mixed, list<string>}>
+ */
+function opspell_capital_cases(): array
+{
+    $cases = [];
+
+    foreach (opspell_cases() as $label => [$spelling, $operator, $value, $expected]) {
+        if ($spelling !== mb_strtoupper($spelling)) {
+            $cases[mb_strtoupper($spelling) . ' as ' . $operator->name] = [mb_strtoupper($spelling), $operator, $value, $expected];
+        }
+    }
+
+    return $cases;
+}
+
 function opspell_rows(): void
 {
     foreach (range(1, 5) as $number) {
@@ -119,6 +137,37 @@ it('reads the operator in either spelling and keeps the same real rows', functio
         ->and(opspell_names($data))->toBe($expected);
 })->with(opspell_cases());
 
+it('reads the operator whatever its letter case and keeps the same real rows', function (string $spelling, FilterOperator $operator, mixed $value, array $expected): void {
+    opspell_rows();
+
+    $data = opspell_parse([['property' => 'name', 'operator' => $spelling, 'value' => $value]]);
+
+    expect($data->filters->filters[0]->operator)->toBe($operator)
+        ->and(opspell_names($data))->toBe($expected);
+})->with(opspell_capital_cases());
+
+it('reads the operator of a group whatever its letter case', function (string $group_operator): void {
+    opspell_rows();
+
+    $data = opspell_parse(['operator' => $group_operator, 'filters' => [
+        ['property' => 'name', 'operator' => '<', 'value' => 'opspell_2'],
+        ['property' => 'name', 'operator' => '>=', 'value' => 'opspell_5'],
+    ]]);
+
+    expect(opspell_names($data))->toBe(['opspell_1', 'opspell_5']);
+})->with(['or', 'OR', 'Or']);
+
+it('reads a group without an operator, or with a null one, as and', function (array $group): void {
+    opspell_rows();
+
+    $data = opspell_parse($group + ['filters' => [
+        ['property' => 'name', 'operator' => '>', 'value' => 'opspell_2'],
+        ['property' => 'name', 'operator' => '<', 'value' => 'opspell_5'],
+    ]]);
+
+    expect(opspell_names($data))->toBe(['opspell_3', 'opspell_4']);
+})->with(['without one' => [[]], 'a null one' => [['operator' => null]]]);
+
 it('reads the operator of a search request in either spelling', function (string $spelling, FilterOperator $operator, mixed $value): void {
     $data = new SearchRequestData(new SearchRequest(), 'setting', ['qs' => 'opspell', 'sort' => [], 'filters' => [['property' => 'name', 'operator' => $spelling, 'value' => $value]]], 'id');
 
@@ -163,7 +212,6 @@ it('refuses an operator that is in neither spelling instead of reading it as equ
     }
 })->with([
     'an unknown word' => 'contains',
-    'a different case of a known name' => 'EQ',
     'an empty string' => '',
     'a sql fragment' => '= 1 or 1 = 1',
     'null' => null,
@@ -191,6 +239,27 @@ it('names both spellings of every operator in the refusal', function (): void {
 
         expect($message)->not->toContain('nope');
     }
+});
+
+it('refuses a group operator that is neither and nor or instead of reading it as and', function (mixed $operator): void {
+    try {
+        opspell_parse(['operator' => $operator, 'filters' => [['property' => 'name', 'operator' => '=', 'value' => 'opspell_3']]]);
+        $this->fail('The group operator should have been refused.');
+    } catch (ValidationException $exception) {
+        expect($exception->errors()['filters'][0])->toBe('Unknown filter group operator. Use one of: and, or.');
+    }
+})->with([
+    'an unknown word' => 'xor',
+    'an empty string' => '',
+    'a number' => 1,
+    'a list' => [['or']],
+]);
+
+it('refuses an unknown group operator nested in a group', function (): void {
+    expect(fn () => opspell_parse(['operator' => 'or', 'filters' => [
+        ['property' => 'name', 'operator' => 'eq', 'value' => 'opspell_1'],
+        ['operator' => 'nope', 'filters' => [['property' => 'name', 'operator' => 'eq', 'value' => 'opspell_2']]],
+    ]]))->toThrow(ValidationException::class);
 });
 
 it('lists the rows of the list route alike with either spelling', function (string $spelling, FilterOperator $operator, mixed $value, array $expected): void {
@@ -256,4 +325,43 @@ it('refuses with 422 an unknown operator on the aggregate route, naming the allo
     expect($response->json('error.code'))->toBe('INVALID_FIELD')
         ->and($response->json('error.field'))->toBe('filters')
         ->and($response->json('error.message'))->toBe('filters.filters.1 "operator" must be one of: ' . FilterOperator::requestVocabulary());
+});
+
+it('lists the rows of the list route alike whatever the letter case of the operator', function (string $spelling, FilterOperator $operator, mixed $value, array $expected): void {
+    opspell_rows();
+
+    $response = $this->actingAs(opspell_viewer())->getJson('/app/crud/select/core/settings?' . opspell_query(opspell_tree($spelling, $value)));
+
+    $response->assertOk();
+    $names = collect($response->json('data'))->pluck('name')->sort()->values()->all();
+
+    expect($names)->toBe($expected);
+})->with(opspell_capital_cases());
+
+it('refuses with 422 an unknown group operator on the list and facets routes, naming the allowed operators', function (string $uri): void {
+    opspell_rows();
+
+    $tree = ['operator' => 'xor', 'filters' => [['property' => 'name', 'operator' => 'eq', 'value' => 'opspell_3']]];
+    $response = $this->actingAs(opspell_viewer())->getJson($uri . '?' . opspell_query($tree));
+
+    $response->assertUnprocessable()->assertJsonValidationErrors('filters');
+    expect($response->json('errors.filters.0'))->toBe('filters "operator" must be one of: and, or');
+})->with([
+    'list' => '/app/crud/select/core/settings',
+    'facets' => '/app/crud/facets/core/settings',
+]);
+
+it('refuses with 422 an unknown group operator on the aggregate route, naming the allowed operators', function (): void {
+    opspell_rows();
+
+    $response = $this->actingAs(opspell_viewer())->postJson('/app/crud/aggregate/core/settings', [
+        'measures' => [['fn' => 'count']],
+        'filters' => ['operator' => 'xor', 'filters' => [['property' => 'name', 'operator' => 'eq', 'value' => 'opspell_3']]],
+    ]);
+
+    $response->assertUnprocessable();
+
+    expect($response->json('error.code'))->toBe('INVALID_FIELD')
+        ->and($response->json('error.field'))->toBe('filters')
+        ->and($response->json('error.message'))->toBe('filters "operator" must be one of: and, or');
 });
