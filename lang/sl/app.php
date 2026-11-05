@@ -503,17 +503,12 @@ return [
         'shownInLocale' => 'Prikazano v :locale',
     ],
     'welcome' => [
-        'activeModules' => 'Aktivni moduli:',
+        'apiDisabled' => 'onemogočene',
         'apiVersions' => 'Različice API:',
-        'databaseDrivers' => 'Gonilniki baze podatkov:',
         'debugMode' => 'Način razhroščevanja:',
-        'dynamicEntities' => 'Dinamične entitete omogočene:',
         'environment' => 'Okolje aplikacije:',
-        'languages' => 'Jeziki:',
         'maintenanceMode' => 'Način vzdrževanja:',
         'migrations' => 'Migracije:',
-        'userRegistration' => 'Registracija uporabnikov omogočena:',
-        'verifyNewUser' => 'Preveri nove uporabnike:',
     ],
     'widgets' => [
         'activeLicenses' => 'Aktivne licence',

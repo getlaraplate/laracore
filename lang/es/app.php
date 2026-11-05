@@ -503,17 +503,12 @@ return [
         'shownInLocale' => 'Mostrado en :locale',
     ],
     'welcome' => [
-        'activeModules' => 'Módulos activos:',
+        'apiDisabled' => 'desactivadas',
         'apiVersions' => 'Versiones de la API:',
-        'databaseDrivers' => 'Controladores de base de datos:',
         'debugMode' => 'Modo de depuración:',
-        'dynamicEntities' => 'Entidades dinámicas activas:',
         'environment' => 'Entorno de la aplicación:',
-        'languages' => 'Idiomas:',
         'maintenanceMode' => 'Modo de mantenimiento:',
         'migrations' => 'Migraciones:',
-        'userRegistration' => 'Registro de usuarios activo:',
-        'verifyNewUser' => 'Verificar nuevos usuarios:',
     ],
     'widgets' => [
         'activeLicenses' => 'Licencias activas',
