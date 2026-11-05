@@ -19,6 +19,7 @@ use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Services\DatabaseTextMatchCompiler;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
+use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Override;
@@ -416,7 +417,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
         if ($builder->callback !== null) {
             call_user_func($builder->callback, $query, $builder, $builder->query);
         } else {
-            foreach (array_diff_key($builder->wheres, $vector_fields) as $key => $value) {
+            foreach (array_diff_key(ScoutWheres::map($builder), $vector_fields) as $key => $value) {
                 if ($key === '__soft_deleted') {
                     continue;
                 }
@@ -501,7 +502,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
 
         $vector_fields = array_flip(['vector', 'embedding', $this->resolveVectorField($builder->model)]);
 
-        return array_diff_key($builder->wheres, $vector_fields) !== []
+        return array_diff_key(ScoutWheres::map($builder), $vector_fields) !== []
             || $builder->whereIns !== []
             || $builder->whereNotIns !== [];
     }

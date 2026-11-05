@@ -26,6 +26,7 @@ use Modules\Core\Search\Jobs\ReindexSearchJob;
 use Modules\Core\Search\Schema\MappingStructureComparator;
 use Modules\Core\Search\Services\SearchQueryAnalyzer;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
+use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
@@ -1386,7 +1387,7 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
         // instead: buildSearchFilters() would otherwise mishandle a multi-locale array
         // (a 2-element array is read as a `range`, anything else as a `term` with an
         // array value, which Elasticsearch rejects) instead of a `terms` filter.
-        $filter_wheres = array_diff_key($builder->wheres, array_flip(['vector', 'embedding', 'locales', 'locale', $this->resolveVectorField($model)]));
+        $filter_wheres = array_diff_key(ScoutWheres::map($builder), array_flip(['vector', 'embedding', 'locales', 'locale', $this->resolveVectorField($model)]));
         $filters = $filter_wheres !== [] ? $this->buildSearchFilters($filter_wheres) : [];
         $advanced_filters = $builder->options['advanced_filters'] ?? null;
 
@@ -1406,7 +1407,8 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
      */
     private function extractLocaleFilter(Builder $builder): array
     {
-        $value = $builder->wheres['locales'] ?? $builder->wheres['locale'] ?? null;
+        $wheres = ScoutWheres::map($builder);
+        $value = $wheres['locales'] ?? $wheres['locale'] ?? null;
 
         if ($value === null) {
             return [];

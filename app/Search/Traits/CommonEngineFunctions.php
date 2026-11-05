@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Laravel\Scout\Builder;
+use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Overrides\CustomSoftDeletingScope;
 use Modules\Core\Search\Exceptions\SearchCollectionResolutionException;
 use Modules\Core\Search\Schema\FieldDefinition;
@@ -44,9 +45,11 @@ trait CommonEngineFunctions
      */
     public function isVectorSearch(Builder $builder): bool
     {
-        return isset($builder->wheres['vector'])
-            || isset($builder->wheres['embedding'])
-            || isset($builder->wheres[$this->resolveVectorField($builder->model)])
+        $wheres = ScoutWheres::map($builder);
+
+        return isset($wheres['vector'])
+            || isset($wheres['embedding'])
+            || isset($wheres[$this->resolveVectorField($builder->model)])
             || method_exists($builder->model, 'getVectorField');
     }
 
@@ -213,7 +216,8 @@ trait CommonEngineFunctions
     protected function extractVectorFromBuilder(Builder $builder): array
     {
         $vector_field = $this->resolveVectorField($builder->model);
-        $vector = $builder->wheres['vector'] ?? $builder->wheres[$vector_field] ?? $builder->wheres['embedding'] ?? [];
+        $wheres = ScoutWheres::map($builder);
+        $vector = $wheres['vector'] ?? $wheres[$vector_field] ?? $wheres['embedding'] ?? [];
 
         if (! is_array($vector)) {
             return [];

@@ -19,6 +19,7 @@ use Modules\Core\Search\Exceptions\MissingSearchSchemaException;
 use Modules\Core\Search\Exceptions\SearchCollectionResolutionException;
 use Modules\Core\Search\Jobs\ReindexSearchJob;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
+use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
@@ -656,7 +657,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
     {
         $filters = [];
 
-        foreach ($builder->wheres as $field => $value) {
+        foreach (ScoutWheres::map($builder) as $field => $value) {
             if ($field === 'vector' || $field === 'embedding' || $field === $this->resolveVectorField($builder->model)) {
                 continue; // Skip vector fields
             }

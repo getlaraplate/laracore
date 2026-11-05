@@ -7,6 +7,7 @@ use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Search\Contracts\ILocaleFilterableEngine;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\Services\EnsembleSearchService;
+use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Tests\Stubs\Search\EngineBoundStubModel;
 
 /**
@@ -21,7 +22,10 @@ function ensemble_locale_wheres(mixed $engine): array
 
     app(EnsembleSearchService::class)->applyRequestedLocale($builder, $model);
 
-    return $builder->wheres;
+    // Read the way the engines read it. Scout 11 stores where() constraints as a list of
+    // field/operator/value triples, and asserting that shape here would pin a package internal instead of
+    // the restriction these cases are about.
+    return ScoutWheres::map($builder);
 }
 
 afterEach(function (): void {
