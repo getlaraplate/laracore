@@ -7,6 +7,7 @@ namespace Modules\Core\Tests\Stubs\Search;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
 use Laravel\Scout\Builder as ScoutBuilder;
+use Modules\Core\Search\Support\ScoutWheres;
 
 /**
  * Returns a fixed ranking per strategy: no vector means keyword, a vector with the `*` query
@@ -51,7 +52,10 @@ final class FusionFixtureSearchBuilder extends ScoutBuilder
 
     private function strategy(): string
     {
-        if (! array_key_exists('vector', $this->wheres)) {
+        // Through ScoutWheres: Scout 11 stores where() constraints as a list of field/operator/value
+        // triples, so array_key_exists('vector', $this->wheres) is always false and every strategy would
+        // read as keyword.
+        if (! array_key_exists('vector', ScoutWheres::map($this))) {
             return 'keyword';
         }
 

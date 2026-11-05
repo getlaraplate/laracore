@@ -261,7 +261,7 @@ trait Searchable
         }
 
         // Add embeddings if available (agnostic array: no locale in ES, one entry per ModelEmbedding row)
-        if ($this->vectorSearchEnabled() && $engine instanceof ISearchEngine && $engine->supportsVectorSearch()) {
+        if ($this->vectorSearchEnabled() && $engine instanceof ISearchEngine && $engine->offersVectorSearch()) {
             // Reuse the eager-loaded relation on the bulk path (adaptiveBulkIndex
             // pre-loads it) and query only when it is not loaded, so serializing a
             // chunk does not fire one embeddings query per model.

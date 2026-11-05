@@ -24,7 +24,7 @@ beforeEach(function (): void {
 
 it('emits is_deleted as the boolean false for a live row', function (): void {
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(false);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(false);
 
     $id = DB::table('core_test_soft_deletable_search_stub')->insertGetId(['deleted_at' => null]);
     $model = SoftDeletableSearchStubModel::query()->findOrFail($id)->withEngine($engine);
@@ -34,7 +34,7 @@ it('emits is_deleted as the boolean false for a live row', function (): void {
 
 it('emits is_deleted as the boolean true for a soft-deleted row', function (): void {
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(false);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(false);
 
     $id = DB::table('core_test_soft_deletable_search_stub')->insertGetId(['deleted_at' => now()]);
     $model = SoftDeletableSearchStubModel::withoutGlobalScopes()->findOrFail($id)->withEngine($engine);

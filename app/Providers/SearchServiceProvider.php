@@ -52,7 +52,7 @@ final class SearchServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->make(EngineManager::class)->extend('database', static fn (Application $app): DatabaseEngine => $app->make(DatabaseEngine::class));
+        $this->app->make(EngineManager::class)->extend('database', fn (Application $app): DatabaseEngine => $app->make(DatabaseEngine::class));
 
         $this->app->singleton(ISearchEngine::class, static fn (Application $app) => $app->make(EngineManager::class)->engine());
 

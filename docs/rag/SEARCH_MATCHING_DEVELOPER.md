@@ -129,6 +129,14 @@ A model that sets `protected ?string $searchDateField` has the date its query na
 
 ## Engine adapters
 
+### Reading a builder's constraints
+
+Every engine reads the constraints of a Scout query through `Modules\Core\Search\Support\ScoutWheres::map()`, never through `$builder->wheres` directly.
+
+Scout 10 stored an equality constraint as a map entry, `$builder->wheres[$field] = $value`. Scout 11 changed `Builder::where()` to append `['field' => ..., 'operator' => ..., 'value' => ...]` to a list, so every `$builder->wheres['locale']` and `array_diff_key($builder->wheres, ...)` written against the old shape stopped matching anything, silently and without an error. `ScoutWheres::map()` returns the `field => value` map these engines have always expected, collecting only `=` constraints: that is exactly what the old shape could express, and an engine that cannot compile `>` should not be handed one disguised as an equality. Ranges belong in the engine's own query building. An entry already in the old shape, or written straight into the array by a test double, passes through unchanged.
+
+`whereIns` was not touched by that change and stays a `field => values` map, so it needs no normalization.
+
 ### Elasticsearch
 
 `ElasticsearchEngine::buildTextMatchQuery()` builds a fuzzy/prefix `multi_match` plus an exact phrase boost. `minimum_should_match` is emitted for relaxed `OR` queries. Fuzziness is disabled for protected-only queries unless identifier typo permission is effective.

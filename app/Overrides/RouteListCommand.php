@@ -19,18 +19,16 @@ final class RouteListCommand extends BaseRouteListCommand
     public function __construct(Router $router)
     {
         parent::__construct($router);
-    }
 
-    /**
-     * @return array<int, array{0: string, 1: string|null, 2: int, 3: string, 4?: string|null}>
-     */
-    #[Override]
-    protected function getOptions(): array
-    {
-        return [
-            ...parent::getOptions(),
-            ['internals', null, InputOption::VALUE_NONE, 'Only show routes prefixed with app or api'],
-        ];
+        /**
+         * Laravel 13 declares `route:list` options in `$signature`, which bypasses `getOptions()`
+         * entirely. Overriding that method, as this class did on Laravel 12, left `--internals`
+         * unregistered and every invocation failed with "The \"internals\" option does not exist".
+         * Adding it to the resolved definition works whichever mechanism the parent uses.
+         */
+        $this->getDefinition()->addOption(
+            new InputOption('internals', null, InputOption::VALUE_NONE, 'Only show routes prefixed with app or api'),
+        );
     }
 
     /**

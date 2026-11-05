@@ -15,7 +15,7 @@ beforeEach(function (): void {
     });
 
     $engine = Mockery::mock(ISearchEngine::class);
-    $engine->shouldReceive('supportsVectorSearch')->andReturn(true);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(true);
 
     $this->model = new VectorEmbeddingsArrayStubModel();
     $this->model->withEngine($engine);

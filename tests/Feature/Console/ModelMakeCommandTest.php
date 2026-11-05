@@ -633,7 +633,7 @@ it('creates migration command payload based on class state', function (): void {
     $isNewClassProperty->setValue($command, true);
     ModelMakeMigrationSpyCommand::$lastArguments = [];
     $application = new SymfonyApplication();
-    $application->add(new ModelMakeMigrationSpyCommand());
+    $application->addCommand(new ModelMakeMigrationSpyCommand());
     $command->setApplication($application);
     $createMigration->invoke($command);
 
@@ -653,7 +653,7 @@ it('creates migration payload for update and pivot branches', function (): void 
     $inputProperty->setAccessible(true);
 
     $application = new SymfonyApplication();
-    $application->add(new ModelMakeMigrationSpyCommand());
+    $application->addCommand(new ModelMakeMigrationSpyCommand());
     $command->setApplication($application);
 
     $unique = 'MigUpdate' . uniqid('', false);

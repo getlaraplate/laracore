@@ -19,9 +19,15 @@ interface ISearchEngine extends ISearchable // , ISearchAnalytics
     //    }
 
     /**
-     * Check if the engine supports vector search.
+     * Check if the engine offers vector search at all.
+     *
+     * Deliberately not named `supportsVectorSearch`: Scout 11 introduced a protected
+     * `supportsVectorSearch($model)` on {@see \Laravel\Scout\Engines\Concerns\PerformsDatabaseVectorSearch},
+     * which asks a different question (is *this model's* connection PostgreSQL with pgvector) and which
+     * {@see \Laravel\Scout\Engines\DatabaseEngine} calls on itself. An engine extending it cannot answer both
+     * under one name, and the framework's signature is the one worth preserving untouched.
      */
-    public function supportsVectorSearch(): bool;
+    public function offersVectorSearch(): bool;
 
     /**
      * Check if the engine supports the Core orchestrated search pipeline.
