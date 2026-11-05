@@ -11,6 +11,11 @@ use Override;
 
 /**
  * Eloquent cast for persisting {@see FiltersGroup} as JSON on the ACL (and similar) models.
+ *
+ * What is stored is in the syntax of the query builder: the operators of the filters are the symbols of
+ * {@see FilterOperator} (`=`, `!=`, `>`, ...) and the operators of the groups are `and` or `or`, whichever spelling
+ * the value was written in ({@see FilterOperator::tryFromRequestValue()}, {@see WhereClause::tryFromRequestValue()}).
+ * An operator in no spelling is refused.
  */
 final class FiltersGroupCast implements CastsAttributes
 {
@@ -175,8 +180,7 @@ final class FiltersGroupCast implements CastsAttributes
             $nested[] = $this->hydrateNode($item);
         }
 
-        $group_operator = $data['operator'] ?? 'and';
-        $operator = is_string($group_operator) ? WhereClause::tryFrom(mb_strtolower($group_operator)) : null;
+        $operator = WhereClause::tryFromRequestValue($data['operator'] ?? 'and');
 
         if (! $operator instanceof WhereClause) {
             throw new InvalidArgumentException('Unknown operator of a filters group.');
@@ -285,11 +289,7 @@ final class FiltersGroupCast implements CastsAttributes
             throw new InvalidArgumentException('The property of a filter must be a column name.');
         }
 
-        if ($operator_raw instanceof FilterOperator) {
-            $operator = $operator_raw;
-        } else {
-            $operator = is_string($operator_raw) ? FilterOperator::tryFrom($operator_raw) : null;
-        }
+        $operator = FilterOperator::tryFromRequestValue($operator_raw);
 
         if (! $operator instanceof FilterOperator) {
             throw new InvalidArgumentException('Unknown operator of a filter.');

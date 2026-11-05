@@ -228,7 +228,7 @@ Filters use the same format as the CRUD query builder:
 | `in` | IN list | `status in ['active', 'pending']` |
 | `between` | BETWEEN range | `created_at between ['2024-01-01', '2024-12-31']` |
 
-An ACL stores these symbols only. The named spellings a request may use (`eq`, `ne`, `gt`, `ge`, `lt`, `le`, see [CRUD_SYSTEM.md](CRUD_SYSTEM.md#filter-operators)) are not valid in a stored ACL filter, and an unknown operator is refused when the ACL is saved or read, never read as `=`.
+An ACL holds these symbols only: its filters are stored in the syntax of the query builder. The named spellings a request may use (`eq`, `ne`, `gt`, `ge`, `lt`, `le`, in any letter case, see [CRUD_SYSTEM.md](CRUD_SYSTEM.md#filter-operators)) are accepted when the ACL is saved and cast to the symbol (`"operator": "NE"` is stored as `"!="`), and a group operator is stored as `and` or `or`. An operator in no spelling is refused when the ACL is saved or read, never read as `=`.
 
 ### Nested Filters
 

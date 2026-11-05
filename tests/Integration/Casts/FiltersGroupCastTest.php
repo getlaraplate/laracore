@@ -156,3 +156,38 @@ it('refuses a malformed scope node on read and on write', function (array $node)
     'a missing name' => [['scope' => null]],
     'a name that is not a string' => [['scope' => ['valid']]],
 ]);
+
+it('stores the operators in the syntax of the builder whatever spelling they were written in', function (string $written, string $stored): void {
+    $cast = new FiltersGroupCast();
+
+    $encoded = $cast->set(new ACL(), 'filters', [
+        'operator' => 'AND',
+        'filters' => [['property' => 'name', 'operator' => $written, 'value' => 'x']],
+    ], []);
+
+    $decoded = json_decode($encoded, true, 512, JSON_THROW_ON_ERROR);
+
+    expect($decoded['operator'])->toBe('and')
+        ->and($decoded['filters'][0]['operator'])->toBe($stored);
+})->with([
+    'the symbol' => ['!=', '!='],
+    'eq' => ['eq', '='],
+    'ne' => ['ne', '!='],
+    'gt' => ['gt', '>'],
+    'ge' => ['GE', '>='],
+    'lt' => ['lt', '<'],
+    'le' => ['Le', '<='],
+    'like' => ['LIKE', 'like'],
+    'not like' => ['Not Like', 'not like'],
+    'in' => ['in', 'in'],
+    'between' => ['BETWEEN', 'between'],
+]);
+
+it('refuses to store an operator that is in no spelling instead of reading it as equals', function (mixed $operator): void {
+    $cast = new FiltersGroupCast();
+
+    expect(fn () => $cast->set(new ACL(), 'filters', [
+        'operator' => 'and',
+        'filters' => [['property' => 'name', 'operator' => $operator, 'value' => 'x']],
+    ], []))->toThrow(InvalidArgumentException::class, 'Unknown operator of a filter.');
+})->with(['an unknown word' => 'contains', 'an empty string' => '', 'a number' => 1, 'a list' => [['eq']]]);

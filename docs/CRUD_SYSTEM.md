@@ -505,7 +505,7 @@ The symbol and the named spelling of an operator are the same operator: `{"opera
 - A filter with no `operator` and a `value` is an equality. The request validation (`Rules\QueryBuilder`) still requires the `operator` key on a `property` node, so only a caller that builds `ListRequestData` by hand can omit it.
 - An `operator` that is in neither spelling (`contains`, an empty string, `null`, a number, a list) is refused, never read as `=`. A request gets a `422` whose `filters` error names the failing node and the allowed operators (`filters.filters.1 "operator" must be one of: > (gt), >= (ge), ...`); the aggregate route answers its own `INVALID_FIELD` error with the same message. A tree parsed without the request validation raises a `ValidationException` with the allowed operators and without the offending value.
 - The operator of a group (`and` or `or`, in any letter case) is a different field with its own list. A group without an `operator`, or with a `null` one, is an `and`; one that names anything else (`xor`, an empty string, a number, a list) is refused the same way: a `422` whose `filters` error reads `filters.filters.0 "operator" must be one of: and, or`, the aggregate route's `INVALID_FIELD` with the same message, and a `ValidationException` for a tree parsed without the request validation.
-- A filter on an ACL is stored with the symbols only (see [ACL_SYSTEM.md](ACL_SYSTEM.md#supported-operators)).
+- A filter on an ACL accepts both spellings but is stored with the symbols only (see [ACL_SYSTEM.md](ACL_SYSTEM.md#supported-operators)).
 
 ### Nested Filters
 
