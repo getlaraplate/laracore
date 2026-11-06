@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Elastic\Elasticsearch\Client as ElasticsearchClient;
+use GuzzleHttp\HandlerStack;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as BaseSoftDeletes;
 use Illuminate\Support\Facades\Cache;
@@ -77,6 +78,34 @@ it('registerSearchClients binds elasticsearch and typesense clients', function (
 
     expect(app()->make(ElasticsearchClient::class))->toBeInstanceOf(ElasticsearchClient::class)
         ->and(app()->make(TypesenseClient::class))->toBeInstanceOf(TypesenseClient::class);
+});
+
+it('registerSearchClients puts the compatibility header middleware on the Elasticsearch client only when the option is set', function (): void {
+    $middlewareNamesOfClient = function (?string $compatibleWith): array {
+        config([
+            'elastic.client.default' => 'default',
+            'elastic.client.connections.default' => ['hosts' => ['http://localhost:9200'], 'httpClientOptions' => ['timeout' => 7]],
+            'elastic.client.compatible_with' => $compatibleWith,
+            'scout.typesense.client-settings' => [
+                'api_key' => 'xyz',
+                'nodes' => [['host' => 'localhost', 'port' => '8108', 'protocol' => 'http']],
+                'connection_timeout_seconds' => 2,
+            ],
+        ]);
+        app()->forgetInstance(ElasticsearchClient::class);
+        invokePrivate($this->provider, 'registerSearchClients');
+
+        $http = app()->make(ElasticsearchClient::class)->getTransport()->getClient();
+
+        expect($http->getConfig('timeout'))->toBe(7);
+
+        $stack = (new ReflectionProperty(HandlerStack::class, 'stack'))->getValue($http->getConfig('handler'));
+
+        return array_column($stack, 1);
+    };
+
+    expect($middlewareNamesOfClient(null))->not->toContain('elasticsearch-compatibility-header')
+        ->and($middlewareNamesOfClient('8'))->toContain('elasticsearch-compatibility-header');
 });
 
 it('register wires docs binding and fortify provider', function (): void {

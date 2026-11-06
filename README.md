@@ -167,6 +167,7 @@ ELASTIC_RETRY_ON_CONFLICT=3						#elasticsearch retry on conflict
 ELASTIC_BULK_SIZE=500							#elasticsearch bulk size
 ELASTIC_SUPPORTED_MAJOR_MIN=8					#lowest supported elasticsearch server major version
 ELASTIC_SUPPORTED_MAJOR_MAX=8					#highest supported elasticsearch server major version
+ELASTIC_COMPATIBLE_WITH=						#HACK, testing only, not supported: major version the elasticsearch client announces (see below); empty = off
 ELASTIC_SCOUT_DRIVER_REFRESH_DOCUMENTS=false	#elasticsearch scout driver refresh documents
 
 #typesense
@@ -212,6 +213,16 @@ SLACK_OPENID_CLIENT_ID= 						#slack openid client id
 SLACK_OPENID_CLIENT_SECRET=						#slack openid client secret
 SOCIALITE_REDIRECT= 							#socialite redirect
 ```
+
+### Elasticsearch client against a server of another major (hack, testing only)
+
+The Elasticsearch client of the stack (`elasticsearch/elasticsearch` 9) writes `compatible-with=9` into the `Accept` and `Content-Type` headers of every request, and a server of major 8 refuses it with a `400 media_type_header_exception` ("Accept version must be either version 8 or 7, but found 9"). The supported setup is a server and a client of the same major.
+
+`ELASTIC_COMPATIBLE_WITH=8` is a **hack for testing**: it rewrites that number in the outgoing headers (`Search\Support\ElasticsearchCompatibilityHeader`, a Guzzle middleware put on the client built by `CoreServiceProvider`), so the version 9 client can be tried against a version 8 cluster.
+
+- **No guarantee.** Only the header changes. The requests are still those of the version 9 client, so a call that the server does not know still fails, a request that the server parses differently can misbehave, and a client update can break it. Nothing in the test suite runs against a real server of another major.
+- **Not for production.** Use it on a development or test machine, to see whether an indexing or a search runs. For anything else use a server of the major of the client, or a client of the major of the server.
+- **Off by default.** Empty or not a positive integer leaves the headers alone. It does not change `ELASTIC_SUPPORTED_MAJOR_MIN` and `_MAX`: the cluster must still be inside that range.
 
 ### API access configuration
 
