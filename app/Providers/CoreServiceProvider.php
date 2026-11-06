@@ -112,6 +112,7 @@ use Modules\Core\Search\Engines\ElasticsearchEngine;
 use Modules\Core\Search\Engines\TypesenseEngine;
 use Modules\Core\Search\OwnerAuthorizerRegistry;
 use Modules\Core\Search\SearchableContributorRegistry;
+use Modules\Core\Search\Support\ElasticsearchCompatibilityHeader;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
 use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\CronParameters;
@@ -567,8 +568,19 @@ final class CoreServiceProvider extends ModuleServiceProvider
             $default_connection = config('elastic.client.default', 'default');
             $default_connection = is_string($default_connection) ? $default_connection : 'default';
             $config = config('elastic.client.connections.' . $default_connection);
+            $config = is_array($config) ? $config : [];
 
-            return ClientBuilder::fromConfig(is_array($config) ? $config : []);
+            // Testing hack, see ElasticsearchCompatibilityHeader: nothing changes unless the option is set.
+            $compatible_with = ElasticsearchCompatibilityHeader::majorOf(config('elastic.client.compatible_with'));
+
+            if ($compatible_with !== null) {
+                $config['httpClientOptions'] = ElasticsearchCompatibilityHeader::applyTo(
+                    is_array($config['httpClientOptions'] ?? null) ? $config['httpClientOptions'] : [],
+                    $compatible_with,
+                );
+            }
+
+            return ClientBuilder::fromConfig($config);
         });
 
         // Register Typesense client
