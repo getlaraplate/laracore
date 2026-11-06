@@ -571,14 +571,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
             $config = is_array($config) ? $config : [];
 
             // Testing hack, see ElasticsearchCompatibilityHeader: nothing changes unless the option is set.
-            $compatible_with = ElasticsearchCompatibilityHeader::majorOf(config('elastic.client.compatible_with'));
-
-            if ($compatible_with !== null) {
-                $config['httpClientOptions'] = ElasticsearchCompatibilityHeader::applyTo(
-                    is_array($config['httpClientOptions'] ?? null) ? $config['httpClientOptions'] : [],
-                    $compatible_with,
-                );
-            }
+            $config = ElasticsearchCompatibilityHeader::forConnection($config);
 
             return ClientBuilder::fromConfig($config);
         });

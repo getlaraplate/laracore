@@ -88,4 +88,28 @@ final class ElasticsearchCompatibilityHeader
 
         return [...$options, 'handler' => $stack];
     }
+
+    /**
+     * The connection config with the middleware applied when `elastic.client.compatible_with` is set,
+     * unchanged otherwise. Every place that builds an Elasticsearch client from the connection config
+     * goes through here, so none of them is left announcing the version of the client.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<string, mixed>
+     */
+    public static function forConnection(array $config): array
+    {
+        $major = self::majorOf(config('elastic.client.compatible_with'));
+
+        if ($major === null) {
+            return $config;
+        }
+
+        $config['httpClientOptions'] = self::applyTo(
+            is_array($config['httpClientOptions'] ?? null) ? $config['httpClientOptions'] : [],
+            $major,
+        );
+
+        return $config;
+    }
 }

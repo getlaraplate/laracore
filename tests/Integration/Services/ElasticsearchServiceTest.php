@@ -45,6 +45,23 @@ it('has private constructor for singleton', function (): void {
     expect($constructor->isPrivate())->toBeTrue();
 });
 
+it('builds its own client with the compatibility header option applied', function (): void {
+    $middlewareNames = function (mixed $compatibleWith): array {
+        resetElasticsearchSingleton();
+        config()->set('elastic.client.default', 'default');
+        config()->set('elastic.client.connections.default', ['hosts' => ['http://127.0.0.1:9200']]);
+        config()->set('elastic.client.compatible_with', $compatibleWith);
+
+        $http = ElasticsearchService::getInstance()->client->getTransport()->getClient();
+        $stack = (new ReflectionProperty(GuzzleHttp\HandlerStack::class, 'stack'))->getValue($http->getConfig('handler'));
+
+        return array_column($stack, 1);
+    };
+
+    expect($middlewareNames(null))->not->toContain('elasticsearch-compatibility-header')
+        ->and($middlewareNames('8'))->toContain('elasticsearch-compatibility-header');
+});
+
 it('builds singleton instance using configured client', function (): void {
     resetElasticsearchSingleton();
     config()->set('elastic.client.default', 'default');

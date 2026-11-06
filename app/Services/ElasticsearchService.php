@@ -12,6 +12,7 @@ use Elastic\Elasticsearch\Exception\ServerResponseException;
 use Elastic\Elasticsearch\Response\Elasticsearch;
 use Illuminate\Support\Facades\Log;
 use Modules\Core\Search\Exceptions\ElasticsearchException;
+use Modules\Core\Search\Support\ElasticsearchCompatibilityHeader;
 use RuntimeException;
 use Throwable;
 
@@ -447,6 +448,7 @@ final class ElasticsearchService
     {
         $config = config('elastic.client.connections.' . config('elastic.client.default', 'default'));
 
-        return ClientBuilder::fromConfig($config);
+        // Testing hack, see ElasticsearchCompatibilityHeader: nothing changes unless the option is set.
+        return ClientBuilder::fromConfig(ElasticsearchCompatibilityHeader::forConnection(is_array($config) ? $config : []));
     }
 }
