@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Modules\Core\Services;
 
 use Elastic\Elasticsearch\Client;
-use Elastic\Elasticsearch\ClientBuilder;
 use Elastic\Elasticsearch\Exception\ClientResponseException;
 use Elastic\Elasticsearch\Exception\MissingParameterException;
 use Elastic\Elasticsearch\Exception\ServerResponseException;
@@ -41,7 +40,7 @@ final class ElasticsearchService
      */
     private function __construct()
     {
-        $this->client = $this->createClient();
+        $this->client = resolve(Client::class);
     }
 
     /**
@@ -438,15 +437,5 @@ final class ElasticsearchService
 
             throw new ElasticsearchException('Error deleting document: ' . $e->getMessage(), $e->getCode(), $e);
         }
-    }
-
-    /**
-     * Create elasticsearch client.
-     */
-    private function createClient(): Client
-    {
-        $config = config('elastic.client.connections.' . config('elastic.client.default', 'default'));
-
-        return ClientBuilder::fromConfig($config);
     }
 }

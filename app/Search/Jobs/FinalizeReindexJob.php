@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Search\Jobs;
 
-use Elastic\Elasticsearch\ClientBuilder;
+use Elastic\Elasticsearch\Client;
 use Exception;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -50,7 +50,7 @@ final class FinalizeReindexJob implements ShouldQueue
     public function handle(): void
     {
         try {
-            $elasticsearch_client = ClientBuilder::create()->build();
+            $elasticsearch_client = resolve(Client::class);
 
             // Verifichiamo che l'indice temporaneo esista
             throw_unless($elasticsearch_client->indices()->exists(['index' => $this->temp_index]), ReindexException::class, sprintf('Temporary index %s does not exist', $this->temp_index));

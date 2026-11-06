@@ -62,3 +62,20 @@ it('changes no option when no version is given', function (): void {
 
     expect(ElasticsearchCompatibilityHeader::applyTo($options, null))->toBe($options);
 });
+
+it('puts the middleware on a connection config only when the option is set', function (): void {
+    $connection = ['hosts' => ['http://es.test:9200'], 'httpClientOptions' => ['timeout' => 7]];
+
+    config(['elastic.client.compatible_with' => null]);
+    expect(ElasticsearchCompatibilityHeader::forConnection($connection))->toBe($connection);
+
+    config(['elastic.client.compatible_with' => '8']);
+    $configured = ElasticsearchCompatibilityHeader::forConnection($connection);
+
+    expect($configured['hosts'])->toBe($connection['hosts'])
+        ->and($configured['httpClientOptions']['timeout'])->toBe(7)
+        ->and($configured['httpClientOptions'])->toHaveKey('handler');
+
+    config(['elastic.client.compatible_with' => '8']);
+    expect(ElasticsearchCompatibilityHeader::forConnection(['hosts' => ['http://es.test:9200']]))->toHaveKey('httpClientOptions.handler');
+});

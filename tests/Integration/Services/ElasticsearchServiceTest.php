@@ -45,8 +45,18 @@ it('has private constructor for singleton', function (): void {
     expect($constructor->isPrivate())->toBeTrue();
 });
 
+it('uses the Elasticsearch client of the container, the single place that builds it', function (): void {
+    resetElasticsearchSingleton();
+    app()->forgetInstance(Client::class);
+    config()->set('elastic.client.default', 'default');
+    config()->set('elastic.client.connections.default', ['hosts' => ['http://127.0.0.1:9200']]);
+
+    expect(ElasticsearchService::getInstance()->client)->toBe(app(Client::class));
+});
+
 it('builds singleton instance using configured client', function (): void {
     resetElasticsearchSingleton();
+    app()->forgetInstance(Client::class);
     config()->set('elastic.client.default', 'default');
     config()->set('elastic.client.connections.default', [
         'hosts' => ['http://127.0.0.1:9200'],
