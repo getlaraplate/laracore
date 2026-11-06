@@ -5,14 +5,12 @@ declare(strict_types=1);
 namespace Modules\Core\Services;
 
 use Elastic\Elasticsearch\Client;
-use Elastic\Elasticsearch\ClientBuilder;
 use Elastic\Elasticsearch\Exception\ClientResponseException;
 use Elastic\Elasticsearch\Exception\MissingParameterException;
 use Elastic\Elasticsearch\Exception\ServerResponseException;
 use Elastic\Elasticsearch\Response\Elasticsearch;
 use Illuminate\Support\Facades\Log;
 use Modules\Core\Search\Exceptions\ElasticsearchException;
-use Modules\Core\Search\Support\ElasticsearchCompatibilityHeader;
 use RuntimeException;
 use Throwable;
 
@@ -42,7 +40,7 @@ final class ElasticsearchService
      */
     private function __construct()
     {
-        $this->client = $this->createClient();
+        $this->client = resolve(Client::class);
     }
 
     /**
@@ -439,16 +437,5 @@ final class ElasticsearchService
 
             throw new ElasticsearchException('Error deleting document: ' . $e->getMessage(), $e->getCode(), $e);
         }
-    }
-
-    /**
-     * Create elasticsearch client.
-     */
-    private function createClient(): Client
-    {
-        $config = config('elastic.client.connections.' . config('elastic.client.default', 'default'));
-
-        // Testing hack, see ElasticsearchCompatibilityHeader: nothing changes unless the option is set.
-        return ClientBuilder::fromConfig(ElasticsearchCompatibilityHeader::forConnection(is_array($config) ? $config : []));
     }
 }

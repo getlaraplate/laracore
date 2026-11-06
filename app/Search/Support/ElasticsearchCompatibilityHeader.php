@@ -91,8 +91,9 @@ final class ElasticsearchCompatibilityHeader
 
     /**
      * The connection config with the middleware applied when `elastic.client.compatible_with` is set,
-     * unchanged otherwise. Every place that builds an Elasticsearch client from the connection config
-     * goes through here, so none of them is left announcing the version of the client.
+     * unchanged otherwise. Called where the container builds the Elasticsearch client, the only place
+     * that does: the service, the jobs and the other modules resolve that client instead of building
+     * their own, so none of them can be left announcing the version of the client.
      *
      * @param  array<string, mixed>  $config
      * @return array<string, mixed>
