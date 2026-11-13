@@ -2,6 +2,15 @@
 module: core
 audience: user
 cross_cutting_user: true
+locale: en
+canonical_source: core/interactive-import
+safe_source_label: "Core · Interactive bulk import"
+version: '1.0'
+policy_classification: user_safe
+policy_classification_version: in-app-docs-v1
+required_permissions:
+  - core_import_sessions.insert
+tenant_scope: global
 ---
 # Interactive bulk import — user and operator guide
 
