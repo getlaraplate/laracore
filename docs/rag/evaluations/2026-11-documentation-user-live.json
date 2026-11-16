@@ -1,0 +1,165 @@
+{
+  "version": "1",
+  "corpus_revision": "core-2026-11",
+  "module": "core",
+  "index_profile": "user",
+  "data_classification": "synthetic",
+  "cases": [
+    {
+      "id": "search-required-terms",
+      "query": "how do I force a search term to be required?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [
+        "Core · Adaptive search matching"
+      ],
+      "expected_citation_labels": [
+        "Core · Adaptive search matching"
+      ],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": true,
+      "expect_refusal": false,
+      "slices": [
+        "search",
+        "single_hop"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": []
+    },
+    {
+      "id": "search-preferences",
+      "query": "what matching preferences can I set for search?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [
+        "Core · Adaptive search matching"
+      ],
+      "expected_citation_labels": [
+        "Core · Adaptive search matching"
+      ],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": true,
+      "expect_refusal": false,
+      "slices": [
+        "search",
+        "single_hop"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": []
+    },
+    {
+      "id": "record-locking-expiry",
+      "query": "how long does a record stay locked while someone is editing it?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [
+        "Core · Record locking"
+      ],
+      "expected_citation_labels": [
+        "Core · Record locking"
+      ],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": true,
+      "expect_refusal": false,
+      "slices": [
+        "locking",
+        "single_hop"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": []
+    },
+    {
+      "id": "saved-preferences-reset",
+      "query": "how do I reset the preferences the system saved for me?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [
+        "Core · Saved preferences"
+      ],
+      "expected_citation_labels": [
+        "Core · Saved preferences"
+      ],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": true,
+      "expect_refusal": false,
+      "slices": [
+        "preferences",
+        "single_hop"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": []
+    },
+    {
+      "id": "import-failure-report",
+      "query": "what happens to the rows that fail during an interactive import?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [
+        "Core · Interactive bulk import"
+      ],
+      "expected_citation_labels": [
+        "Core · Interactive bulk import"
+      ],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": true,
+      "expect_refusal": false,
+      "slices": [
+        "import",
+        "permission_gated",
+        "single_hop"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": [
+        "default.core_import_sessions.insert"
+      ]
+    },
+    {
+      "id": "setting-choices",
+      "query": "how do I choose the values a setting can take?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [
+        "Core · Setting actions and available choices"
+      ],
+      "expected_citation_labels": [
+        "Core · Setting actions and available choices"
+      ],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": true,
+      "expect_refusal": false,
+      "slices": [
+        "settings",
+        "permission_gated",
+        "single_hop"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": [
+        "default.core_settings.select",
+        "default.core_settings.update"
+      ]
+    },
+    {
+      "id": "off-topic-refusal",
+      "query": "what is the capital of France?",
+      "locale": "en",
+      "top_k": 5,
+      "expected_source_labels": [],
+      "expected_citation_labels": [],
+      "expect_authorized_empty": false,
+      "expect_supported_answer": false,
+      "expect_refusal": true,
+      "slices": [
+        "off_topic"
+      ],
+      "tenant_scope": "global",
+      "tenant_id": null,
+      "effective_permissions": []
+    }
+  ]
+}
