@@ -2,6 +2,16 @@
 module: core
 audience: user
 cross_cutting_user: true
+locale: en
+canonical_source: core/setting-actions
+safe_source_label: "Core · Setting actions and available choices"
+version: '1.0'
+policy_classification: user_safe
+policy_classification_version: in-app-docs-v1
+required_permissions:
+  - core_settings.select
+  - core_settings.update
+tenant_scope: global
 ---
 # Setting actions and available choices: user guide
 
