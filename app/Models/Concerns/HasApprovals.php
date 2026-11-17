@@ -127,15 +127,19 @@ trait HasApprovals
 
             $user = Auth::user();
 
-            // Nobody authenticated: console, queues, jobs, search indexing, exports. They see
-            // everything, exactly as capture is skipped in console. Hide answers "who may not
-            // see a record they cannot decide on", which is a question about a person; a
-            // pending deletion must not quietly change what background work reads.
-            if (! $user instanceof User) {
+            // Nobody authenticated in the console: commands, queue workers, search indexing,
+            // exports. They see everything, exactly as capture is skipped in console. Hide answers
+            // "who may not see a record they cannot decide on", which is a question about a person;
+            // a pending deletion must not quietly change what background work reads.
+            if (! $user instanceof User && App::runningInConsole()) {
                 return;
             }
 
-            if (resolve(AuthorizationService::class)->userHolds($user, PermissionName::forModel($model, 'approve'))) {
+            // Nobody authenticated inside a request is an anonymous visitor read before the anonymous
+            // account was put on the guard: the web surface resolves it at its first permission check,
+            // so an earlier read (route model binding, a page that skips the CRUD) has no user yet. A
+            // visitor cannot decide on a deletion, so the record is hidden, as for the anonymous account.
+            if ($user instanceof User && resolve(AuthorizationService::class)->userHolds($user, PermissionName::forModel($model, 'approve'))) {
                 return;
             }
 
