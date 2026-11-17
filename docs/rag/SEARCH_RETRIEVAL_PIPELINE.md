@@ -486,6 +486,31 @@ returned (a strategy that dropped the filters, an index out of date) is dropped 
 hit takes a place in the page. The CMS and SAO application-content providers have always reloaded through an
 authorized query.
 
+A model's default search filters (`ProvidesDefaultSearchFilters`, such as CMS `Content`'s `extended_type IS
+NULL`) reach the engine on every path. The basic path puts them on the Scout builder
+(`CrudService::searchWithScout()`). `AdvancedSearchService::search()` joins them to the filters its caller
+passes, ahead of them (`DefaultSearchFilters::merge()`), so the orchestrated and auto paths and every direct
+caller of the service, such as the CMS application-content provider of the in-app assistant, inherit them. A
+caller passes only its own filters and never adds the defaults itself. They used to reach the engine on the basic
+path only: on the others an extended content that matched the query came back from the engine, took a place in
+the page and was dropped on reload by the `HidesExtendedContent` scope, so the page held fewer records than asked
+for. The merged tree gives the Scout builder the same calls in the same order as the basic path, so an explicit
+request filter on the same field behaves the same on both: an equality replaces the default on Elasticsearch and
+Typesense, which keep one equality per field, and is ANDed with it on the database engine; any other condition is
+ANDed with it everywhere. A default field must be filterable in the model's search schema, since the orchestrated
+path applies it through the same constraint applier as the request filters.
+
+| Constraint | Basic | Orchestrated, Auto, direct `AdvancedSearchService` callers |
+|---|---|---|
+| Default search filters | engine (builder `where()`) | engine (merged into the filters) |
+| ACL row filters | engine, then reload | engine, then reload |
+| Request filters | engine; scopes and relation filters on reload | engine; scopes and relation filters on reload |
+| Requested locale (`locales`) | not applied | engine, when the engine filters by locale |
+
+`SearchPathEligibilityContractTest` runs Basic, Orchestrated and Auto on the same rows, filters and user and
+requires the same records from each. The locale row is a known gap: the basic path does not add the `locales`
+filter, so on Elasticsearch it can return a document the other paths exclude.
+
 The text is matched on the fields of the requested language only (`title.it`, `subtitle.it`, `content.it`, with
 the title boosted), analysed with that language's analyser; fields with no language (`entity`, `preset`, ...)
 stay, and nested fields, which a plain `multi_match` cannot reach, dates, numbers and `locales` are left out.

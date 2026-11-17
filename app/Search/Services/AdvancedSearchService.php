@@ -24,6 +24,7 @@ use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Enums\QueryClass;
 use Modules\Core\Search\Enums\SearchMode;
 use Modules\Core\Search\Enums\TextMatchPreference;
+use Modules\Core\Search\Support\DefaultSearchFilters;
 use Modules\Core\Search\Support\QueryDateFilter;
 use Modules\Core\Search\Support\SearchDegradations;
 use Modules\Core\Search\Support\SearchStageTimings;
@@ -70,6 +71,10 @@ final readonly class AdvancedSearchService
      * search on the whole question: see {@see SearchQueryAnalyzer::withoutRequestWords()}. The query class that
      * picks the tuning is read from the whole query, which is the shape of the question.
      *
+     * The model's default search filters ({@see \Modules\Core\Contracts\ProvidesDefaultSearchFilters}) are joined to
+     * `$filters` here, ahead of them, so every caller of this service keeps out of the engine hits what the basic
+     * search path keeps out: see {@see DefaultSearchFilters}. A caller passes only its own filters.
+     *
      * A date the query names becomes a filter on the date field the model declares (`searchDateField()`), and
      * `meta['date_filter']` reports it: see {@see self::searchWithDates()}. A model that declares none, a query
      * that names no date, and a request that filters on the date field itself search as they always did.
@@ -111,7 +116,8 @@ final readonly class AdvancedSearchService
         $plan['intent'] = $intent;
         $plan['retrieval']['size'] = $perPage;
         $date_filter = $this->dateFilterFor($model, $intent, $plan, $filters, $perPage);
-        $run = function (array $plan, string $search_query) use ($model, $engine, $strategy, $query, $page, $perPage, $filters, $sort, $matching, $matchingOptions, $timings, $date_filter): array {
+        $engine_filters = DefaultSearchFilters::merge($model, $filters);
+        $run = function (array $plan, string $search_query) use ($model, $engine, $strategy, $query, $page, $perPage, $engine_filters, $sort, $matching, $matchingOptions, $timings, $date_filter): array {
             $plan = $this->applyEngineCapabilities($engine, $plan);
             $text_match = app(TextMatchOptionsResolver::class)->resolve($search_query, $matching, $matchingOptions);
             $plan = $this->tuningProfile()->apply($plan, QueryClass::fromAnalysis($text_match->analysis));
@@ -132,7 +138,7 @@ final readonly class AdvancedSearchService
                 reranker: $strategy->reranker,
             );
 
-            $result = $this->stage($timings, SearchStageTimings::ENSEMBLE, fn (): AdvancedSearchResult => $this->searchWithDates($date_filter, $ensemble, $filters, $keyword_query));
+            $result = $this->stage($timings, SearchStageTimings::ENSEMBLE, fn (): AdvancedSearchResult => $this->searchWithDates($date_filter, $ensemble, $engine_filters, $keyword_query));
 
             return [$result, $availability, $plan];
         };
