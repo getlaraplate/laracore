@@ -21,6 +21,7 @@ use Modules\Core\Search\Contracts\IVectorSearchAvailability;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Engines\ElasticsearchEngine;
 use Modules\Core\Search\Engines\TypesenseEngine;
+use Modules\Core\Search\Extensions\ExtensionRegistry;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\CoreSearchStrategyResolver;
 use Modules\Core\Search\Services\FallbackSearchPlanner;
@@ -68,5 +69,6 @@ final class SearchServiceProvider extends ServiceProvider
         $this->app->scoped(SearchDegradations::class);
         $this->app->singleton(RetrievalTuningProfile::class);
         $this->app->singleton(AdvancedSearchService::class);
+        $this->app->singleton(ExtensionRegistry::class);
     }
 }

@@ -71,14 +71,15 @@ final class DefaultFilteredSearchFixture
     /**
      * The keys of the records a CRUD search of {@see self::QUERY} returns, in the order it returns them.
      *
+     * @param  Model|null  $model  The searchable model; {@see DefaultFilteredSearchStub} when null
      * @return list<int>
      */
-    public static function search(SearchMode $mode, int $limit, ?FiltersGroup $filters = null, ?User $user = null): array
+    public static function search(SearchMode $mode, int $limit, ?FiltersGroup $filters = null, ?User $user = null, ?Model $model = null): array
     {
         $user ??= self::superadmin();
         Auth::login($user);
 
-        $model = new DefaultFilteredSearchStub;
+        $model ??= new DefaultFilteredSearchStub;
         $request = new ValidatedSearchRequestStub(['qs' => self::QUERY]);
         $request->setUserResolver(static fn (): User => $user);
 

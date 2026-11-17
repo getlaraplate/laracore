@@ -9,6 +9,7 @@ use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FilterOperator;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\WhereClause;
+use Modules\Core\Contracts\IExtendableModel;
 use Modules\Core\Contracts\ProvidesDefaultSearchFilters;
 
 /**
@@ -24,18 +25,33 @@ use Modules\Core\Contracts\ProvidesDefaultSearchFilters;
 final class DefaultSearchFilters
 {
     /**
-     * The filters of the search with the model's default search filters ahead of them. The filters as they are
-     * when the model declares none.
+     * The equality filters every search of the model applies at the engine: the ones it declares
+     * ({@see ProvidesDefaultSearchFilters}), and, for a host of extenders ({@see IExtendableModel}), its type column
+     * `IS NULL`, so the rows extenders own stay out without the host declaring it
+     * (spec 2026-11-17-extended-entity-search-design.md, XS11). One entry per field.
+     *
+     * @return array<string, scalar|null>
+     */
+    public static function of(Model $model): array
+    {
+        $defaults = $model instanceof ProvidesDefaultSearchFilters ? $model->defaultSearchFilters() : [];
+
+        if ($model instanceof IExtendableModel) {
+            $defaults[$model->extensionTypeColumn()] = null;
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * The filters of the search with the model's default search filters ({@see self::of()}) ahead of them. The
+     * filters as they are when the model has none.
      */
     public static function merge(Model $model, ?FiltersGroup $filters): ?FiltersGroup
     {
-        if (! $model instanceof ProvidesDefaultSearchFilters) {
-            return $filters;
-        }
-
         $defaults = [];
 
-        foreach ($model->defaultSearchFilters() as $field => $value) {
+        foreach (self::of($model) as $field => $value) {
             $defaults[] = new Filter((string) $field, $value, FilterOperator::Equals);
         }
 

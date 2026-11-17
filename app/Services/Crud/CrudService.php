@@ -49,7 +49,6 @@ use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\SelectRequestData;
 use Modules\Core\Casts\TreeRequestData;
 use Modules\Core\Contracts\ILockableModel;
-use Modules\Core\Contracts\ProvidesDefaultSearchFilters;
 use Modules\Core\Contracts\ProvidesFacetLabelSources;
 use Modules\Core\Contracts\ProvidesSyncableRelations;
 use Modules\Core\Contracts\RestrictsCrudWrites;
@@ -75,6 +74,7 @@ use Modules\Core\Search\Enums\SearchMode as SearchDepth;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
 use Modules\Core\Search\Services\SearchCostGuard;
+use Modules\Core\Search\Support\DefaultSearchFilters;
 use Modules\Core\Search\Support\RequestedLocale;
 use Modules\Core\Search\Traits\Searchable;
 use Modules\Core\Services\Authorization\AuthorizationService;
@@ -3045,10 +3045,8 @@ class CrudService
         $model_class = $model::class;
         $builder = $model_class::search($requestData->qs);
 
-        if ($model instanceof ProvidesDefaultSearchFilters) {
-            foreach ($model->defaultSearchFilters() as $field => $value) {
-                $builder->where($field, $value);
-            }
+        foreach (DefaultSearchFilters::of($model) as $field => $value) {
+            $builder->where($field, $value);
         }
 
         // The orchestrated path restricts every strategy to the requested language: the basic one does the same.
