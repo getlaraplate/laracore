@@ -10,7 +10,12 @@ use Modules\Core\Casts\Sort;
 use Modules\Core\Casts\SortDirection;
 use Modules\Core\Casts\WhereClause;
 use Modules\Core\Search\Exceptions\UnsupportedSearchEngineException;
+use Modules\Core\Search\Schema\FieldDefinition;
+use Modules\Core\Search\Schema\FieldType;
+use Modules\Core\Search\Schema\IndexType;
+use Modules\Core\Search\Schema\SchemaDefinition;
 use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
+use Modules\Core\Search\Translators\ElasticsearchTranslator;
 
 function scout_constraint_fake_builder(): object
 {
@@ -284,6 +289,46 @@ it('limits filters to explicitly filterable searchable schema fields when declar
         InvalidArgumentException::class,
         'Search filters must be applied by the search engine to keep pagination consistent.',
     );
+});
+
+it('accepts a filter on a typed sub-field of an object field in an Elasticsearch mapping', function (): void {
+    $builder = scout_constraint_fake_builder();
+    $model = new class extends Model
+    {
+        protected $table = 'contents';
+
+        /**
+         * @return array<string, mixed>
+         */
+        public function getSearchMapping(): array
+        {
+            $schema = new SchemaDefinition('contents');
+            $schema->addField(new FieldDefinition('extension', FieldType::Object, [IndexType::Searchable, IndexType::Filterable], [
+                'properties' => [
+                    'kind' => ['type' => FieldType::Keyword, 'filterable' => true],
+                    'label' => FieldType::Keyword,
+                ],
+            ]));
+
+            return (new ElasticsearchTranslator)->translate($schema);
+        }
+    };
+
+    (new ScoutSearchConstraintApplier())->apply(
+        builder: $builder,
+        model: $model,
+        filters: new FiltersGroup([new Filter('extension.kind', 'physical', FilterOperator::Equals)]),
+    );
+
+    expect($builder->calls)->toBe([
+        ['method' => 'where', 'field' => 'extension.kind', 'value' => 'physical'],
+    ]);
+
+    expect(fn () => (new ScoutSearchConstraintApplier())->apply(
+        builder: scout_constraint_fake_builder(),
+        model: $model,
+        filters: new FiltersGroup([new Filter('extension.label', 'x', FilterOperator::Equals)]),
+    ))->toThrow(InvalidArgumentException::class, ScoutSearchConstraintApplier::FILTER_ERROR);
 });
 
 it('keeps legacy scalar filter behavior when searchable mapping cannot be translated for the active scout engine', function (): void {
