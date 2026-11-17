@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Approvals\PendingDeletionLock;
@@ -86,11 +87,24 @@ it('shows the record again once the deletion is rejected', function (): void {
     expect(HiddenWhilePendingDeletionModel::query()->whereKey($this->record->id)->exists())->toBeTrue();
 });
 
-it('does not hide a pending deletion when nobody is authenticated', function (): void {
+it('hides a pending deletion from an anonymous visitor of an HTTP request', function (): void {
     Auth::login($this->author);
     $hidden = HiddenWhilePendingDeletionModel::query()->find($this->record->id);
     $hidden->delete();
     Auth::logout();
+
+    // Nobody signed in, inside a request: a visitor read before the anonymous account was put on the guard.
+    expect(HiddenWhilePendingDeletionModel::query()->whereKey($this->record->id)->exists())->toBeFalse();
+});
+
+it('does not hide a pending deletion from work that runs in the console', function (): void {
+    Auth::login($this->author);
+    $hidden = HiddenWhilePendingDeletionModel::query()->find($this->record->id);
+    $hidden->delete();
+    Auth::logout();
+
+    // Back to the real application, which runs in the console: commands, queue workers, search indexing.
+    App::swap(app());
 
     expect(HiddenWhilePendingDeletionModel::query()->whereKey($this->record->id)->exists())->toBeTrue();
 });
