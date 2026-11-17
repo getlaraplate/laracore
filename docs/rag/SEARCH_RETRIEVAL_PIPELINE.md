@@ -461,10 +461,13 @@ translation strongly still brings out the document in Italian when Italian is re
 document exists in Italian. This is strict; the `translations.locale_fallback.*` settings govern how a
 translated model is shown elsewhere and do not apply to search.
 
-The restriction is part of the engine request, not a clean-up after it. `EnsembleSearchService` adds a
-`locales` where clause to every strategy when the model's engine implements `ILocaleFilterableEngine` and its
-index records `locales` (`filtersByLocale()`; Elasticsearch does, and a mono-language model such as a ticket
-does not). The Elasticsearch engine turns it into a document-level `terms` filter on the nearest-vector search,
+The restriction is part of the engine request, not a clean-up after it. `RequestedLocale::apply()` adds a
+`locales` where clause when the model's engine implements `ILocaleFilterableEngine` and its index records
+`locales` (`filtersByLocale()`; Elasticsearch does, and a mono-language model such as a ticket does not). Every
+search path calls it: `EnsembleSearchService` on every strategy of the orchestrated path, and
+`CrudService::searchWithScout()` on the basic one. The basic path used to leave it out, so on Elasticsearch it
+returned documents in another language that the orchestrated and auto paths kept out, and matched the text on
+the fields of every language. The Elasticsearch engine turns it into a document-level `terms` filter on the nearest-vector search,
 on the keyword search and on the text half of a hybrid search, whose hits are added to the vector ones. Applied
 only after the top results are fetched, the documents of another language took the first places and were then
 dropped, and a request for five results returned one to four. An engine without the capability is left alone:
@@ -485,6 +488,31 @@ service) and then the model's own `IAuthorizesSearchRehydration` guard, so a hit
 returned (a strategy that dropped the filters, an index out of date) is dropped there. The cost is that such a
 hit takes a place in the page. The CMS and SAO application-content providers have always reloaded through an
 authorized query.
+
+A model's default search filters (`ProvidesDefaultSearchFilters`, such as CMS `Content`'s `extended_type IS
+NULL`) reach the engine on every path. The basic path puts them on the Scout builder
+(`CrudService::searchWithScout()`). `AdvancedSearchService::search()` joins them to the filters its caller
+passes, ahead of them (`DefaultSearchFilters::merge()`), so the orchestrated and auto paths and every direct
+caller of the service, such as the CMS application-content provider of the in-app assistant, inherit them. A
+caller passes only its own filters and never adds the defaults itself. They used to reach the engine on the basic
+path only: on the others an extended content that matched the query came back from the engine, took a place in
+the page and was dropped on reload by the `HidesExtendedContent` scope, so the page held fewer records than asked
+for. The merged tree gives the Scout builder the same calls in the same order as the basic path, so an explicit
+request filter on the same field behaves the same on both: an equality replaces the default on Elasticsearch and
+Typesense, which keep one equality per field, and is ANDed with it on the database engine; any other condition is
+ANDed with it everywhere. A default field must be filterable in the model's search schema, since the orchestrated
+path applies it through the same constraint applier as the request filters.
+
+| Constraint | Basic | Orchestrated, Auto, direct `AdvancedSearchService` callers |
+|---|---|---|
+| Default search filters | engine (builder `where()`) | engine (merged into the filters) |
+| ACL row filters | engine, then reload | engine, then reload |
+| Request filters | engine; scopes and relation filters on reload | engine; scopes and relation filters on reload |
+| Requested locale (`locales`) | engine, when the engine filters by locale | engine, when the engine filters by locale |
+
+`SearchPathEligibilityContractTest` runs Basic, Orchestrated and Auto on the same rows, filters and user and
+requires the same records from each. The database engine has no locale field, so `RequestedLocaleSearchPathTest`
+covers the locale: on an engine that filters by locale, every path hands it the `locales` restriction, once.
 
 The text is matched on the fields of the requested language only (`title.it`, `subtitle.it`, `content.it`, with
 the title boosted), analysed with that language's analyser; fields with no language (`entity`, `preset`, ...)

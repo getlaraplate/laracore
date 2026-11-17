@@ -134,6 +134,14 @@ class ElasticsearchTranslator implements ISchemaTranslator
             $esField['properties'] = $this->translateNestedProperties($field);
         }
 
+        // The sub-fields of an object are declared with Core types, as CMS `Content` declares `extension`: each one
+        // becomes an Elasticsearch leaf, with `meta.filterable` where it is filterable, which is what the constraint
+        // layer reads back and what the cluster accepts. Copied as they came, they carried the Core-only
+        // `filterable` key, which the cluster refuses, and no filter on them passed the constraint layer.
+        if ($field->type === FieldType::Object && isset($field->options['properties'])) {
+            $esField['properties'] = $this->translateNestedProperties($field);
+        }
+
         if (is_string($field->options['relation'] ?? null)) {
             $esField['meta']['relation'] = $field->options['relation'];
         }
