@@ -75,6 +75,7 @@ use Modules\Core\Search\Enums\SearchMode as SearchDepth;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
 use Modules\Core\Search\Services\SearchCostGuard;
+use Modules\Core\Search\Support\RequestedLocale;
 use Modules\Core\Search\Traits\Searchable;
 use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\Crud\Aggregate\AggregateEngine;
@@ -3049,6 +3050,9 @@ class CrudService
                 $builder->where($field, $value);
             }
         }
+
+        // The orchestrated path restricts every strategy to the requested language: the basic one does the same.
+        RequestedLocale::apply($builder, $model);
 
         $request_filters = $requestData->filters;
         $this->auth->injectAclFilters($requestData, $permissionName);

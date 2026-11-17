@@ -11,13 +11,13 @@ use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\Sort;
 use Modules\Core\Helpers\LocaleContext;
-use Modules\Core\Search\Contracts\ILocaleFilterableEngine;
 use Modules\Core\Search\Contracts\IProvidesRerankerText;
 use Modules\Core\Search\Contracts\IReranker;
 use Modules\Core\Search\Contracts\IRerankerWithModel;
 use Modules\Core\Search\DTOs\AdvancedSearchResult;
 use Modules\Core\Search\DTOs\RerankResult;
 use Modules\Core\Search\DTOs\ResolvedTextMatch;
+use Modules\Core\Search\Support\RequestedLocale;
 use Modules\Core\Search\Support\SearchDegradations;
 use RuntimeException;
 use Throwable;
@@ -168,23 +168,14 @@ class EnsembleSearchService
     }
 
     /**
-     * Restricts the search to the documents available in the language the results are requested in, which is
-     * the language of the locale context. The query may be in any language and the vectors carry none: only
-     * the documents the language can be shown for come back, and the engine applies the restriction itself, so
-     * the first results are not taken by documents that would be dropped afterwards.
-     *
-     * Only an engine that understands the restriction gets it, and only for a model whose index records the
-     * languages: any other would read `locales` as an attribute the models do not have and return nothing.
+     * Restricts the search to the documents available in the language of the locale context, where the engine
+     * understands it: see {@see RequestedLocale}.
      *
      * @param  ScoutBuilder<Model>  $builder
      */
     public function applyRequestedLocale(ScoutBuilder $builder, Model $model): void
     {
-        $engine = $this->engineOf($model);
-
-        if ($engine instanceof ILocaleFilterableEngine && $engine->filtersByLocale($model)) {
-            $builder->where('locales', [LocaleContext::get()]);
-        }
+        RequestedLocale::apply($builder, $model);
     }
 
     /**

@@ -25,8 +25,8 @@ use Modules\Core\Tests\Support\FakeVectorProfile;
  *
  * The limit holds every row, so recall plays no part: each path must return exactly the eligible records.
  *
- * Locale is not covered here: the database engine has no locale field to filter on (it is not an
- * ILocaleFilterableEngine), so no path filters by locale at this engine.
+ * Locale is covered by RequestedLocaleSearchPathTest: the database engine has no locale field to filter on (it is
+ * not an ILocaleFilterableEngine), so no path filters by locale at this engine.
  */
 
 beforeEach(function (): void {
