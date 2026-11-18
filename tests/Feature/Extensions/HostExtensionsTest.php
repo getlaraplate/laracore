@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Modules\Core\Casts\SearchMode;
+use Modules\Core\Search\Extensions\ExtensionDocumentCheck;
 use Modules\Core\Search\Extensions\ExtensionFieldConflict;
 use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Tests\Stubs\Extensions\ExtensionHostStub;
@@ -146,3 +147,20 @@ it('keeps extended rows out of every search path with no default search filter d
     // page and be dropped at reload.
     expect($ids)->toBe($plain);
 })->with([SearchMode::Basic, SearchMode::Orchestrated, SearchMode::Auto]);
+
+it('finds where an extender writes and declares different extension fields', function (): void {
+    expect(ExtensionDocumentCheck::violations(FirstExtenderStub::class))->toBe([]);
+
+    SecondExtenderStub::$mapping = [];
+    $undeclared = ExtensionDocumentCheck::violations(SecondExtenderStub::class);
+
+    SecondExtenderStub::$mapping = ['kind' => FieldType::Keyword, 'size' => FieldType::Integer, 'type' => FieldType::Keyword];
+    $unwritten = ExtensionDocumentCheck::violations(SecondExtenderStub::class);
+
+    expect($undeclared)->toHaveCount(1)
+        ->and($undeclared[0])->toContain('writes `extension.kind`')
+        ->and($unwritten)->toHaveCount(3)
+        ->and($unwritten[0])->toContain('declares `extension.size`')
+        ->and($unwritten[1])->toContain('declares `extension.type`')
+        ->and($unwritten[2])->toContain('`extension.type`, which holds the alias');
+});

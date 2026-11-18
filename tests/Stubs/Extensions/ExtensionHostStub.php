@@ -24,7 +24,8 @@ use Override;
  *
  * The engine is the database engine reading the table without the hiding scope, as an external index holds every
  * row. `title` is filterable, an attribute an extender mounts from its host; the mapping carries the `extension`
- * object of the registered extenders, as a host's index does, though the database engine cannot filter on it.
+ * object of the registered extenders, as a host's index does, which the database engine reads from the extender
+ * tables.
  */
 final class ExtensionHostStub extends Model implements IExtendableModel
 {
@@ -84,7 +85,7 @@ final class ExtensionHostStub extends Model implements IExtendableModel
         $extension_properties = $this->extensionSearchMapping();
 
         if ($extension_properties !== []) {
-            $schema->addField(new FieldDefinition('extension', FieldType::Object, [IndexType::Searchable, IndexType::Filterable], ['properties' => $extension_properties]));
+            $schema->addField(new FieldDefinition(self::EXTENSION_FIELD, FieldType::Object, [IndexType::Searchable, IndexType::Filterable], ['properties' => $extension_properties]));
         }
 
         return $this->getSearchMappingTrait($schema);

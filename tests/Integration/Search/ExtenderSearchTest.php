@@ -17,6 +17,7 @@ use Modules\Core\Models\Permission;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Search\Extensions\ExtenderFilterTranslator;
+use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
 use Modules\Core\Search\Support\DefaultSearchFilters;
 use Modules\Core\Services\Crud\DTOs\CrudResult;
 use Modules\Core\Tests\Stubs\Extensions\ExtensionHostStub;
@@ -35,8 +36,7 @@ use Modules\Core\Tests\Support\FakeVectorProfile;
  *
  * The database engine lists the newest rows first. A page smaller than the rows the engine holds shows which
  * condition the engine applied: a condition left to the reload would let other rows take the page and be dropped.
- * The database engine cannot filter on `extension.*` (it reads the host table), so the translation of an indexed own
- * column is checked on the translator.
+ * The database engine reads the host table, where `extension.<column>` is an EXISTS on the extender tables.
  */
 
 beforeEach(function (): void {
@@ -134,6 +134,63 @@ it('filters on an attribute mounted from the host by the host field', function (
 
     expect($hosts)->toBe([$beta->id]);
 })->with([SearchMode::Basic, SearchMode::Orchestrated, SearchMode::Auto]);
+
+it('filters on an own column the extender indexes, through its extension field', function (SearchMode $mode, FilterOperator $operator, string|array $value): void {
+    ExtensionFixture::row('needle alpha', FirstExtenderStub::ALIAS, 'gold');
+    $beta = ExtensionFixture::row('needle beta', FirstExtenderStub::ALIAS, 'silver');
+
+    $hosts = extender_search_hosts(extender_search($mode, 10, new FiltersGroup([new Filter('kind', $value, $operator)])));
+
+    expect($hosts)->toBe([$beta->id]);
+})->with([SearchMode::Basic, SearchMode::Orchestrated, SearchMode::Auto])->with([
+    'equal' => [FilterOperator::Equals, 'silver'],
+    'in' => [FilterOperator::In, ['silver', 'bronze']],
+    'not equal' => [FilterOperator::NotEquals, 'gold'],
+]);
+
+it('applies an ACL condition on an indexed own column at the engine', function (SearchMode $mode): void {
+    $allowed = ExtensionFixture::row('needle beta', FirstExtenderStub::ALIAS, 'silver');
+    ExtensionFixture::row('needle alpha', FirstExtenderStub::ALIAS, 'gold');
+
+    $user = extender_search_user(new FiltersGroup([new Filter('kind', 'silver')]));
+
+    // A page of one: left to the reload, the newer denied row would take it and the page would come back empty.
+    expect(extender_search_hosts(extender_search($mode, 1, null, $user)))->toBe([$allowed->id]);
+})->with([SearchMode::Basic, SearchMode::Orchestrated, SearchMode::Auto]);
+
+it('filters a host on an extension field through the extender tables that declare it', function (): void {
+    $gold = ExtensionFixture::row('needle first gold', FirstExtenderStub::ALIAS, 'gold');
+    $second_gold = ExtensionFixture::row('needle second gold', SecondExtenderStub::ALIAS, 'gold');
+    ExtensionFixture::row('needle first silver', FirstExtenderStub::ALIAS, 'silver');
+    ExtensionFixture::row('needle plain');
+
+    $builder = ExtensionHostStub::search('needle');
+    app(ScoutSearchConstraintApplier::class)->apply($builder, new ExtensionHostStub, new FiltersGroup([new Filter('extension.kind', 'gold')]));
+
+    $ids = $builder->get()->map(static fn (Model $row): int => (int) $row->getKey())->sort()->values()->all();
+
+    expect($ids)->toBe([$gold->id, $second_gold->id]);
+});
+
+it('opens the hydration of a host to its extended rows only when the filters ask for an alias', function (): void {
+    $plain = ExtensionFixture::row('needle plain');
+    $extended = ExtensionFixture::row('needle extended', FirstExtenderStub::ALIAS);
+    $applier = app(ScoutSearchConstraintApplier::class);
+
+    $plain_search = ExtensionHostStub::search('needle');
+    $applier->apply($plain_search, new ExtensionHostStub, new FiltersGroup([new Filter('extension_type', null)]));
+
+    $alias_search = ExtensionHostStub::search('needle');
+    $applier->apply($alias_search, new ExtensionHostStub, new FiltersGroup([new Filter('extension_type', FirstExtenderStub::ALIAS)]));
+
+    // Hydration: the engines load the hits by key through the model query and the builder's query callback, so an
+    // extended hit survives it only when the search opened the host.
+    $hydrated = static fn ($search): array => $search->model->queryScoutModelsByIds($search, [$plain->id, $extended->id])
+        ->orderBy('id')->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+
+    expect($hydrated($plain_search))->toBe([$plain->id])
+        ->and($hydrated($alias_search))->toBe([$plain->id, $extended->id]);
+});
 
 it('refuses a filter on an own column the host index does not filter on', function (SearchMode $mode): void {
     $row = ExtensionFixture::row('needle alpha', FirstExtenderStub::ALIAS);

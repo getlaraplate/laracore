@@ -21,6 +21,13 @@ use Illuminate\Support\Collection;
 interface IExtendableModel
 {
     /**
+     * The key of the search document under which the host writes {@see self::extensionSearchDocument()} and the
+     * mapping declares {@see self::extensionSearchMapping()}: a filter on an extender's indexed column is a filter
+     * on `extension.<column>`.
+     */
+    public const string EXTENSION_FIELD = 'extension';
+
+    /**
      * The column holding, on a row an extender owns, that extender's alias; null on a plain row.
      */
     public function extensionTypeColumn(): string;

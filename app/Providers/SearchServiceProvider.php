@@ -18,6 +18,7 @@ use Modules\Core\Search\Contracts\ISearchPlanner;
 use Modules\Core\Search\Contracts\ISearchStrategyResolver;
 use Modules\Core\Search\Contracts\IVectorProfileProvider;
 use Modules\Core\Search\Contracts\IVectorSearchAvailability;
+use Modules\Core\Search\Engines\CollectionEngine;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Engines\ElasticsearchEngine;
 use Modules\Core\Search\Engines\TypesenseEngine;
@@ -54,6 +55,7 @@ final class SearchServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->make(EngineManager::class)->extend('database', fn (Application $app): DatabaseEngine => $app->make(DatabaseEngine::class));
+        $this->app->make(EngineManager::class)->extend('collection', static fn (): CollectionEngine => new CollectionEngine());
 
         $this->app->singleton(ISearchEngine::class, static fn (Application $app) => $app->make(EngineManager::class)->engine());
 

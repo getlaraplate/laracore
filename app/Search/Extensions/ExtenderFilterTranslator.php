@@ -89,7 +89,7 @@ final readonly class ExtenderFilterTranslator
                 return null;
             }
 
-            $name = 'extension.' . $name;
+            $name = IExtendableModel::EXTENSION_FIELD . '.' . $name;
         }
 
         return $this->applier->isFilterable($host, $name) ? $name : null;
