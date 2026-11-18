@@ -828,7 +828,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
     /**
      * Replace Laravel's cache manager so Cache:: resolves Core Repository
-     * (tryByRequest, clearByEntity, …) for every configured store including failover.
+     * (clearByEntity, clearByUser, …) for every configured store including failover.
      */
     /**
      * Register the platform's own Blade icon set.
