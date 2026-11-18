@@ -15,6 +15,7 @@ use Modules\Core\Models\Relations\ClosureBloodline;
 use Modules\Core\Models\Relations\ClosureLineage;
 use Modules\Core\Models\Relations\ClosureRootAncestor;
 use Modules\Core\Models\Relations\Siblings;
+use Modules\Core\SoftDeletes\RowRemoval;
 use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
 
 /**
@@ -334,22 +335,11 @@ trait HasClosureTable
     }
 
     /**
-     * Whether the delete about to run removes the row: always without soft deletes; with them, on a force delete
-     * and, with Core's soft deletes, when they are switched off for the model. A force delete fires `deleting` too,
-     * after `forceDeleting`, and Core's switched-off delete fires `deleting` alone: listening to `deleting` covers
-     * both, and a soft delete is told apart here.
+     * Whether the delete about to run removes the row, see {@see RowRemoval::inDelete()}.
      */
     protected function deleteRemovesRow(): bool
     {
-        if (! method_exists($this, 'isForceDeleting')) {
-            return true;
-        }
-
-        if ($this->isForceDeleting() === true) {
-            return true;
-        }
-
-        return method_exists($this, 'softDeletesEnabledBySettings') && $this->softDeletesEnabledBySettings() === false;
+        return RowRemoval::inDelete($this);
     }
 
     /**

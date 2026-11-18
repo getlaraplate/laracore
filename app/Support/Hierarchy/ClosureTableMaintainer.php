@@ -154,7 +154,9 @@ final readonly class ClosureTableMaintainer
     /**
      * Unlink the subtrees of the nodes about to be deleted from everything above them, for a bulk delete (a query
      * deleting many rows, which fires no model event). A single model delete uses {@see self::detachChildren()}
-     * after the row is gone instead, so a delete cancelled by a listener changes nothing.
+     * after the row is gone instead, so a delete cancelled by a listener changes nothing; an owner's hard delete, which
+     * removes the rows through a cascading foreign key, uses {@see self::childrenLeftBy()} before it and
+     * {@see self::rootParentless()} after it, for the same reason.
      *
      * Removes every `(a, x)` where some doomed `d` has `(a, d)` in the closure and `(d, x)` with depth > 0. The rows
      * whose ancestor or descendant is a doomed node itself go with the node, through the cascading foreign keys.
@@ -213,6 +215,64 @@ final readonly class ClosureTableMaintainer
         $this->connection->transaction(function () use ($childIds, $ancestorIds): void {
             foreach ($childIds as $child_id) {
                 $this->unlinkFromAncestors($child_id, $ancestorIds, includeNode: true);
+            }
+        });
+    }
+
+    /**
+     * The nodes a delete of the doomed nodes leaves without their parent: the children of a doomed node that are
+     * not doomed themselves, by key. Only reads, so the caller reads them before a delete that removes the doomed
+     * rows by a cascading foreign key (an owner's hard delete, which fires no event on them) and roots them with
+     * {@see self::rootParentless()} once the delete is certain.
+     *
+     * `$doomedKeys` is read as in {@see self::detachSubtreesOf()}.
+     *
+     * @param  Closure(Builder): (Builder|EloquentBuilder<Model>|null)  $doomedKeys
+     *
+     * @throws LogicException When the closure returns something other than a query builder or null
+     *
+     * @return list<int|string>
+     */
+    public function childrenLeftBy(Closure $doomedKeys): array
+    {
+        $doomed = $this->doomedQuery($doomedKeys);
+
+        return $this->nodeKeys(
+            $this->connection->table($this->table)
+                ->whereIn($this->parentColumn, $doomed)
+                ->whereNotIn($this->keyColumn, $doomed)
+                ->orderBy($this->keyColumn),
+        );
+    }
+
+    /**
+     * Move to the roots, each with its subtree, the listed nodes whose parent column is null now: the children a
+     * delete left behind once the parent foreign key cleared their parent (see {@see self::childrenLeftBy()}). Their
+     * subtrees are unlinked from the ancestors the closure still gives them, as {@see self::moveSubtree()} does with
+     * a null parent. A listed node that has a parent keeps its links: whatever gave it that parent moved it already.
+     *
+     * The keys are read in chunks of {@see self::DESCENDANT_CHUNK_SIZE}, inside one transaction.
+     *
+     * @param  list<int|string>  $ids
+     */
+    public function rootParentless(array $ids): void
+    {
+        if ($ids === []) {
+            return;
+        }
+
+        $this->connection->transaction(function () use ($ids): void {
+            foreach (array_chunk($ids, self::DESCENDANT_CHUNK_SIZE) as $chunk) {
+                $parentless = $this->nodeKeys(
+                    $this->connection->table($this->table)
+                        ->whereIn($this->keyColumn, $chunk)
+                        ->whereNull($this->parentColumn)
+                        ->orderBy($this->keyColumn),
+                );
+
+                foreach ($parentless as $id) {
+                    $this->moveSubtree($id, null);
+                }
             }
         });
     }
@@ -282,6 +342,28 @@ final readonly class ClosureTableMaintainer
         foreach ($query->pluck($column) as $key) {
             if (! is_int($key) && ! is_string($key)) {
                 throw new LogicException(sprintf('The closure table "%s" holds a non-key %s value.', $this->closureTable, $column));
+            }
+
+            $keys[] = $key;
+        }
+
+        return $keys;
+    }
+
+    /**
+     * The key column's values of a query on the model table.
+     *
+     * @throws LogicException When a value is not a key
+     *
+     * @return list<int|string>
+     */
+    private function nodeKeys(Builder $query): array
+    {
+        $keys = [];
+
+        foreach ($query->pluck($this->keyColumn) as $key) {
+            if (! is_int($key) && ! is_string($key)) {
+                throw new LogicException(sprintf('The table "%s" holds a non-key %s value.', $this->table, $this->keyColumn));
             }
 
             $keys[] = $key;

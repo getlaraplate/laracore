@@ -19,6 +19,7 @@ use Modules\Core\Models\Concerns\HasActivation;
 use Modules\Core\Models\Concerns\HasPath;
 use Modules\Core\Models\Concerns\HasSlug;
 use Modules\Core\Observers\DynamicContentMetadataObserver;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Model;
 use Override;
 
@@ -28,7 +29,7 @@ use Override;
  * @property string $slug
  * @property IDynamicEntityTypable $type
  */
-#[ObservedBy(DynamicContentMetadataObserver::class)]
+#[ObservedBy([DynamicContentMetadataObserver::class, HierarchyOwnerObserver::class])]
 abstract class Entity extends Model implements IActivatableModel, ILockableModel
 {
     // region Traits

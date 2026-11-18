@@ -19,6 +19,7 @@ use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Pivot\Fieldable;
 use Modules\Core\Models\Pivot\Presettable;
 use Modules\Core\Observers\DynamicContentMetadataObserver;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Model;
 use Modules\Core\Services\PresetVersioningService;
 use Override;
@@ -29,7 +30,7 @@ use Override;
  * @property int|string|null $entity_id
  * @property int|string|null $template_id
  */
-#[ObservedBy(DynamicContentMetadataObserver::class)]
+#[ObservedBy([DynamicContentMetadataObserver::class, HierarchyOwnerObserver::class])]
 abstract class Preset extends Model implements IActivatableModel
 {
     use HasActivation {

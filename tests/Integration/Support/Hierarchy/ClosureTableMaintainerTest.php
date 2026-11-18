@@ -367,3 +367,85 @@ it('detaches the children of a node already deleted from the ancestors read befo
         [$second_child, $second_child, 0],
     ]));
 });
+
+it('reads the children a delete of the doomed nodes leaves without their parent', function (): void {
+    $root = ($this->addNode)(null);
+    $first_doomed = ($this->addNode)($root);
+    $survivor = ($this->addNode)($first_doomed);
+    ($this->addNode)($survivor);
+    $second_doomed = ($this->addNode)($survivor);
+    $second_survivor = ($this->addNode)($second_doomed);
+    $nested_doomed = ($this->addNode)($first_doomed);
+    $nested_survivor = ($this->addNode)($nested_doomed);
+    $doomed = [$first_doomed, $second_doomed, $nested_doomed];
+
+    expect($this->maintainer->childrenLeftBy(static fn (Builder $query): Builder => $query->whereIn('id', $doomed)))
+        ->toBe([$survivor, $second_survivor, $nested_survivor])
+        ->and($this->maintainer->childrenLeftBy(
+            static fn (Builder $ignored): EloquentBuilder => (new ClosureTreeStubModel)->setTable(MAINTAINER_NODES)->newQuery()->whereKey($second_doomed),
+        ))->toBe([$second_survivor])
+        ->and($this->maintainer->childrenLeftBy(static fn (Builder $query): Builder => $query->where('id', $second_survivor)))->toBe([]);
+});
+
+it('roots the listed nodes the delete left without a parent and leaves the others', function (): void {
+    $root = ($this->addNode)(null);
+    $first_doomed = ($this->addNode)($root);
+    $survivor = ($this->addNode)($first_doomed);
+    $leaf = ($this->addNode)($survivor);
+    $second_doomed = ($this->addNode)($survivor);
+    $second_survivor = ($this->addNode)($second_doomed);
+    $second_leaf = ($this->addNode)($second_survivor);
+    $doomed = [$first_doomed, $second_doomed];
+    $left = $this->maintainer->childrenLeftBy(static fn (Builder $query): Builder => $query->whereIn('id', $doomed));
+
+    DB::table(MAINTAINER_NODES)->whereIn('id', $doomed)->delete();
+    DB::table(MAINTAINER_NODES)->whereIn('id', $left)->update(['parent_id' => null]);
+
+    $this->maintainer->rootParentless([]);
+    $this->maintainer->rootParentless([$leaf]);
+
+    expect(maintainerClosureRows())->toContain(sprintf('%d>%d:2', $root, $survivor));
+
+    $this->maintainer->rootParentless([...$left, $leaf, $second_leaf]);
+    $maintained = maintainerClosureRows();
+
+    expect($maintained)->toBe(maintainerExpectedRows([
+        [$root, $root, 0],
+        [$survivor, $survivor, 0],
+        [$leaf, $leaf, 0],
+        [$survivor, $leaf, 1],
+        [$second_survivor, $second_survivor, 0],
+        [$second_leaf, $second_leaf, 0],
+        [$second_survivor, $second_leaf, 1],
+    ]));
+
+    $this->maintainer->rebuild();
+
+    expect(maintainerClosureRows())->toBe($maintained);
+});
+
+it('reads and roots more children than one statement binds', function (): void {
+    $root = ($this->addNode)(null);
+    $doomed = ($this->addNode)($root);
+    $children = [];
+
+    for ($index = 0; $index < 450; $index++) {
+        $children[] = ($this->addNode)($doomed);
+    }
+
+    $left = $this->maintainer->childrenLeftBy(static fn (Builder $query): Builder => $query->where('id', $doomed));
+
+    expect($left)->toBe($children);
+
+    DB::table(MAINTAINER_NODES)->where('id', $doomed)->delete();
+    DB::table(MAINTAINER_NODES)->whereIn('parent_id', [$doomed])->update(['parent_id' => null]);
+    $this->maintainer->rootParentless($left);
+    $maintained = maintainerClosureRows();
+
+    expect(DB::table(MAINTAINER_CLOSURE)->where('ancestor_id', $root)->count())->toBe(1)
+        ->and(count($maintained))->toBe(451);
+
+    $this->maintainer->rebuild();
+
+    expect(maintainerClosureRows())->toBe($maintained);
+});

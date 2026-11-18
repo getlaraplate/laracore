@@ -128,6 +128,7 @@ use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Services\StubOutboxPublisher;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Modules\Core\Support\Env\ConfigCacheRefresher;
+use Modules\Core\Support\Hierarchy\OwnerCascadeRegistry;
 use Modules\Core\Support\OwnerTimestamp;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
@@ -274,6 +275,10 @@ final class CoreServiceProvider extends ModuleServiceProvider
         // at boot writes into the same registry the Searchable trait resolves from.
         $this->app->singleton(SearchableContributorRegistry::class);
         $this->app->singleton(OwnerAuthorizerRegistry::class);
+
+        // Singleton so every module registering an owner cascade into its hierarchy at boot writes into the
+        // registry the owners' observer reads, and the pending reads of a delete outlive one observer call.
+        $this->app->singleton(OwnerCascadeRegistry::class);
 
         // Singleton so every module registering a setting-change confirmation at boot
         // writes into the registry the settings edit page reads.

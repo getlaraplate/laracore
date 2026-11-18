@@ -48,6 +48,7 @@ use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Pivot\ModelHasRole;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Observers\UserObserver;
 use Modules\Core\Services\ModificationVoteService;
 use Modules\Core\SoftDeletes\SoftDeletes;
@@ -58,7 +59,7 @@ use Spatie\Permission\PermissionRegistrar;
 use Spatie\Permission\Traits\HasRoles;
 use UnexpectedValueException;
 
-#[ObservedBy([UserObserver::class])]
+#[ObservedBy([UserObserver::class, HierarchyOwnerObserver::class])]
 class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, MustVerifyEmail, PasskeyUser
 {
     use HasApiTokens;
