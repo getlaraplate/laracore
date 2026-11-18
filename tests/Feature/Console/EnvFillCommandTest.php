@@ -28,14 +28,7 @@ afterEach(function (): void {
 
     chmod($this->envDir, 0o700);
 
-    foreach (glob($this->envDir . '/{,.}*', GLOB_BRACE) ?: [] as $file) {
-        if (is_file($file)) {
-            chmod($file, 0o600);
-            unlink($file);
-        }
-    }
-
-    rmdir($this->envDir);
+    exec('rm -rf ' . escapeshellarg($this->envDir));
 });
 
 /**
@@ -269,4 +262,31 @@ it('exits 1 and writes nothing when there is no terminal to ask on', function ()
         ->assertExitCode(BaseCommand::FAILURE);
 
     expect(file_get_contents($options['--file']))->toBe("A=1\n");
+});
+
+it('exits 1 for a read-only file even when nothing is missing', function (): void {
+    if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+        $this->markTestSkipped('A superuser can write to a read-only file.');
+    }
+
+    $options = envFillFixture($this->envDir, "A=1\n", "A=1\n");
+    chmod($options['--file'], 0o400);
+
+    $this->artisan('env:fill', $options)
+        ->expectsOutputToContain('cannot be written')
+        ->assertExitCode(BaseCommand::FAILURE);
+});
+
+it('says so and exits 1 when the cache could not be rebuilt, instead of reporting it rebuilt', function (): void {
+    app()->setBasePath($this->envDir);
+    $this->refresher->fails = true;
+    envFillFixture($this->envDir, "APP_ENV=production\n", "APP_ENV=local\nAI_TIMEOUT=30\n");
+
+    $this->artisan('env:fill')
+        ->expectsQuestion('Variable to set', 'AI_TIMEOUT')
+        ->expectsQuestion('AI_TIMEOUT', '45')
+        ->expectsConfirmation('Run config:clear and config:cache now?', 'yes')
+        ->doesntExpectOutputToContain('was rebuilt')
+        ->expectsOutputToContain('config:cache failed')
+        ->assertExitCode(BaseCommand::FAILURE);
 });

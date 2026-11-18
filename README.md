@@ -77,6 +77,8 @@ php artisan env:fill
 
 It lists the variables of `.env.example` that the `.env` does not define (a commented line counts as not defined, an empty `NAME=` as defined), autocompletes their names, asks the value of the one you pick (the example value is the default, the comments above it are the hint, secret names such as `*_KEY`, `*_SECRET`, `*_PASSWORD`, `*_TOKEN` are asked with a masked prompt) and appends it to the file at once. An empty name ends the loop. If anything was written to the application's own `.env`, it then offers to run `config:clear` and `config:cache`; do not leave a cached configuration on a machine that runs the test suite.
 
+The prompts take one line: a value that spans several lines (a PEM key) is written by editing the file, because a paste is cut at its first line. A secret name (any underscore-separated word `KEY`, `SECRET`, `PASSWORD`, `PASS`, `TOKEN` or `CREDENTIAL`, so also `AWS_ACCESS_KEY_ID`) is asked masked.
+
 `--file=` and `--example=` point it at another pair of files, for example a copy of the production `.env`; the cache question is then not asked. Without a terminal to ask on (`--no-interaction`, or standard input that is not a terminal, as in `ssh host 'php artisan env:fill'` without `-t`) it only reports how many variables are missing and exits with `1`. It writes through a symlinked `.env` (Deployer, Envoyer layouts) to the file the link points to, keeps the mode and, for a superuser, the owner of the file, and builds on what the file holds when it writes, so an edit made while a prompt is open is kept. Accepting the default offered writes the example's own text, so a `"${APP_NAME}"` reference stays one.
 
 ## Configuration
