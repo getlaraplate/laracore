@@ -56,9 +56,13 @@ use Modules\Core\ApplicationContent\ApplicationContentRetrievalProviderRegistry;
 use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProviderRegistryInterface;
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
+use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
+use Modules\Core\Cache\Labels\MeasuredLabelIndex;
+use Modules\Core\Console\PruneCacheLabelsCommand;
 use Modules\Core\Console\PruneMediaDraftsCommand;
 use Modules\Core\Console\WarmCacheCommand;
 use Modules\Core\Contracts\BootSampler;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Contracts\OutboxPublisher;
 use Modules\Core\Contracts\RefreshesConfigCache;
 use Modules\Core\Exceptions\ConfigurationException;
@@ -227,6 +231,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
         parent::register();
 
         $this->registerCacheManager();
+        $this->registerCacheLabelIndex();
 
         $this->registerPostgresConnection();
 
@@ -375,6 +380,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
             // Housekeeping only: expiry is evaluated on read, so a missed run changes nothing.
             $schedule->command(ModelLockSweepCommand::class)->everyFiveMinutes()->onOneServer();
+            $schedule->command(PruneCacheLabelsCommand::class)->hourly()->onOneServer();
 
             $crons = [];
             $cache_key = new ReflectionClass(CronJob::class)->newInstanceWithoutConstructor()->getTable();
@@ -869,6 +875,18 @@ final class CoreServiceProvider extends ModuleServiceProvider
                 $db->purge($name);
             }
         }
+    }
+
+    private function registerCacheLabelIndex(): void
+    {
+        $this->app->singleton(ICacheLabelIndex::class, static function (): ICacheLabelIndex {
+            $cache = Cache::store();
+
+            return new MeasuredLabelIndex(
+                CacheLabelIndexFactory::forStore($cache),
+                CacheLabelIndexFactory::statsRepository($cache),
+            );
+        });
     }
 
     private function registerCacheManager(): void
