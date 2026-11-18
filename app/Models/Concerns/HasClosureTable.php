@@ -230,6 +230,16 @@ trait HasClosureTable
         return new TreeCollection($models);
     }
 
+    public function getClosureTable(): string
+    {
+        return $this->getTable() . '_closure';
+    }
+
+    public function getParentKeyName(): string
+    {
+        return 'parent_id';
+    }
+
     protected static function insertClosures($model, $ancestors = []): void
     {
         $selfRow = [
@@ -329,11 +339,6 @@ trait HasClosureTable
     protected function withBloodline(Builder $query): Builder
     {
         return $query->with(['ancestors', 'descendants']);
-    }
-
-    protected function getClosureTable(): string
-    {
-        return $this->getTable() . '_closure';
     }
 
     protected function getModelTable(): string

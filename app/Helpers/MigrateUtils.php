@@ -168,6 +168,32 @@ final class MigrateUtils
     }
 
     /**
+     * Create the closure table `{modelTable}_closure` of a hierarchical model.
+     *
+     * One row per ancestor and descendant pair, the node itself included at depth 0. Both keys reference the
+     * model table's `id` and cascade on delete, so a deleted node takes its own rows with it; the rows that
+     * link its ancestors to its descendants are removed by
+     * {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::detachSubtreesOf()}. No timestamps: rows
+     * are derived from the model table's parent column and rebuilt from it.
+     */
+    public static function closureTable(string $modelTable, ?ConnectionInterface $connection = null): void
+    {
+        $connection = self::connection($connection);
+        self::assertIdentifier($modelTable);
+        $closure_table = $modelTable . '_closure';
+        $depth_index_name = $closure_table . '_descendant_depth_idx';
+        self::assertIdentifier($depth_index_name);
+
+        $connection->getSchemaBuilder()->create($closure_table, static function (Blueprint $table) use ($modelTable, $depth_index_name): void {
+            $table->foreignId('ancestor_id')->constrained($modelTable)->cascadeOnDelete();
+            $table->foreignId('descendant_id')->constrained($modelTable)->cascadeOnDelete();
+            $table->unsignedSmallInteger('depth')->comment('Edges between ancestor and descendant; 0 on the self row');
+            $table->primary(['ancestor_id', 'descendant_id']);
+            $table->index(['descendant_id', 'depth'], $depth_index_name);
+        });
+    }
+
+    /**
      * Add common timestamp columns to a table.
      *
      * @param  Blueprint  $table  The table blueprint
