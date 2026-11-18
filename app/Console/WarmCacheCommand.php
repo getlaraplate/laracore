@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Modules\Core\Console;
 
-use Cron\CronExpression;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\Cache\CacheManager;
 use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
@@ -131,22 +131,11 @@ final class WarmCacheCommand extends Command
         }
 
         $cache_key = new CronJob()->getTable();
-        $crons = CronJob::query()
-            ->active()
-            ->select(['command', 'schedule', 'parameters', 'on_one_server', 'without_overlapping'])
-            ->get()
-            ->map(static function (CronJob $cron): array {
-                $schedule = $cron->getAttribute('schedule');
+        $crons = resolve(LoadActiveCronJobsAction::class)();
 
-                return [
-                    'command' => (string) $cron->getAttribute('command'),
-                    'schedule' => $schedule instanceof CronExpression ? $schedule->getExpression() : (string) $schedule,
-                    'parameters' => $cron->getAttribute('parameters'),
-                    'on_one_server' => (bool) $cron->getAttribute('on_one_server'),
-                    'without_overlapping' => (bool) $cron->getAttribute('without_overlapping'),
-                ];
-            })
-            ->all();
+        if ($crons === []) {
+            return 0;
+        }
 
         $index = resolve(ICacheLabelIndex::class);
         $lookup = $index->lookup($cache_key, new CacheDependencies([CacheLabel::table($cache_key)]));

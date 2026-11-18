@@ -8,10 +8,8 @@ use Barryvdh\LaravelIdeHelper\IdeHelperServiceProvider;
 use BladeUI\Icons\Factory as IconFactory;
 use Carbon\CarbonImmutable;
 use Closure;
-use Cron\CronExpression;
 use Elastic\Client\ClientBuilderInterface;
 use Elastic\Elasticsearch\Client as ElasticsearchClient;
-use Exception;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceCreateRecordPageClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceEditRecordPageClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceListRecordsPageClassGenerator;
@@ -56,6 +54,7 @@ use Modules\Core\ApplicationContent\ApplicationContentRetrievalProviderRegistry;
 use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProviderRegistryInterface;
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
+use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
@@ -448,67 +447,15 @@ final class CoreServiceProvider extends ModuleServiceProvider
      */
     private function loadCronJobsFromDatabase(): array
     {
-        try {
-            // Live connection check — do not use SchemaInspector here. Its process-level
-            // memoization survives across Pest tests while :memory: SQLite is wiped, which
-            // falsely reports the table as present and floods logs with QueryExceptions.
-            // Query the model's own connection (not the Schema facade default) to preserve
-            // connection affinity.
-            $cron_model = new CronJob;
-
-            if (! $cron_model->getConnection()->getSchemaBuilder()->hasTable($cron_model->getTable())) {
-                return [];
-            }
-
-            $cron_jobs = CronJob::query()
-                ->active()
-                ->select(['command', 'schedule', 'parameters', 'on_one_server', 'without_overlapping'])
-                ->get();
-
-            $normalized = [];
-
-            foreach ($cron_jobs as $cron_job) {
-                $command = $cron_job->getAttribute('command');
-                $schedule = $cron_job->getAttribute('schedule');
-
-                if ($schedule instanceof CronExpression) {
-                    $schedule = $schedule->getExpression();
-                }
-
-                if (! is_scalar($command) || ! is_scalar($schedule)) {
-                    continue;
-                }
-
-                $normalized[] = [
-                    'command' => (string) $command,
-                    'schedule' => (string) $schedule,
-                    'parameters' => $this->cronParameters($cron_job->getAttribute('parameters')),
-                    'on_one_server' => (bool) $cron_job->getAttribute('on_one_server'),
-                    'without_overlapping' => (bool) $cron_job->getAttribute('without_overlapping'),
-                ];
-            }
-
-            return $normalized;
-        } catch (Exception $e) {
-            report($e);
-
-            return [];
-        }
+        return $this->app->make(LoadActiveCronJobsAction::class)();
     }
 
     /**
-     * The parameters of a cron row as the array Laravel's scheduler takes: the column holds JSON, and a
-     * value written as a JSON string comes back as that string.
-     *
      * @return array<int|string, mixed>
      */
     private function cronParameters(mixed $parameters): array
     {
-        if (is_string($parameters)) {
-            $parameters = json_decode($parameters, true);
-        }
-
-        return is_array($parameters) ? $parameters : [];
+        return LoadActiveCronJobsAction::parameters($parameters);
     }
 
     /**

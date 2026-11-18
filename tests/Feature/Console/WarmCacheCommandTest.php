@@ -148,3 +148,26 @@ it('cache:warm stores the active cron jobs in the index under the label of their
         ->and($stored[0]['value'][0]['command'])->toBe('cron-probe:prune')
         ->and($stored[0]['ttl'])->toBe((int) config('cache.duration.long'));
 });
+
+it('the scheduler runs from the cron list that cache:warm stored', function (): void {
+    CronJob::factory()->create(['command' => 'cron-probe:prune', 'schedule' => '*/5 * * * *', 'is_active' => true]);
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+
+    $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
+    $index->stores = [];
+
+    // The rows are gone from the database: only the warmed entry can schedule the command.
+    CronJob::query()->getQuery()->delete();
+    (new ReflectionMethod(Modules\Core\Providers\CoreServiceProvider::class, 'registerCommandSchedules'))
+        ->invoke(new Modules\Core\Providers\CoreServiceProvider(app()));
+
+    $events = array_filter(
+        app(Illuminate\Console\Scheduling\Schedule::class)->events(),
+        static fn (Illuminate\Console\Scheduling\Event $event): bool => str_contains((string) $event->command, 'cron-probe:prune'),
+    );
+
+    expect($events)->toHaveCount(1)
+        ->and(array_values($events)[0]->expression)->toBe('*/5 * * * *')
+        ->and($index->stores)->toBe([]);
+});
