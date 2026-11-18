@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Casts\FieldType;
@@ -21,6 +22,8 @@ use Modules\Core\Models\Field;
 use Modules\Core\Observers\FieldObserver;
 use Modules\Core\Support\RelationGuard;
 use Modules\Core\Tests\Stubs\ClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\DeleteCancellingClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\DeleteRefusingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\HardDeletingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\OrderedClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\SoftDeletingClosureTreeStubModel;
@@ -671,4 +674,97 @@ it('answers existence and count queries through the closure relations', function
             [$forest['c']->id, 1, 1, 3, 0, 1],
             [$forest['c1']->id, 2, 0, 3, 0, 1],
         ]);
+});
+
+it('leaves the closure as it was when a later deleting listener cancels the delete', function (): void {
+    $root = DeleteCancellingClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $middle = DeleteCancellingClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    DeleteCancellingClosureTreeStubModel::query()->create(['parent_id' => $middle->id]);
+    $rows = closureTreeRows();
+
+    expect($middle->delete())->toBeFalse()
+        ->and(DB::table('closure_tree_nodes')->where('id', $middle->id)->exists())->toBeTrue()
+        ->and(closureTreeRows())->toBe($rows);
+});
+
+it('leaves the closure as it was when a later deleting listener throws', function (): void {
+    $root = DeleteRefusingClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $middle = DeleteRefusingClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    DeleteRefusingClosureTreeStubModel::query()->create(['parent_id' => $middle->id]);
+    $rows = closureTreeRows();
+
+    expect(fn (): ?bool => $middle->delete())->toThrow(RuntimeException::class, 'Delete refused.')
+        ->and(DB::table('closure_tree_nodes')->where('id', $middle->id)->exists())->toBeTrue()
+        ->and(closureTreeRows())->toBe($rows);
+});
+
+it('orders nodes tied on depth and on the scope order by key, after the scope order, and still counts and paginates', function (): void {
+    $root = OrderedClosureTreeStubModel::query()->forceCreate(['id' => 1, 'parent_id' => null, 'position' => 1]);
+    $high_key = OrderedClosureTreeStubModel::query()->forceCreate(['id' => 20, 'parent_id' => $root->id, 'position' => 5]);
+    $low_key = OrderedClosureTreeStubModel::query()->forceCreate(['id' => 10, 'parent_id' => $root->id, 'position' => 5]);
+    $first_by_scope = OrderedClosureTreeStubModel::query()->forceCreate(['id' => 30, 'parent_id' => $root->id, 'position' => 2]);
+    $grandchild = OrderedClosureTreeStubModel::query()->forceCreate(['id' => 5, 'parent_id' => $high_key->id, 'position' => 0]);
+
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+
+    $descendants = $root->fresh()->descendants;
+    $sql = collect(DB::getQueryLog())->pluck('query')->last();
+
+    expect($descendants->modelKeys())->toBe([$first_by_scope->id, $low_key->id, $high_key->id, $grandchild->id])
+        ->and($sql)->toEndWith('order by "closure_tree_nodes_closure"."depth" asc, "closure_tree_nodes"."position" asc, "closure_tree_nodes"."id" asc')
+        ->and($root->fresh()->bloodline->modelKeys())->toBe([$root->id, $first_by_scope->id, $low_key->id, $high_key->id, $grandchild->id])
+        ->and($root->fresh()->descendants()->count())->toBe(4)
+        ->and($root->fresh()->descendants()->paginate(2)->total())->toBe(4)
+        ->and($root->fresh()->descendants()->paginate(2)->getCollection()->modelKeys())->toBe([$first_by_scope->id, $low_key->id]);
+
+    DB::disableQueryLog();
+});
+
+it('returns false from moveTo, with nothing changed, when a listener cancels the save', function (): void {
+    $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $a = ClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    $b = ClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    $rows = closureTreeRows();
+
+    Event::listen('eloquent.updating: ' . ClosureTreeStubModel::class, static fn (): bool => false);
+
+    expect($a->fresh()->moveTo($b->fresh()))->toBeFalse()
+        ->and($a->fresh()->parent_id)->toBe($root->id)
+        ->and(closureTreeRows())->toBe($rows);
+});
+
+it('refuses pivot writes on the closure relations', function (): void {
+    $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $other = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $rows = closureTreeRows();
+
+    expect(fn (): mixed => $other->ancestors()->attach($root->id))->toThrow(LogicException::class, 'attach() is refused')
+        ->and(fn (): mixed => $root->descendants()->create([]))->toThrow(LogicException::class, 'create() is refused')
+        ->and(fn (): mixed => $root->bloodline()->sync([$other->id]))->toThrow(LogicException::class, 'sync() is refused')
+        ->and(ClosureTreeStubModel::query()->count())->toBe(2)
+        ->and(closureTreeRows())->toBe($rows);
+});
+
+it('eager loads on parents where one is an ancestor of another', function (): void {
+    $forest = closureTreeForest();
+    $pairs = static fn (EloquentCollection $nodes): array => $nodes
+        ->map(static fn (Model $node): array => [$node->getKey(), $node->getAttribute('depth')])
+        ->all();
+
+    $loaded = ClosureTreeStubModel::query()
+        ->whereKey([$forest['a']->id, $forest['a1']->id])
+        ->with(['ancestors', 'descendants', 'bloodline'])
+        ->get()
+        ->keyBy('id');
+
+    $a = $loaded[$forest['a']->id];
+    $a1 = $loaded[$forest['a1']->id];
+
+    expect($pairs($a->ancestors))->toBe([[$forest['r1']->id, -1]])
+        ->and($pairs($a1->ancestors))->toBe([[$forest['a']->id, -1], [$forest['r1']->id, -2]])
+        ->and($pairs($a->descendants))->toBe([[$forest['a1']->id, 1]])
+        ->and($pairs($a1->descendants))->toBe([])
+        ->and($pairs($a->bloodline))->toBe([[$forest['a']->id, 0], [$forest['a1']->id, 1], [$forest['r1']->id, -1]])
+        ->and($pairs($a1->bloodline))->toBe([[$forest['a1']->id, 0], [$forest['a']->id, -1], [$forest['r1']->id, -2]]);
 });

@@ -23,24 +23,38 @@ use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
  *
  * Relations: `parent`, `children`, `ancestors`, `ancestorsAndSelf`, `descendants`, `descendantsAndSelf`, `bloodline`,
  * `siblings`, `siblingsAndSelf`, `rootAncestor`, `parentAndSelf`, `childrenAndSelf`, all eager-loadable. The nodes
- * the closure relations load come by distance, nearest first, before any order a global scope adds, and carry a
- * signed `depth`: negative above the node, `0` for the node, positive below.
+ * the closure relations load come by distance, nearest first, before any order a global scope adds, then by key,
+ * and carry a signed `depth`: negative above the node, `0` for the node, positive below. Their closure rows are
+ * written only here: the relations refuse pivot writes.
  *
- * Maintenance, each step in a transaction on the model connection:
+ * Maintenance, each write in a transaction on the model connection:
  * - created: the node's closure rows;
  * - updating with a new parent: refused with {@see HierarchyCycleException} when the parent is the node or one of
  *   its descendants, before anything is saved;
  * - updated with a new parent: the whole subtree moves;
- * - deleting, when the row really goes: the subtree is detached from the node's ancestors. The node's own rows go
+ * - deleting, when the row really goes: the node's children and strict ancestors are read, nothing is written, so
+ *   a listener that cancels the delete leaves the closure as it was;
+ * - deleted, once the row is gone: each child's subtree is unlinked from those ancestors. The node's own rows go
  *   with the cascading foreign keys, and the children's parent column with the parent foreign key.
  * Soft deletes and restores leave the closure as it is: a trashed node hides only itself.
  *
- * Writes that bypass model events leave the closure behind; {@see self::rebuildClosure()} repairs it.
+ * A plain `save()` or `delete()` opens no transaction around the model write, so the write and the closure step
+ * are atomic only inside the caller's own transaction (`saveOrFail()`, `DB::transaction()`). Writes that fail
+ * between the two, and writes that bypass model events, leave the closure behind; {@see self::rebuildClosure()}
+ * repairs it.
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  */
 trait HasClosureTable
 {
+    /**
+     * What a delete under way read for the closure in `deleting`, written in `deleted`: the node's children and
+     * strict ancestors. Null when no delete of the row is under way.
+     *
+     * @var array{children: list<int|string>, ancestors: list<int|string>}|null
+     */
+    private ?array $closureDetachment = null;
+
     /**
      * Rebuild the closure table from the parent column.
      */
@@ -209,7 +223,7 @@ trait HasClosureTable
 
     /**
      * Move the node, with its subtree, under a new parent. False, with nothing changed, when the new parent is the
-     * node itself or one of its descendants.
+     * node itself or one of its descendants, or when a listener cancels the save.
      *
      * @throws LogicException When the new parent lives on another connection
      */
@@ -225,12 +239,11 @@ trait HasClosureTable
             return false;
         }
 
-        $this->getConnection()->transaction(function () use ($newParent): void {
+        return $this->getConnection()->transaction(function () use ($newParent): bool {
             $this->setAttribute($this->getParentKeyName(), $newParent->getKey());
-            $this->save();
-        });
 
-        return true;
+            return $this->save();
+        });
     }
 
     public function getClosureTable(): string
@@ -272,14 +285,19 @@ trait HasClosureTable
         });
 
         static::deleting(static function (self $node): void {
-            if (! $node->deleteRemovesRow()) {
+            $node->closureDetachment = $node->deleteRemovesRow() ? $node->readClosureDetachment() : null;
+        });
+
+        static::deleted(static function (self $node): void {
+            $detachment = $node->closureDetachment;
+            $node->closureDetachment = null;
+
+            if ($detachment === null || $node->exists) {
                 return;
             }
 
-            $node->inClosureTransaction(static function () use ($node): void {
-                ClosureTableMaintainer::forModel($node)->detachSubtreesOf(
-                    static fn (QueryBuilder $doomed): QueryBuilder => $doomed->where($node->getKeyName(), $node->closureKey()),
-                );
+            $node->inClosureTransaction(static function () use ($node, $detachment): void {
+                ClosureTableMaintainer::forModel($node)->detachChildren($detachment['children'], $detachment['ancestors']);
             });
         });
     }
@@ -301,6 +319,21 @@ trait HasClosureTable
         }
 
         return method_exists($this, 'softDeletesEnabledBySettings') && $this->softDeletesEnabledBySettings() === false;
+    }
+
+    /**
+     * The node's children and strict ancestors, read from its closure rows while they still exist.
+     *
+     * @return array{children: list<int|string>, ancestors: list<int|string>}
+     */
+    protected function readClosureDetachment(): array
+    {
+        $node = $this->closureKey();
+
+        return [
+            'children' => self::closureKeys($this->closureQuery()->where('ancestor_id', $node)->where('depth', 1)->pluck('descendant_id')->all()),
+            'ancestors' => self::closureKeys($this->closureQuery()->where('descendant_id', $node)->where('depth', '>', 0)->pluck('ancestor_id')->all()),
+        ];
     }
 
     /**
@@ -329,6 +362,17 @@ trait HasClosureTable
     protected function inClosureTransaction(Closure $callback): void
     {
         $this->getConnection()->transaction($callback);
+    }
+
+    /**
+     * The keys among values read from the closure table.
+     *
+     * @param  array<array-key, mixed>  $values
+     * @return list<int|string>
+     */
+    private static function closureKeys(array $values): array
+    {
+        return array_values(array_filter($values, static fn (mixed $value): bool => is_int($value) || is_string($value)));
     }
 
     /**

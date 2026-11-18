@@ -341,3 +341,29 @@ it('builds a maintainer from a model with its connection and closure table', fun
     DB::disconnect('affinity');
     DB::purge('affinity');
 });
+
+it('detaches the children of a node already deleted from the ancestors read before the delete', function (): void {
+    $root = ($this->addNode)(null);
+    $doomed = ($this->addNode)($root);
+    $first_child = ($this->addNode)($doomed);
+    $grandchild = ($this->addNode)($first_child);
+    $second_child = ($this->addNode)($doomed);
+
+    DB::table(MAINTAINER_NODES)->where('id', $doomed)->delete();
+    DB::table(MAINTAINER_NODES)->where('parent_id', $doomed)->update(['parent_id' => null]);
+
+    $this->maintainer->detachChildren([], [$root]);
+    $this->maintainer->detachChildren([$first_child], []);
+
+    expect(maintainerClosureRows())->toContain(sprintf('%d>%d:2', $root, $first_child));
+
+    $this->maintainer->detachChildren([$first_child, $second_child], [$root]);
+
+    expect(maintainerClosureRows())->toBe(maintainerExpectedRows([
+        [$root, $root, 0],
+        [$first_child, $first_child, 0],
+        [$grandchild, $grandchild, 0],
+        [$first_child, $grandchild, 1],
+        [$second_child, $second_child, 0],
+    ]));
+});

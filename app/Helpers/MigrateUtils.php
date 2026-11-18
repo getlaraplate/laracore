@@ -173,7 +173,8 @@ final class MigrateUtils
      * One row per ancestor and descendant pair, the node itself included at depth 0. Both keys reference the
      * model table's `id` and cascade on delete, so a deleted node takes its own rows with it; the rows that
      * link its ancestors to its descendants are removed by
-     * {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::detachSubtreesOf()}. No timestamps: rows
+     * {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::detachChildren()} (a model delete) or
+     * {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::detachSubtreesOf()} (a bulk delete). No timestamps: rows
      * are derived from the model table's parent column and rebuilt from it.
      *
      * Assumes the model table's key is a big-integer `id` (as created by `$table->id()`): both keys are

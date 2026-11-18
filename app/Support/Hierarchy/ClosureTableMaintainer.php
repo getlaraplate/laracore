@@ -152,11 +152,14 @@ final readonly class ClosureTableMaintainer
     }
 
     /**
-     * Unlink the subtrees of the nodes about to be deleted from everything above them.
+     * Unlink the subtrees of the nodes about to be deleted from everything above them, for a bulk delete (a query
+     * deleting many rows, which fires no model event). A single model delete uses {@see self::detachChildren()}
+     * after the row is gone instead, so a delete cancelled by a listener changes nothing.
      *
      * Removes every `(a, x)` where some doomed `d` has `(a, d)` in the closure and `(d, x)` with depth > 0. The rows
      * whose ancestor or descendant is a doomed node itself go with the node, through the cascading foreign keys.
-     * Call it before the delete: afterwards the doomed nodes' rows are already gone and the links cannot be found.
+     * Call it before the bulk delete: afterwards the doomed nodes' rows are already gone and the links cannot be
+     * found.
      *
      * Only the doomed nodes with descendants are visited, one at a time: their ancestors-and-self are unlinked from
      * their strict descendants. The order does not matter: a link a node finds already gone was removed by another
@@ -186,6 +189,30 @@ final readonly class ClosureTableMaintainer
                     $this->keys($this->closure()->where('descendant_id', $doomed_id), 'ancestor_id'),
                     includeNode: false,
                 );
+            }
+        });
+    }
+
+    /**
+     * Unlink the subtrees of the given nodes, each node included, from the given ancestors: what the children of a
+     * deleted node need once the node is gone. The caller reads both lists before the delete, while the deleted
+     * node's rows still link them (its children at depth 1, its strict ancestors), and calls this after it, when
+     * the delete is certain; the deleted node's own rows went with the cascading foreign keys.
+     *
+     * Each subtree is read by keyset pages and deleted against the ancestors in chunks, as a move does.
+     *
+     * @param  list<int|string>  $childIds
+     * @param  list<int|string>  $ancestorIds
+     */
+    public function detachChildren(array $childIds, array $ancestorIds): void
+    {
+        if ($childIds === [] || $ancestorIds === []) {
+            return;
+        }
+
+        $this->connection->transaction(function () use ($childIds, $ancestorIds): void {
+            foreach ($childIds as $child_id) {
+                $this->unlinkFromAncestors($child_id, $ancestorIds, includeNode: true);
             }
         });
     }
