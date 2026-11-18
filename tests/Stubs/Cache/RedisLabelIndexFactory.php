@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Tests\Stubs\Cache;
 
 use Illuminate\Cache\RedisStore;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Redis;
 use Modules\Core\Cache\Labels\RedisLabelIndex;
 use PHPUnit\Framework\SkippedWithMessageException;
@@ -50,11 +51,21 @@ final class RedisLabelIndexFactory
         $client_prefix = method_exists($connection->client(), 'getOption') ? (string) $connection->client()->getOption(\Redis::OPT_PREFIX) : '';
 
         foreach ($prefixes as $prefix) {
-            $connection->eval(
-                "local c = '0' repeat local r = redis.call('SCAN', c, 'MATCH', ARGV[1] .. '*', 'COUNT', 1000) c = r[1] for _, k in ipairs(r[2]) do redis.call('DEL', k) end until c == '0'",
-                0,
-                $client_prefix . $prefix,
-            );
+            $cursor = $connection instanceof PhpRedisConnection ? null : 0;
+
+            do {
+                $reply = $connection->scan($cursor, ['match' => $client_prefix . $prefix . '*', 'count' => 1000]);
+
+                if ($reply === false) {
+                    break;
+                }
+
+                [$cursor, $keys] = $reply;
+
+                foreach ($keys as $key) {
+                    $connection->del($client_prefix !== '' && str_starts_with($key, $client_prefix) ? mb_substr($key, mb_strlen($client_prefix)) : $key);
+                }
+            } while ((string) $cursor !== '0');
         }
     }
 }

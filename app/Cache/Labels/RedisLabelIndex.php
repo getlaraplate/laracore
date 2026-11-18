@@ -26,6 +26,9 @@ final readonly class RedisLabelIndex implements ICacheLabelIndex
 
     private const string FLUSHED_KEY = 'labelflush';
 
+    /**
+     * Page size for every PHP-driven loop, so no single Redis command or script does unbounded work.
+     */
     private const int CHUNK = 1000;
 
     /**
@@ -63,63 +66,15 @@ return 1
 LUA;
 
     /**
-     * KEYS: flush hash, label sets. ARGV: chunk size, label names.
+     * Records the flush time of labels before anything is deleted.
+     * KEYS: flush hash. ARGV: label names.
      */
-    private const string LUA_FLUSH = <<<'LUA'
+    private const string LUA_MARK_FLUSHED = <<<'LUA'
 local now = micros()
-local chunk = tonumber(ARGV[1])
-for i = 2, #KEYS do
+for i = 1, #ARGV do
     redis.call('HSET', KEYS[1], ARGV[i], now)
-    local offset = 0
-    while true do
-        local members = redis.call('ZRANGE', KEYS[i], offset, offset + chunk - 1)
-        if #members > 0 then
-            redis.call('DEL', unpack(members))
-        end
-        if #members < chunk then
-            break
-        end
-        offset = offset + chunk
-    end
-    redis.call('DEL', KEYS[i])
 end
 return 1
-LUA;
-
-    /**
-     * ARGV: full key prefix as Redis sees it, glob-escaped prefix, longest ttl in seconds.
-     * Returns the number of distinct stale entries dropped from the label sets.
-     */
-    private const string LUA_PRUNE = <<<'LUA'
-local now = tonumber(micros())
-local seen = {}
-local removed = 0
-local cursor = '0'
-repeat
-    local reply = redis.call('SCAN', cursor, 'MATCH', ARGV[2] .. 'label:*', 'COUNT', 1000)
-    cursor = reply[1]
-    for _, set in ipairs(reply[2]) do
-        local stale = redis.call('ZRANGEBYSCORE', set, '-inf', now)
-        for _, member in ipairs(stale) do
-            if not seen[member] then
-                seen[member] = true
-                removed = removed + 1
-            end
-        end
-        if #stale > 0 then
-            redis.call('ZREMRANGEBYSCORE', set, '-inf', now)
-        end
-    end
-until cursor == '0'
-local hash = ARGV[1] .. 'labelflush'
-local cutoff = now - tonumber(ARGV[3]) * 1000000
-local flushed = redis.call('HGETALL', hash)
-for i = 1, #flushed, 2 do
-    if tonumber(flushed[i + 1]) < cutoff then
-        redis.call('HDEL', hash, flushed[i])
-    end
-end
-return removed
 LUA;
 
     public function __construct(private RedisStore $store) {}
@@ -176,41 +131,115 @@ LUA;
             return;
         }
 
+        $connection = $this->store->connection();
         $prefix = $this->store->getPrefix();
-        $keys = [
-            $prefix . self::FLUSHED_KEY,
-            ...array_map(fn (string $label): string => $prefix . self::LABEL_KEY . $label, $labels),
-        ];
 
-        $this->store->connection()->eval(
-            self::LUA_MICROS . "\n" . self::LUA_FLUSH,
-            count($keys),
-            ...$keys,
-            ...[(string) self::CHUNK, ...$labels],
+        $connection->eval(
+            self::LUA_MICROS . "\n" . self::LUA_MARK_FLUSHED,
+            1,
+            $prefix . self::FLUSHED_KEY,
+            ...$labels,
         );
+
+        foreach ($labels as $label) {
+            $set = $prefix . self::LABEL_KEY . $label;
+
+            while (($members = $connection->zrange($set, 0, self::CHUNK - 1)) !== []) {
+                $connection->del(...$this->withoutConnectionPrefix($members, $connection));
+                $connection->zrem($set, ...$members);
+            }
+
+            $connection->del($set);
+        }
     }
 
     #[Override]
     public function pruneStale(): int
     {
         $connection = $this->store->connection();
-        $prefix = $this->connectionPrefix($connection) . $this->store->getPrefix();
-        $durations = array_filter((array) config('cache.duration'), is_int(...));
-        $longest = $durations === [] ? 86400 : max($durations);
+        $now = $this->serverMicros($connection);
+        $client_prefix = $this->connectionPrefix($connection);
+        $prefix = $this->store->getPrefix();
+        $seen = [];
+        $cursor = $this->initialCursor($connection);
 
-        return (int) $connection->eval(
-            self::LUA_MICROS . "\n" . self::LUA_PRUNE,
-            0,
-            $prefix,
-            $this->escapeGlob($prefix),
-            (string) $longest,
-        );
+        do {
+            $reply = $connection->scan($cursor, ['match' => $this->escapeGlob($client_prefix . $prefix) . self::LABEL_KEY . '*', 'count' => self::CHUNK]);
+
+            if ($reply === false) {
+                break;
+            }
+
+            [$cursor, $sets] = $reply;
+
+            foreach ($this->withoutConnectionPrefix($sets, $connection) as $set) {
+                while (($stale = $connection->zrangebyscore($set, '-inf', (string) $now, ['limit' => [0, self::CHUNK]])) !== []) {
+                    $connection->zrem($set, ...$stale);
+
+                    foreach ($stale as $member) {
+                        $seen[$member] = true;
+                    }
+                }
+            }
+        } while ((string) $cursor !== '0');
+
+        $this->pruneFlushTimes($connection, $now, $prefix . self::FLUSHED_KEY);
+
+        return count($seen);
     }
 
     #[Override]
     public function supportsRowLabels(): bool
     {
         return true;
+    }
+
+    /**
+     * Drops flush records older than the longest ttl in use: no lookup can still be racing them.
+     */
+    private function pruneFlushTimes(Connection $connection, int $now, string $hash): void
+    {
+        $durations = array_filter((array) config('cache.duration'), is_int(...));
+        $cutoff = $now - ($durations === [] ? 86400 : max($durations)) * 1_000_000;
+        $cursor = $this->initialCursor($connection);
+
+        do {
+            $reply = $connection->hscan($hash, $cursor, ['count' => self::CHUNK]);
+
+            if ($reply === false) {
+                break;
+            }
+
+            [$cursor, $fields] = $reply;
+            $old = [];
+
+            foreach ($fields as $label => $flushed_at) {
+                if ($cutoff > (int) $flushed_at) {
+                    $old[] = (string) $label;
+                }
+            }
+
+            if ($old !== []) {
+                $connection->hdel($hash, ...$old);
+            }
+        } while ((string) $cursor !== '0');
+    }
+
+    /**
+     * Members and scanned keys are real key names, which already include the client prefix
+     * that the client would add again to the commands it sends.
+     *
+     * @param  array<array-key, string>  $keys
+     * @return list<string>
+     */
+    private function withoutConnectionPrefix(array $keys, Connection $connection): array
+    {
+        $client_prefix = $this->connectionPrefix($connection);
+
+        return array_values(array_map(
+            fn (string $key): string => $client_prefix !== '' && str_starts_with($key, $client_prefix) ? mb_substr($key, mb_strlen($client_prefix)) : $key,
+            $keys,
+        ));
     }
 
     /**
@@ -273,6 +302,14 @@ LUA;
         }
 
         return '';
+    }
+
+    /**
+     * phpredis starts a scan from null, Predis from 0.
+     */
+    private function initialCursor(Connection $connection): ?int
+    {
+        return $connection instanceof PhpRedisConnection ? null : 0;
     }
 
     private function escapeGlob(string $value): string
