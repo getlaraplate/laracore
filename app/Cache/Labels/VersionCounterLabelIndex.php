@@ -63,7 +63,13 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex
     {
         foreach (array_unique($labels) as $label) {
             $target = CacheLabel::isRow($label) ? CacheLabel::tableOfRow($label) : $label;
-            $this->cache->increment(self::PREFIX . $target);
+            $counter = self::PREFIX . $target;
+
+            // The database and memcached stores do not increment a missing key: the counter starts at 1 instead,
+            // and a flush that created it in between is followed by an increment of its own.
+            if ($this->cache->increment($counter) === false && ! $this->cache->add($counter, 1)) {
+                $this->cache->increment($counter);
+            }
         }
     }
 
