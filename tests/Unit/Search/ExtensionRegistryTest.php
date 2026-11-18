@@ -40,3 +40,8 @@ it('refuses an alias that is not registered for the host', function (): void {
 it('refuses to register a class that is not an extender', function (): void {
     (new ExtensionRegistry())->register(ExtensionHostStub::class, 'core.host', ExtensionHostStub::class);
 })->throws(InvalidArgumentException::class, 'IExtendsModel');
+
+it('ships no extender: modules register theirs at boot', function (): void {
+    expect((new ExtensionRegistry())->extenders(ExtensionHostStub::class))->toBe([])
+        ->and((new ExtensionRegistry())->aliases(ExtensionHostStub::class))->toBe([]);
+});
