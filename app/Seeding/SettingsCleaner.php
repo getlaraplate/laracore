@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Seeding;
 
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Models\Setting;
 
 final class SettingsCleaner
@@ -61,6 +62,12 @@ final class SettingsCleaner
             // soft-deleting builder macro is unconditional.
             Setting::query()->withoutGlobalScopes()->whereKey($setting->getKey())->delete();
             $soft_deleted[] = (string) $setting->getAttribute('name');
+        }
+
+        if ($soft_deleted !== []) {
+            // The soft deletes above are mass writes, which fire no model event.
+            $setting = new Setting;
+            app(CacheLabelInvalidator::class)->flushTable($setting->getTable(), $setting);
         }
 
         return new CleanupReport($hard_deleted, $soft_deleted, $preserved);

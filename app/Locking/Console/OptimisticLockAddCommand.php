@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Locking\Console;
 
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Models\Setting;
@@ -39,12 +40,16 @@ class OptimisticLockAddCommand extends LockedAddCommand
     {
         $key_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::OPTIMISTIC_LOCK_NAME_PREFIX, $table);
 
-        Setting::query()->insertOrIgnore([
+        $setting = new Setting;
+        $setting->newQuery()->insertOrIgnore([
             'name' => $key_name,
             'value' => json_encode($enabled),
             'type' => SettingTypeEnum::Boolean->value,
             'group_name' => 'locking',
             'description' => "Lock status for {$table}",
         ]);
+
+        // A mass insert fires no model event: flush the settings table after its commit.
+        app(CacheLabelInvalidator::class)->flushTable($setting->getTable(), $setting);
     }
 }

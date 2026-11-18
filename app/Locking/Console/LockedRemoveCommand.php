@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Locking\Console;
 
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\PerModelSettingResolver;
@@ -25,6 +26,10 @@ final class LockedRemoveCommand extends LockedAddCommand
     {
         $key_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::LOCK_NAME_PREFIX, $table);
 
-        Setting::query()->where('name', $key_name)->forceDelete();
+        $setting = new Setting;
+        $setting->newQuery()->where('name', $key_name)->forceDelete();
+
+        // A mass delete fires no model event: flush the settings table after its commit.
+        app(CacheLabelInvalidator::class)->flushTable($setting->getTable(), $setting);
     }
 }
