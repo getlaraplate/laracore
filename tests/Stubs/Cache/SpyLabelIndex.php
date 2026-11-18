@@ -11,7 +11,7 @@ use Modules\Core\Contracts\ICacheLabelIndex;
 use Override;
 
 /**
- * Index that delegates to another one (an in-memory index by default) and records every lookup and store.
+ * Index that delegates to another one (an in-memory index by default) and records every lookup, store and flush.
  */
 final class SpyLabelIndex implements ICacheLabelIndex
 {
@@ -24,6 +24,11 @@ final class SpyLabelIndex implements ICacheLabelIndex
      * @var list<array{lookup: CacheLookup, value: mixed, ttl: int, row_labels: list<string>, stored: bool}>
      */
     public array $stores = [];
+
+    /**
+     * @var list<list<string>>
+     */
+    public array $flushes = [];
 
     public function __construct(private readonly ICacheLabelIndex $inner = new ArrayLabelIndex()) {}
 
@@ -54,6 +59,7 @@ final class SpyLabelIndex implements ICacheLabelIndex
     #[Override]
     public function flush(string ...$labels): void
     {
+        $this->flushes[] = array_values($labels);
         $this->inner->flush(...$labels);
     }
 
