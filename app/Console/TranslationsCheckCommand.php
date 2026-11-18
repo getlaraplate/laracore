@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Modules\Core\Console;
 
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Overrides\Command;
 use Override;
 use Symfony\Component\Console\Command\Command as BaseCommand;
@@ -51,13 +52,7 @@ final class TranslationsCheckCommand extends Command
 
         $this->output->writeln('');
 
-        if (Cache::supportsTags()) {
-            $repository = Cache::getFacadeRoot()->store();
-
-            if (method_exists($repository, 'getCacheTags')) {
-                Cache::tags($repository->getCacheTags('translations'))->flush();
-            }
-        }
+        resolve(ICacheLabelIndex::class)->flush(CacheLabel::translations());
 
         return BaseCommand::SUCCESS;
     }

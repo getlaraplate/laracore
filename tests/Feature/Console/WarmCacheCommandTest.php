@@ -5,8 +5,11 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Cache\CacheManager;
 use Modules\Core\Console\WarmCacheCommand;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\CronJob;
 use Modules\Core\Models\Setting;
+use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
 use Symfony\Component\Console\Command\Command as BaseCommand;
 
 /**
@@ -127,4 +130,21 @@ it('cache:warm is triggered on boot when warm_on_boot is true', function (): voi
 
     expect($exit_code)->toBe(BaseCommand::SUCCESS);
     expect(config('core.cache.warm_on_boot'))->toBeTrue();
+});
+
+it('cache:warm stores the active cron jobs in the index under the label of their table', function (): void {
+    CronJob::factory()->create(['command' => 'cron-probe:prune', 'is_active' => true]);
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+
+    $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
+
+    $stored = array_values(array_filter(
+        $index->stores,
+        static fn (array $store): bool => $store['lookup']->dependencies->labels === ['table:core_cron_jobs'],
+    ));
+
+    expect($stored)->toHaveCount(1)
+        ->and($stored[0]['value'][0]['command'])->toBe('cron-probe:prune')
+        ->and($stored[0]['ttl'])->toBe((int) config('cache.duration.long'));
 });

@@ -56,6 +56,8 @@ use Modules\Core\ApplicationContent\ApplicationContentRetrievalProviderRegistry;
 use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProviderRegistryInterface;
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
+use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
 use Modules\Core\Cache\Labels\MeasuredLabelIndex;
 use Modules\Core\Console\PruneCacheLabelsCommand;
@@ -385,27 +387,16 @@ final class CoreServiceProvider extends ModuleServiceProvider
             $crons = [];
             $cache_key = new ReflectionClass(CronJob::class)->newInstanceWithoutConstructor()->getTable();
 
-            $cache = Cache::store();
+            $index = $this->app->make(ICacheLabelIndex::class);
+            $lookup = $index->lookup($cache_key, new CacheDependencies([CacheLabel::table($cache_key)]));
 
-            if ($this->cacheSupportsTags($cache)) {
-                $cache_tags = $cache->getCacheTags();
-
-                if (Cache::tags($cache_tags)->has($cache_key)) {
-                    $crons = $this->normalizeCronJobs(Cache::tags($cache_tags)->get($cache_key));
-                } else {
-                    $crons = $this->loadCronJobsFromDatabase();
-
-                    if ($crons !== []) {
-                        Cache::tags($cache_tags)->put($cache_key, $crons);
-                    }
-                }
-            } elseif (Cache::has($cache_key)) {
-                $crons = $this->normalizeCronJobs(Cache::get($cache_key));
+            if ($lookup->hit) {
+                $crons = $this->normalizeCronJobs($lookup->value);
             } else {
                 $crons = $this->loadCronJobsFromDatabase();
 
                 if ($crons !== []) {
-                    Cache::put($cache_key, $crons);
+                    $index->store($lookup, $crons, (int) config('cache.duration.long'));
                 }
             }
 
@@ -554,14 +545,6 @@ final class CoreServiceProvider extends ModuleServiceProvider
         }
 
         return $normalized;
-    }
-
-    private function cacheSupportsTags(mixed $cache): bool
-    {
-        return is_object($cache)
-            && method_exists($cache, 'supportsTags')
-            && $cache->supportsTags()
-            && method_exists($cache, 'getCacheTags');
     }
 
     /**

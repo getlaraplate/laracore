@@ -24,11 +24,6 @@ use UnitEnum;
 final class Repository extends BaseRepository
 {
     /**
-     * Cached app name to avoid repeated config calls.
-     */
-    private static ?string $app_name = null;
-
-    /**
      * The default ttl of a cached response, in seconds: `cache.duration` when it is a number, else its `medium`,
      * `short` or `long` entry, else 300.
      */
@@ -45,41 +40,6 @@ final class Repository extends BaseRepository
         }
 
         return self::resolveDurationConfigToSeconds($durations);
-    }
-
-    /**
-     * The tag names to use for the given tags, each namespaced with the app name ("{app}:{tag}"), without duplicates
-     * and sorted.
-     *
-     * The tags of a tagged entry are part of its key, in their order: sorting them makes the key independent of the
-     * order in which a caller composed them, so a read, a forget and a write of one value always meet.
-     *
-     * The namespace keeps two applications sharing one store apart. It is part of every name rather than a tag of
-     * its own: flushing a tag set invalidates every entry carrying any one of its tags, so a tag shared by every
-     * entry would turn each flush into a flush of the whole application cache. Without tags it returns the bare app
-     * name, the tag of entries that belong to no narrower scope.
-     *
-     * @param  array<string>|string  $tags
-     * @return list<string>
-     */
-    public function getCacheTags(array|string $tags = []): array
-    {
-        if (self::$app_name === null) {
-            $app_name = config('app.name');
-            self::$app_name = is_string($app_name) ? $app_name : '';
-        }
-
-        $names = is_string($tags) ? [$tags] : $tags;
-
-        if ($names === []) {
-            return [self::$app_name];
-        }
-
-        $prefix = self::$app_name . ':';
-        $namespaced = array_unique(array_map(static fn (string $tag): string => $prefix . $tag, $names));
-        sort($namespaced, SORT_STRING);
-
-        return $namespaced;
     }
 
     #[Override]

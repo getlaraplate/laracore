@@ -337,7 +337,7 @@ it('never stores a response whose dependencies are incomplete', function (Closur
     }
 
     expect($second_queries)->toBeGreaterThan(0)
-        ->and($spy->stores)->toBe([]);
+        ->and(crudResponseCacheStores($spy))->toBe([]);
 })->with([
     'membership index' => [static fn (): array => [new ArrayLabelIndex(), static fn (): null => null]],
     'counter index' => [static function (): array {
@@ -366,7 +366,7 @@ it('stores a complete response on a counter index', function (): void {
     }
 
     expect($second_queries)->toBe(0)
-        ->and($spy->stores)->toHaveCount(1);
+        ->and(crudResponseCacheStores($spy))->toHaveCount(1);
 });
 
 it('computes every read while the index cannot keep anything', function (Closure $index): void {

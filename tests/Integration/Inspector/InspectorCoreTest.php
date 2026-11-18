@@ -26,14 +26,15 @@ use Doctrine\DBAL\Types\TextType;
 use Doctrine\DBAL\Types\TimeImmutableType;
 use Doctrine\DBAL\Types\TimeType;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use MatanYadaev\EloquentSpatial\Doctrine\GeometryType;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Inspector\Entities\Column;
 use Modules\Core\Inspector\Entities\ForeignKey;
 use Modules\Core\Inspector\Entities\Index;
 use Modules\Core\Inspector\Inspect;
 use Modules\Core\Inspector\Types\DoctrineTypeEnum;
+use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
 
 it('column entity computes unsigned and length metadata', function (): void {
     $unsigned = new Column('qty', collect([]), null, 'unsignedInteger');
@@ -143,106 +144,49 @@ it('inspect returns null/empty collections for unknown table', function (): void
         ->and(Inspect::foreignKey('fk', $missing))->toBeNull();
 });
 
-it('inspect caches using no-tags cache path', function (): void {
+it('inspect serves a table from the index on the second read and recomputes it after the inspector label is flushed', function (): void {
     $table = 'inspect_cache_' . bin2hex(random_bytes(4));
     Schema::create($table, function (Blueprint $blueprint): void {
         $blueprint->id();
     });
 
-    Cache::shouldReceive('store')->atLeast()->once()->andReturn(new class
-    {
-        public function supportsTags(): bool
-        {
-            return false;
-        }
-    });
-    Cache::shouldReceive('get')->atLeast()->once()->andReturnNull();
-    Cache::shouldReceive('forever')->atLeast()->once()->andReturnTrue();
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
 
     try {
-        expect(Inspect::table($table, config('database.default')))->not->toBeNull();
+        $first = Inspect::table($table, config('database.default'));
+        $second = Inspect::table($table, config('database.default'));
+
+        expect($first)->not->toBeNull()
+            ->and($second)->toEqual($first)
+            ->and($index->stores)->toHaveCount(1)
+            ->and($index->stores[0]['lookup']->dependencies->labels)->toBe(['inspector'])
+            ->and($index->stores[0]['ttl'])->toBe((int) config('cache.duration.long'));
+
+        $index->flush('inspector');
+        Inspect::table($table, config('database.default'));
+
+        expect($index->stores)->toHaveCount(2);
     } finally {
         Schema::dropIfExists($table);
     }
 });
 
-it('inspect forgets cached table using no-tags cache path', function (): void {
-    Cache::shouldReceive('store')->once()->andReturn(new class
-    {
-        public function supportsTags(): bool
-        {
-            return false;
-        }
-    });
-    Cache::shouldReceive('forget')
-        ->once()
-        ->with('inspector:' . Inspect::keyName('users', config('database.default')))
-        ->andReturnTrue();
-
-    Inspect::forget('users', config('database.default'));
-});
-
-it('inspect forgets cached table using tagged cache path', function (): void {
-    $tagged_cache = Mockery::mock();
-    $tagged_cache->shouldReceive('forget')
-        ->once()
-        ->with(Inspect::keyName('users', config('database.default')))
-        ->andReturnTrue();
-
-    Cache::shouldReceive('store')->once()->andReturn(new class
-    {
-        public function supportsTags(): bool
-        {
-            return true;
-        }
-
-        /**
-         * @param  array<int, string>  $tags
-         * @return array<int, string>
-         */
-        public function getCacheTags(array $tags): array
-        {
-            return $tags;
-        }
-    });
-    Cache::shouldReceive('tags')
-        ->once()
-        ->with(['inspector', config('database.default')])
-        ->andReturn($tagged_cache);
-
-    Inspect::forget('users', config('database.default'));
-});
-
-it('inspect caches using tags when taggable store is available', function (): void {
-    $table = 'inspect_cache_tags_' . bin2hex(random_bytes(4));
+it('inspect forget drops only the cached table', function (): void {
+    $table = 'inspect_forget_' . bin2hex(random_bytes(4));
     Schema::create($table, function (Blueprint $blueprint): void {
         $blueprint->id();
     });
 
-    $tagged_cache = Mockery::mock();
-    $tagged_cache->shouldReceive('get')->atLeast()->once()->andReturnNull();
-    $tagged_cache->shouldReceive('forever')->atLeast()->once()->andReturnTrue();
-
-    Cache::shouldReceive('store')->atLeast()->once()->andReturn(new class
-    {
-        public function supportsTags(): bool
-        {
-            return true;
-        }
-
-        /**
-         * @param  array<int, string>  $tags
-         * @return array<int, string>
-         */
-        public function getCacheTags(array $tags): array
-        {
-            return $tags;
-        }
-    });
-    Cache::shouldReceive('tags')->atLeast()->once()->andReturn($tagged_cache);
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
 
     try {
-        expect(Inspect::table($table, config('database.default')))->not->toBeNull();
+        Inspect::table($table, config('database.default'));
+        Inspect::forget($table, config('database.default'));
+        Inspect::table($table, config('database.default'));
+
+        expect($index->stores)->toHaveCount(2);
     } finally {
         Schema::dropIfExists($table);
     }

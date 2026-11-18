@@ -41,6 +41,26 @@ final class CacheLabel
         return 'acl';
     }
 
+    public static function docs(): string
+    {
+        return 'docs';
+    }
+
+    public static function translations(): string
+    {
+        return 'translations';
+    }
+
+    public static function inspector(): string
+    {
+        return 'inspector';
+    }
+
+    public static function geocoding(): string
+    {
+        return 'geocoding';
+    }
+
     public static function isRow(string $label): bool
     {
         return str_starts_with($label, self::ROW_PREFIX);

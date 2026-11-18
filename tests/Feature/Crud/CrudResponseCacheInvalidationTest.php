@@ -65,7 +65,8 @@ function crudInvalidationRead(SpyLabelIndex $spy, Model $model, string $url): ar
     $recording = true;
     $connection = $model->getConnection()->getName();
     $table = $model->getConnection()->getTablePrefix() . $model->getTable();
-    $lookups = count($spy->lookups);
+    $crud_lookups = static fn (): array => array_values(array_filter($spy->lookups, static fn (Modules\Core\Cache\Labels\CacheLookup $lookup): bool => str_starts_with($lookup->key, 'crud:')));
+    $lookups = count($crud_lookups());
 
     DB::listen(static function (QueryExecuted $query) use (&$count, &$recording, $connection, $table): void {
         if ($recording && $query->connectionName === $connection && str_contains($query->sql, $table)) {
@@ -79,9 +80,9 @@ function crudInvalidationRead(SpyLabelIndex $spy, Model $model, string $url): ar
         $recording = false;
     }
 
-    expect($spy->lookups)->toHaveCount($lookups + 1);
+    expect($crud_lookups())->toHaveCount($lookups + 1);
 
-    return ['hit' => $spy->lookups[$lookups]->hit, 'queries' => $count];
+    return ['hit' => $crud_lookups()[$lookups]->hit, 'queries' => $count];
 }
 
 /**

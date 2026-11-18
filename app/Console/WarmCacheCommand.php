@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Modules\Core\Console;
 
+use Cron\CronExpression;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -127,17 +131,26 @@ final class WarmCacheCommand extends Command
         }
 
         $cache_key = new CronJob()->getTable();
-        $crons = CronJob::query()->active()->select(['command', 'schedule'])->get()->toArray();
+        $crons = CronJob::query()
+            ->active()
+            ->select(['command', 'schedule', 'parameters', 'on_one_server', 'without_overlapping'])
+            ->get()
+            ->map(static function (CronJob $cron): array {
+                $schedule = $cron->getAttribute('schedule');
 
-        /** @var \Illuminate\Cache\Repository $cache */
-        $cache = Cache::store();
+                return [
+                    'command' => (string) $cron->getAttribute('command'),
+                    'schedule' => $schedule instanceof CronExpression ? $schedule->getExpression() : (string) $schedule,
+                    'parameters' => $cron->getAttribute('parameters'),
+                    'on_one_server' => (bool) $cron->getAttribute('on_one_server'),
+                    'without_overlapping' => (bool) $cron->getAttribute('without_overlapping'),
+                ];
+            })
+            ->all();
 
-        if ($cache->supportsTags() && method_exists($cache, 'getCacheTags')) {
-            $cache_tags = $cache->getCacheTags();
-            Cache::tags($cache_tags)->put($cache_key, $crons);
-        } else {
-            Cache::put($cache_key, $crons);
-        }
+        $index = resolve(ICacheLabelIndex::class);
+        $lookup = $index->lookup($cache_key, new CacheDependencies([CacheLabel::table($cache_key)]));
+        $index->store($lookup, $crons, (int) config('cache.duration.long'));
 
         return 1;
     }

@@ -15,37 +15,14 @@ use Modules\Core\Models\User;
 use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
 use Modules\Core\Tests\Stubs\Cache\TaggedCacheStubModel;
 
-it('getCacheTags namespaces every tag with the app name, drops duplicates and sorts them', function (): void {
-    $repository = new Repository(Mockery::mock(Store::class));
-    $app_name = config('app.name');
-
-    expect($repository->getCacheTags('users'))->toBe([$app_name . ':users'])
-        ->and($repository->getCacheTags(['users', 'roles', 'users']))->toBe([$app_name . ':roles', $app_name . ':users'])
-        ->and($repository->getCacheTags(['roles', 'users']))->toBe($repository->getCacheTags(['users', 'roles']))
-        ->and($repository->getCacheTags())->toBe([$app_name]);
-});
-
-it('a value stored with tags composed in one order is read and forgotten with the same tags in another order', function (): void {
-    $repository = new Repository(new ArrayStore());
-
-    $repository->tags($repository->getCacheTags(['users', 'roles']))->put('ordered-key', 'value', 60);
-    $read = $repository->tags($repository->getCacheTags(['roles', 'users']))->get('ordered-key');
-    $repository->tags($repository->getCacheTags(['roles', 'users', 'roles']))->forget('ordered-key');
-
-    expect($read)->toBe('value')
-        ->and($repository->tags($repository->getCacheTags(['users', 'roles']))->get('ordered-key'))->toBeNull();
-});
-
-it('clearByEntity flushes the label of its table only and leaves tagged entries cached', function (): void {
+it('clearByEntity flushes the label of its table only', function (): void {
     $index = new RecordingLabelIndex();
     app()->instance(ICacheLabelIndex::class, $index);
     $repository = new Repository(new ArrayStore());
 
-    $repository->tags($repository->getCacheTags('docs'))->forever('docs-key', 'docs');
     $repository->clearByEntity(new TaggedCacheStubModel());
 
-    expect($index->flushedLabels())->toBe([CacheLabel::table('tagged_cache_stub_models')])
-        ->and($repository->tags($repository->getCacheTags('docs'))->get('docs-key'))->toBe('docs');
+    expect($index->flushedLabels())->toBe([CacheLabel::table('tagged_cache_stub_models')]);
 });
 
 it('clearByUser flushes the label of that user only', function (): void {

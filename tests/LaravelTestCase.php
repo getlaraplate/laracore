@@ -40,7 +40,7 @@ abstract class LaravelTestCase extends \Tests\TestCase
     }
 
     /**
-     * Override cache.store so default driver returns Core Repository (has getCacheTags).
+     * Override cache.store so the default driver returns the Core Repository.
      */
     private function ensureTestCacheStore(): void
     {

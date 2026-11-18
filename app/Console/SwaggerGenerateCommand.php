@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace Modules\Core\Console;
 
-use Illuminate\Cache\CacheManager;
 use Illuminate\Contracts\Container\BindingResolutionException;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
-use Modules\Core\Cache\Repository as CoreCacheRepository;
+use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Console\Concerns\HasBenchmark;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Overrides\ModuleDocGenerator;
 use Mtrajano\LaravelSwagger\FormatterManager;
 use Mtrajano\LaravelSwagger\GenerateSwaggerDoc as BaseGenerateSwaggerDoc;
@@ -57,20 +56,7 @@ final class SwaggerGenerateCommand extends BaseGenerateSwaggerDoc
             $this->moduleHandle($module_name);
         }
 
-        // @codeCoverageIgnoreStart
-        // Requires a cache store with tag support (e.g. Redis); the test suite uses the array driver.
-        if (Cache::supportsTags()) {
-            $facade_root = Cache::getFacadeRoot();
-
-            if ($facade_root instanceof CacheManager) {
-                $store = $facade_root->store();
-
-                if ($store instanceof CoreCacheRepository) {
-                    Cache::tags($store->getCacheTags('docs'))->flush();
-                }
-            }
-        }
-        // @codeCoverageIgnoreEnd
+        resolve(ICacheLabelIndex::class)->flush(CacheLabel::docs());
 
         return Command::SUCCESS;
     }
