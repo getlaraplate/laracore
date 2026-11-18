@@ -110,3 +110,28 @@ it('flushes pivot, parent and related tables on every pivot mutation', function 
         expect($this->index->flushedLabels())->toContain(...$expected);
     }
 });
+
+it('flushes the label of the model table on invalidateCache', function (): void {
+    $role = makeLabelRole();
+    $this->index->flushes = [];
+
+    $role->invalidateCache();
+
+    expect($this->index->flushedLabels())->toBe([CacheLabel::table($role->getTable())]);
+});
+
+it('flushes pivot labels through the morph relation of a user', function (): void {
+    $user = Modules\Core\Models\User::factory()->create();
+    $role = makeLabelRole();
+    $relation = $user->roles();
+    $this->index->flushes = [];
+
+    $relation->attach($role->getKey());
+
+    expect($relation)->toBeInstanceOf(Modules\Core\Overrides\Relations\MorphToMany::class)
+        ->and($this->index->flushedLabels())->toContain(
+            CacheLabel::table($relation->getTable()),
+            CacheLabel::table($user->getTable()),
+            CacheLabel::table($role->getTable()),
+        );
+});
