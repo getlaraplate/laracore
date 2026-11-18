@@ -3,8 +3,10 @@
 declare(strict_types=1);
 
 use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\FileStore;
 use Illuminate\Contracts\Cache\Store;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -13,18 +15,148 @@ use Modules\Core\Cache\Repository;
 use Modules\Core\Helpers\ResponseBuilder;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
+use Modules\Core\Tests\Stubs\Cache\OtherTaggedCacheStubModel;
+use Modules\Core\Tests\Stubs\Cache\TaggedCacheStubModel;
 
-it('getCacheTags prepends app name and supports string/array tags', function (): void {
-    $store = Mockery::mock(Store::class);
-    $repository = new Repository($store);
+it('getCacheTags namespaces every tag with the app name, drops duplicates and sorts them', function (): void {
+    $repository = new Repository(Mockery::mock(Store::class));
+    $app_name = config('app.name');
 
-    $from_string = $repository->getCacheTags('users');
-    $from_array = $repository->getCacheTags(['users', 'roles']);
+    expect($repository->getCacheTags('users'))->toBe([$app_name . ':users'])
+        ->and($repository->getCacheTags(['users', 'roles', 'users']))->toBe([$app_name . ':roles', $app_name . ':users'])
+        ->and($repository->getCacheTags(['roles', 'users']))->toBe($repository->getCacheTags(['users', 'roles']))
+        ->and($repository->getCacheTags())->toBe([$app_name]);
+});
 
-    expect($from_string[0])->toBe(config('app.name'))
-        ->and($from_string)->toContain('users')
-        ->and($from_array)->toContain('users')
-        ->and($from_array)->toContain('roles');
+it('a value stored with tags composed in one order is read and forgotten with the same tags in another order', function (): void {
+    $repository = new Repository(new ArrayStore());
+
+    $repository->tags($repository->getCacheTags(['users', 'roles']))->put('ordered-key', 'value', 60);
+    $read = $repository->tags($repository->getCacheTags(['roles', 'users']))->get('ordered-key');
+    $repository->tags($repository->getCacheTags(['roles', 'users', 'roles']))->forget('ordered-key');
+
+    expect($read)->toBe('value')
+        ->and($repository->tags($repository->getCacheTags(['users', 'roles']))->get('ordered-key'))->toBeNull();
+});
+
+/**
+ * @param  array<string, string>  $query
+ */
+function cachedRequestFor(User $user, string $path = '/api/cached', array $query = []): Request
+{
+    $request = Request::create($path, 'GET', $query);
+    $request->setUserResolver(static fn (): User => $user);
+
+    return $request;
+}
+
+it('tryByRequest stores the response under the entity tag, so clearByEntity makes the next request recompute', function (): void {
+    $repository = new Repository(new ArrayStore());
+    $request = cachedRequestFor(User::factory()->create());
+    $model = new TaggedCacheStubModel();
+
+    $first = $repository->tryByRequest($model, $request, fn (): array => ['v' => 1], 60);
+    $cached = $repository->tryByRequest($model, $request, fn (): array => ['v' => 2], 60);
+    $repository->clearByEntity($model);
+    $recomputed = $repository->tryByRequest($model, $request, fn (): array => ['v' => 3], 60);
+
+    expect($first)->toBe(['v' => 1])
+        ->and($cached)->toBe(['v' => 1])
+        ->and($recomputed)->toBe(['v' => 3]);
+});
+
+it('saving a cacheable model invalidates the responses cached for its table', function (): void {
+    /** @var Repository $repository */
+    $repository = Cache::store();
+    $request = cachedRequestFor(User::factory()->create());
+
+    $repository->tryByRequest(new TaggedCacheStubModel(), $request, fn (): array => ['v' => 1], 60);
+    (new TaggedCacheStubModel())->invalidateCache();
+
+    expect($repository->tryByRequest(new TaggedCacheStubModel(), $request, fn (): array => ['v' => 2], 60))->toBe(['v' => 2]);
+});
+
+it('clearByEntity on one table leaves other tables and other tagged entries cached', function (): void {
+    $repository = new Repository(new ArrayStore());
+    $request = cachedRequestFor(User::factory()->create());
+
+    $repository->tryByRequest(new OtherTaggedCacheStubModel(), $request, fn (): array => ['other' => 1], 60);
+    $repository->tags($repository->getCacheTags('docs'))->forever('docs-key', 'docs');
+    $repository->clearByEntity(new TaggedCacheStubModel());
+
+    expect($repository->tryByRequest(new OtherTaggedCacheStubModel(), $request, fn (): array => ['other' => 2], 60))->toBe(['other' => 1])
+        ->and($repository->tags($repository->getCacheTags('docs'))->get('docs-key'))->toBe('docs');
+});
+
+it('clearByUser invalidates the responses of that user only', function (): void {
+    $repository = new Repository(new ArrayStore());
+    $alice = User::factory()->create();
+    $bob = User::factory()->create();
+    $model = new TaggedCacheStubModel();
+
+    $repository->tryByRequest($model, cachedRequestFor($alice), fn (): array => ['alice' => 1], 60);
+    $repository->tryByRequest($model, cachedRequestFor($bob), fn (): array => ['bob' => 1], 60);
+    $repository->clearByUser($alice);
+
+    expect($repository->tryByRequest($model, cachedRequestFor($alice), fn (): array => ['alice' => 2], 60))->toBe(['alice' => 2])
+        ->and($repository->tryByRequest($model, cachedRequestFor($bob), fn (): array => ['bob' => 2], 60))->toBe(['bob' => 1]);
+});
+
+it('clearByGroup invalidates the responses of the users holding that role only', function (): void {
+    $repository = new Repository(new ArrayStore());
+    $role = Role::factory()->create(['guard_name' => 'web']);
+    $member = User::factory()->create();
+    $member->assignRole($role);
+    $outsider = User::factory()->create();
+    $model = new TaggedCacheStubModel();
+
+    $repository->tryByRequest($model, cachedRequestFor($member), fn (): array => ['member' => 1], 60);
+    $repository->tryByRequest($model, cachedRequestFor($outsider), fn (): array => ['outsider' => 1], 60);
+    $repository->clearByGroup($role, $model);
+
+    expect($repository->tryByRequest($model, cachedRequestFor($member), fn (): array => ['member' => 2], 60))->toBe(['member' => 2])
+        ->and($repository->tryByRequest($model, cachedRequestFor($outsider), fn (): array => ['outsider' => 2], 60))->toBe(['outsider' => 1]);
+});
+
+it('clearByRequest forgets exactly the response that tryByRequest stored for that request', function (): void {
+    $repository = new Repository(new ArrayStore());
+    $user = User::factory()->create();
+    $models = [new TaggedCacheStubModel(), new OtherTaggedCacheStubModel()];
+
+    $repository->tryByRequest($models, cachedRequestFor($user, '/api/a'), fn (): array => ['a' => 1], 60);
+    $repository->tryByRequest($models, cachedRequestFor($user, '/api/b'), fn (): array => ['b' => 1], 60);
+    $repository->tryByRequest(null, cachedRequestFor($user, '/api/plain'), fn (): array => ['plain' => 1], 60);
+    $repository->clearByRequest(cachedRequestFor($user, '/api/a'), array_reverse($models));
+    $repository->clearByRequest(cachedRequestFor($user, '/api/plain'));
+
+    expect($repository->tryByRequest($models, cachedRequestFor($user, '/api/a'), fn (): array => ['a' => 2], 60))->toBe(['a' => 2])
+        ->and($repository->tryByRequest($models, cachedRequestFor($user, '/api/b'), fn (): array => ['b' => 2], 60))->toBe(['b' => 1])
+        ->and($repository->tryByRequest(null, cachedRequestFor($user, '/api/plain'), fn (): array => ['plain' => 2], 60))->toBe(['plain' => 2]);
+});
+
+it('tryByRequest serves the cached response under the default ttl', function (): void {
+    config()->set('cache.duration', 120);
+    config()->set('cache.threshold', 10);
+    $repository = new Repository(new ArrayStore());
+    $request = cachedRequestFor(User::factory()->create());
+
+    $repository->tryByRequest(new TaggedCacheStubModel(), $request, fn (): array => ['v' => 1]);
+
+    expect($repository->tryByRequest(new TaggedCacheStubModel(), $request, fn (): array => ['v' => 2]))->toBe(['v' => 1]);
+});
+
+it('tryByRequest still caches on a store without tag support', function (): void {
+    $directory = storage_path('framework/testing/repository-untagged-' . uniqid());
+    $repository = new Repository(new FileStore(new Filesystem(), $directory));
+    $request = cachedRequestFor(User::factory()->create());
+
+    try {
+        $repository->tryByRequest(new TaggedCacheStubModel(), $request, fn (): array => ['v' => 1], 60);
+
+        expect($repository->tryByRequest(new TaggedCacheStubModel(), $request, fn (): array => ['v' => 2], 60))->toBe(['v' => 1]);
+    } finally {
+        (new Filesystem())->deleteDirectory($directory);
+    }
 });
 
 it('tryByRequest returns callback immediately when model does not use cache', function (): void {

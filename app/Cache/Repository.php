@@ -32,8 +32,19 @@ final class Repository extends BaseRepository
     private static ?string $app_name = null;
 
     /**
+     * The tag names to use for the given tags, each namespaced with the app name ("{app}:{tag}"), without duplicates
+     * and sorted.
+     *
+     * The tags of a tagged entry are part of its key, in their order: sorting them makes the key independent of the
+     * order in which a caller composed them, so a read, a forget and a write of one value always meet.
+     *
+     * The namespace keeps two applications sharing one store apart. It is part of every name rather than a tag of
+     * its own: flushing a tag set invalidates every entry carrying any one of its tags, so a tag shared by every
+     * entry would turn each flush into a flush of the whole application cache. Without tags it returns the bare app
+     * name, the tag of entries that belong to no narrower scope.
+     *
      * @param  array<string>|string  $tags
-     * @return array<string>
+     * @return list<string>
      */
     public function getCacheTags(array|string $tags = []): array
     {
@@ -42,7 +53,17 @@ final class Repository extends BaseRepository
             self::$app_name = is_string($app_name) ? $app_name : '';
         }
 
-        return array_merge([self::$app_name], is_string($tags) ? [$tags] : $tags);
+        $names = is_string($tags) ? [$tags] : $tags;
+
+        if ($names === []) {
+            return [self::$app_name];
+        }
+
+        $prefix = self::$app_name . ':';
+        $namespaced = array_unique(array_map(static fn (string $tag): string => $prefix . $tag, $names));
+        sort($namespaced, SORT_STRING);
+
+        return $namespaced;
     }
 
     #[Override]
@@ -75,6 +96,10 @@ final class Repository extends BaseRepository
     // }
 
     /**
+     * Cache the response of a request, tagged with the tables of its entities and with the user and roles that
+     * asked for it, so {@see clearByEntity()}, {@see clearByUser()} and {@see clearByGroup()} can invalidate it.
+     * On a store without tag support the response is cached untagged and expires by its ttl only.
+     *
      * @template TCacheValue
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
@@ -83,41 +108,16 @@ final class Repository extends BaseRepository
      */
     public function tryByRequest(Model|string|array|null $entity, Request $request, Closure $callback, ?int $duration = null): mixed
     {
-        $tags_input = $entity instanceof Model
-            ? $this->getTableName($entity)
-            : (is_array($entity) ? array_map(fn (Model|string $e): string => $e instanceof Model ? $this->getTableName($e) : $e, $entity) : ($entity ?? []));
-        $tags = self::getCacheTags(is_array($tags_input) ? $tags_input : $tags_input);
+        $scope = $this->resolveRequestScope($entity, $request);
 
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    return $this->unwrapCallbackResult($callback());
-                }
-
-                if (! method_exists($resolved_model, 'usesCache') || ! $resolved_model->usesCache()) {
-                    return $this->unwrapCallbackResult($callback());
-                }
-
-                $tags[] = $this->getTableName($resolved_model);
-            }
+        if ($scope === null) {
+            return $this->unwrapCallbackResult($callback());
         }
 
-        $request_user = $request->user();
-        $user = $request_user instanceof User ? $request_user : null;
-        $user_tags = $this->getKeyPartsFromUser($user);
-
-        if ($user_tags !== []) {
-            array_push($tags, ...$user_tags);
-        }
-
-        $key = $this->getKeyFromRequest($request, [...$user_tags, ...$this->getKeyPartsFromToken($user)]);
+        $cache = $this->supportsTags() ? $this->tags($scope['tags']) : $this;
         $ttl = $duration ?? $this->resolveDefaultCacheSeconds();
 
-        return $this->remember($key, $ttl, fn () => $this->unwrapCallbackResult($callback()));
+        return $cache->remember($scope['key'], $ttl, fn () => $this->unwrapCallbackResult($callback()));
     }
 
     /**
@@ -127,9 +127,11 @@ final class Repository extends BaseRepository
      */
     public function clearByEntity(Model|string|array $entity): void
     {
-        $models = Arr::wrap($entity);
+        if (! $this->supportsTags()) {
+            return;
+        }
 
-        foreach ($models as $model) {
+        foreach (Arr::wrap($entity) as $model) {
             $resolved_model = $this->resolveModel($model);
 
             if ($resolved_model === null) {
@@ -143,89 +145,54 @@ final class Repository extends BaseRepository
     }
 
     /**
-     * clear cache by request extracted info.
+     * Forget the response {@see tryByRequest()} cached for this request.
+     *
+     * The tags of a tagged entry are part of its key, so this rebuilds them as tryByRequest did: pass the same
+     * entities, in any order, for a request of the same user. A change of the user's roles in between changes the
+     * tags and leaves the old entry to its ttl.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
      */
     public function clearByRequest(Request $request, Model|string|array|null $entity = null): void
     {
-        $request_user = $request->user();
-        $user = $request_user instanceof User ? $request_user : null;
-        $key = $this->getKeyFromRequest($request, [...$this->getKeyPartsFromUser($user), ...$this->getKeyPartsFromToken($user)]);
+        $scope = $this->resolveRequestScope($entity, $request);
 
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    continue;
-                }
-
-                if (! method_exists($resolved_model, 'usesCache') || $resolved_model->usesCache()) {
-                    $this->tags(self::getCacheTags($this->getTableName($resolved_model)))->forget($key);
-                }
-            }
-        } else {
-            $this->tags(self::getCacheTags())->forget($key);
+        if ($scope === null) {
+            return;
         }
+
+        if ($this->supportsTags()) {
+            $this->tags($scope['tags'])->forget($scope['key']);
+
+            return;
+        }
+
+        $this->forget($scope['key']);
     }
 
     /**
-     * clear cache elements by user and only by entity if specified.
+     * Invalidate every response cached for the user.
+     *
+     * Flushing a tag set invalidates the entries carrying any one of its tags, never only those carrying all of them,
+     * so the entities cannot narrow the flush: they only decide whether there is anything cached to invalidate.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
      */
     public function clearByUser(User $user, Model|string|array|null $entity = null): void
     {
-        $user_key = 'U' . $user->id;
-
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    continue;
-                }
-
-                if (method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
-                    $this->tags(self::getCacheTags([$this->getTableName($resolved_model), $user_key]))->flush();
-                }
-            }
-        } else {
-            $this->tags(self::getCacheTags($user_key))->flush();
-        }
+        $this->flushScopeTag('U' . $user->id, $entity);
     }
 
     /**
-     * clear cache elements by user group and only by entity if specified.
+     * Invalidate every response cached for the users holding the role.
+     *
+     * The entities cannot narrow the flush, for the reason given on {@see clearByUser()}.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
      */
     public function clearByGroup(Role $role, Model|string|array|null $entity = null): void
     {
-        $role_key = 'R' . $role->id;
-
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    continue;
-                }
-
-                if (method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
-                    $this->tags(self::getCacheTags([$this->getTableName($resolved_model), $role_key]))->flush();
-                }
-            }
-        } else {
-            $this->tags(self::getCacheTags($role_key))->flush();
-        }
+        $this->flushScopeTag('R' . $role->id, $entity);
     }
 
     /**
@@ -303,6 +270,69 @@ final class Repository extends BaseRepository
         }
 
         return parent::remember($key, $this->resolveDefaultCacheSeconds(), $callback);
+    }
+
+    /**
+     * The tags and the key under which {@see tryByRequest()} caches the response of a request, or null when one of
+     * its entities does not use the cache.
+     *
+     * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
+     * @return array{tags: list<string>, key: string}|null
+     */
+    private function resolveRequestScope(Model|string|array|null $entity, Request $request): ?array
+    {
+        $tables = [];
+
+        foreach (Arr::wrap($entity) as $model) {
+            $resolved_model = $this->resolveModel($model);
+
+            if ($resolved_model === null || ! method_exists($resolved_model, 'usesCache') || ! $resolved_model->usesCache()) {
+                return null;
+            }
+
+            $tables[] = $this->getTableName($resolved_model);
+        }
+
+        $request_user = $request->user();
+        $user = $request_user instanceof User ? $request_user : null;
+        $user_tags = $this->getKeyPartsFromUser($user);
+
+        return [
+            'tags' => self::getCacheTags([...$tables, ...$user_tags]),
+            'key' => $this->getKeyFromRequest($request, [...$user_tags, ...$this->getKeyPartsFromToken($user)]),
+        ];
+    }
+
+    /**
+     * Flush one user or role tag, when no entity is given or at least one of them uses the cache.
+     *
+     * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
+     */
+    private function flushScopeTag(string $tag, Model|string|array|null $entity): void
+    {
+        if (! $this->supportsTags()) {
+            return;
+        }
+
+        if ($entity !== null && $entity !== []) {
+            $uses_cache = false;
+
+            foreach (Arr::wrap($entity) as $model) {
+                $resolved_model = $this->resolveModel($model);
+
+                if ($resolved_model !== null && method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
+                    $uses_cache = true;
+
+                    break;
+                }
+            }
+
+            if (! $uses_cache) {
+                return;
+            }
+        }
+
+        $this->tags(self::getCacheTags($tag))->flush();
     }
 
     /**
