@@ -448,10 +448,6 @@ final class CoreServiceProvider extends ModuleServiceProvider
     }
 
     /**
-     * Fan the terminal import events out to the in-app notification listener, so the
-     * user who launched an import is told when it finishes or fails.
-     */
-    /**
      * The hard delete of an entity, preset, presettable or template removes taxonomies by cascading foreign keys,
      * with no event on them: the registry keeps their closure in step.
      */
@@ -474,6 +470,10 @@ final class CoreServiceProvider extends ModuleServiceProvider
         }
     }
 
+    /**
+     * Fan the terminal import events out to the in-app notification listener, so the
+     * user who launched an import is told when it finishes or fails.
+     */
     private function registerImportListeners(): void
     {
         Event::listen(ImportSessionCompleted::class, [SendImportFinishedNotification::class, 'handle']);

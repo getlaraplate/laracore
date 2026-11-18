@@ -116,10 +116,14 @@ it('roots the taxonomies left by an owner hard delete', function (Closure $owner
     'presettable, by presettable_id' => [function (): array {
         $presettable = taxonomyCascadePresettableOf(AppDynamicEntities::preset(EntityType::Pages));
 
-        // Core SoftDeletes::delete() declares ?bool while a pivot's delete returns the row count: the row goes and
-        // the events run, then the return type throws. Pre-existing, outside this test's subject.
-        return ['entity' => (int) $this->otherPreset->entity_id, 'presettable' => (int) $presettable->id, 'delete' => static fn () => expect(static fn () => $presettable->forceDelete())
-            ->toThrow(TypeError::class, 'must be of type ?bool, int returned')];
+        return ['entity' => (int) $this->otherPreset->entity_id, 'presettable' => (int) $presettable->id, 'delete' => static function () use ($presettable): void {
+            try {
+                $presettable->forceDelete();
+            } catch (TypeError) {
+                // Pre-existing: Core SoftDeletes::delete() declares ?bool, a pivot's delete returns the row count, so
+                // the return type throws after the row went and the events ran. Either outcome leaves the same rows.
+            }
+        }];
     }],
     'preset, through its presettables' => [function (): array {
         $preset = AppDynamicEntities::preset(EntityType::Pages);

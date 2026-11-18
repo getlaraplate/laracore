@@ -7,30 +7,26 @@ namespace Modules\Core\Tests\Support;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Reads, from the schema, which foreign keys delete the rows of a table by cascade: the ones on the table itself and
- * the chains of them through other tables. A self-reference (a parent column) and a closure table are not owners.
+ * Reads, from the schema, the chains of foreign keys that delete the rows of a table by cascade. A self-reference
+ * (a parent column) and a closure table are not owners.
  */
 final class CascadingForeignKeys
 {
     private function __construct() {}
 
     /**
-     * The table's own keys that cascade from another table, as "table.column" (a composite key lists its columns
-     * joined by a comma).
+     * Every chain of cascading foreign keys that deletes the table's rows, from the owner table whose row delete
+     * starts it: "owner -> table.column -> ... -> table.column", each hop naming the referencing table and its key
+     * columns (a composite key joins them with a comma). A chain never passes twice through one table.
      *
      * @return list<string>
      */
-    public static function directOf(string $table): array
+    public static function pathsInto(string $table): array
     {
-        $keys = [];
+        $paths = self::chainsInto($table, [$table]);
+        sort($paths);
 
-        foreach (self::cascadingKeys($table) as $foreign_key) {
-            $keys[] = $table . '.' . implode(',', $foreign_key['columns']);
-        }
-
-        sort($keys);
-
-        return $keys;
+        return $paths;
     }
 
     /**
@@ -40,27 +36,39 @@ final class CascadingForeignKeys
      */
     public static function ownerTablesOf(string $table): array
     {
-        $owners = [];
-        $queue = [$table];
-
-        while ($queue !== []) {
-            $current = array_shift($queue);
-
-            foreach (self::cascadingKeys($current) as $foreign_key) {
-                $owner = $foreign_key['foreign_table'];
-
-                if ($owner === $table || in_array($owner, $owners, true)) {
-                    continue;
-                }
-
-                $owners[] = $owner;
-                $queue[] = $owner;
-            }
-        }
-
+        $owners = array_values(array_unique(array_map(
+            static fn (string $path): string => explode(' -> ', $path, 2)[0],
+            self::pathsInto($table),
+        )));
         sort($owners);
 
         return $owners;
+    }
+
+    /**
+     * @param  list<string>  $visited
+     * @return list<string>
+     */
+    private static function chainsInto(string $table, array $visited): array
+    {
+        $chains = [];
+
+        foreach (self::cascadingKeys($table) as $foreign_key) {
+            $owner = $foreign_key['foreign_table'];
+
+            if (in_array($owner, $visited, true)) {
+                continue;
+            }
+
+            $hop = $table . '.' . implode(',', $foreign_key['columns']);
+            $chains[] = $owner . ' -> ' . $hop;
+
+            foreach (self::chainsInto($owner, [...$visited, $owner]) as $chain) {
+                $chains[] = $chain . ' -> ' . $hop;
+            }
+        }
+
+        return $chains;
     }
 
     /**
