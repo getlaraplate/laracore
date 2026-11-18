@@ -230,7 +230,7 @@ it('detaches only the nodes selected by a query the closure returns instead', fu
         ->and($rows)->not->toContain(sprintf('%d>%d:2', $root, $doomed_child))
         ->and($rows)->not->toContain(sprintf('%d>%d:1', $doomed, $doomed_child))
         ->and($rows)->not->toContain(sprintf('%d>%d:4', $root, $other_doomed_child))
-        ->and($rows)->not->toContain(sprintf('%d>%d:2', $survivor, $other_doomed_child));
+        ->and($rows)->not->toContain(sprintf('%d>%d:3', $survivor, $other_doomed_child));
 
     expect(fn () => $this->maintainer->detachSubtreesOf(static fn (Builder $query): bool => true))
         ->toThrow(LogicException::class, 'must return a query builder or nothing');
