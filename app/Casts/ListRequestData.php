@@ -41,6 +41,12 @@ class ListRequestData extends SelectRequestData
     public protected(set) bool $totals = true;
 
     /**
+     * Whether a list of a host of extenders includes the extended rows the user may read, each upcast to its extender
+     * (`with_extended`, spec 2026-11-17-extended-entity-search-design.md, XS3). Ignored on any other model (XS12).
+     */
+    public protected(set) bool $with_extended = false;
+
+    /**
      * @var array<int, Sort>
      */
     public protected(set) array $sort;
@@ -81,6 +87,7 @@ class ListRequestData extends SelectRequestData
 
         $this->count = isset($validated['count']) && (bool) $validated['count'];
         $this->totals = array_key_exists('totals', $validated) && (bool) $validated['totals'];
+        $this->with_extended = filter_var($validated['with_extended'] ?? false, FILTER_VALIDATE_BOOLEAN);
         $this->sort = $this->conformSorts($this->sortInput($validated['sort'] ?? []));
         $this->relations = $this->conformRelations($this->stringList($validated['relations'] ?? []));
 

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Casts\FiltersGroup;
+use Modules\Core\Casts\ListRequestData;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\Sort;
@@ -93,16 +94,40 @@ final class DefaultFilteredSearchFixture
      * @param  Model|null  $model  The model searched; {@see DefaultFilteredSearchStub} when null
      * @param  list<Sort>  $sort
      */
-    public static function run(SearchMode $mode, int $limit, ?FiltersGroup $filters = null, ?User $user = null, ?Model $model = null, array $sort = []): CrudResult
+    public static function run(SearchMode $mode, int $limit, ?FiltersGroup $filters = null, ?User $user = null, ?Model $model = null, array $sort = [], bool $with_extended = false): CrudResult
+    {
+        $data = self::requestData(SearchRequestData::class, $model ?? new DefaultFilteredSearchStub, $user, [
+            'sort' => $sort,
+            'filters' => $filters,
+            'qs' => self::QUERY,
+            'mode' => $mode,
+            'limit' => $limit,
+            'pagination' => $limit,
+            'with_extended' => $with_extended,
+        ]);
+
+        return app(CrudService::class)->search($data);
+    }
+
+    /**
+     * The request data of a CRUD read of the model by the user (a superadmin when null), signed in, with the given
+     * properties over the defaults of a plain request.
+     *
+     * @template TData of ListRequestData
+     *
+     * @param  class-string<TData>  $class
+     * @param  array<string, mixed>  $properties
+     * @return TData
+     */
+    public static function requestData(string $class, Model $model, ?User $user = null, array $properties = []): ListRequestData
     {
         $user ??= self::superadmin();
         Auth::login($user);
 
-        $model ??= new DefaultFilteredSearchStub;
         $request = new ValidatedSearchRequestStub(['qs' => self::QUERY]);
         $request->setUserResolver(static fn (): User => $user);
 
-        $data = (new ReflectionClass(SearchRequestData::class))->newInstanceWithoutConstructor();
+        $data = (new ReflectionClass($class))->newInstanceWithoutConstructor();
 
         foreach ([
             'request' => $request,
@@ -112,21 +137,20 @@ final class DefaultFilteredSearchFixture
             'connection' => $model->getConnectionName(),
             'columns' => [],
             'relations' => [],
-            'sort' => $sort,
-            'filters' => $filters,
+            'sort' => [],
+            'filters' => null,
             'group_by' => [],
-            'qs' => self::QUERY,
-            'mode' => $mode,
             'page' => null,
-            'limit' => $limit,
-            'pagination' => $limit,
+            'limit' => 100,
+            'pagination' => 100,
             'from' => null,
             'to' => null,
             'count' => false,
+            ...$properties,
         ] as $property => $value) {
             (new ReflectionProperty($data, $property))->setValue($data, $value);
         }
 
-        return app(CrudService::class)->search($data);
+        return $data;
     }
 }
