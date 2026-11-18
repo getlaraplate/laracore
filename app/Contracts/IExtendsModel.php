@@ -43,6 +43,13 @@ interface IExtendsModel
     public function extensionOwnColumns(): array;
 
     /**
+     * The type of the entity whose presets shape the host rows this model extends (e.g. `products`), or null when
+     * those rows have no presets to guard. A dynamic field named like one of {@see self::extensionOwnColumns()} is
+     * refused on a preset of this entity (spec 2026-11-17-extended-entity-search-design.md, XS17).
+     */
+    public function extensionEntityType(): ?string;
+
+    /**
      * This model's own data in the host row's search document, under the `extension` object.
      *
      * @return array<string, mixed>

@@ -63,6 +63,14 @@ final class FirstExtenderStub extends Model implements IExtendsModel
     }
 
     /**
+     * The `app_pages` entity of the Core test application, so its presets are guarded (XS17).
+     */
+    public function extensionEntityType(): ?string
+    {
+        return 'app_pages';
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function searchableExtension(): array

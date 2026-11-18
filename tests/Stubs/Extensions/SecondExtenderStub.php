@@ -69,6 +69,14 @@ final class SecondExtenderStub extends Model implements IExtendsModel
     }
 
     /**
+     * No entity: its host rows have no presets to guard.
+     */
+    public function extensionEntityType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function searchableExtension(): array

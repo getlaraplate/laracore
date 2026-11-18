@@ -67,6 +67,16 @@ final class ExtensionRegistry
     }
 
     /**
+     * Every registered extender, by host.
+     *
+     * @return array<string, array<string, class-string<IExtendsModel>>> host class => alias => extender class
+     */
+    public function all(): array
+    {
+        return $this->extenders;
+    }
+
+    /**
      * @param  class-string  $host
      * @return list<string>
      */
