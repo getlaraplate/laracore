@@ -6,12 +6,17 @@ use Illuminate\Cache\ArrayStore;
 use Modules\Core\Cache\Labels\ArrayLabelIndex;
 use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\NullLabelIndex;
+use Modules\Core\Cache\Labels\RedisLabelIndex;
 use Modules\Core\Cache\Labels\VersionCounterLabelIndex;
 use Modules\Core\Cache\Repository;
+use Modules\Core\Tests\Stubs\Cache\RedisLabelIndexFactory;
+
+afterEach(fn () => RedisLabelIndexFactory::cleanup());
 
 dataset('label indexes', [
     'array' => [fn () => new ArrayLabelIndex()],
     'counters' => [fn () => new VersionCounterLabelIndex(new Repository(new ArrayStore()))],
+    'redis' => [fn () => RedisLabelIndexFactory::make()],
 ]);
 
 it('misses, stores, then hits', function (Closure $make): void {
@@ -70,6 +75,10 @@ it('misses after its row label is flushed', function (Closure $make): void {
 
 it('misses once the ttl passed', function (Closure $make): void {
     $index = $make();
+
+    if ($index instanceof RedisLabelIndex) {
+        $this->markTestSkipped('Redis expires on the server clock; see RedisLabelIndexTest.');
+    }
     $dependencies = new CacheDependencies(['table:core_users']);
     $index->store($index->lookup('k', $dependencies), 'v', 60);
 
@@ -94,6 +103,10 @@ it('keeps the entry when an unrelated row is flushed', function (Closure $make):
 
 it('prunes expired memberships', function (Closure $make): void {
     $index = $make();
+
+    if ($index instanceof RedisLabelIndex) {
+        $this->markTestSkipped('Redis expires on the server clock; see RedisLabelIndexTest.');
+    }
 
     if (! $index->supportsRowLabels()) {
         $this->markTestSkipped('Membership indexes only.');
