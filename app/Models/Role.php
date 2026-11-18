@@ -21,6 +21,7 @@ use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasTypedRecursiveRelationships;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Models\Pivot\ModelHasRole;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Override;
@@ -37,6 +38,7 @@ final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
         getRules as private getRulesTrait;
     }
     use HasVersions;
+    use ReturnsVersionedRelations;
     use SoftDeletes {
         HasVersions::delete insteadof SoftDeletes;
         HasVersions::forceDelete insteadof SoftDeletes;

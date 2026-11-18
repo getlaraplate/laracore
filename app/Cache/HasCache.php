@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Cache;
 
 use Illuminate\Support\Facades\Cache;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 
 /**
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
@@ -25,6 +26,17 @@ trait HasCache
 
     public function invalidateCache(): void
     {
+        app(CacheLabelInvalidator::class)->flushTable($this->getTable(), $this);
+
+        $this->invalidateLegacyCache();
+    }
+
+    /**
+     * Flush the Laravel table tag that {@see Repository::tryByRequest()} still stores under.
+     * Called by the model-write listener for every model using this trait. Removed with the tag storage.
+     */
+    public function invalidateLegacyCache(): void
+    {
         if (! Cache::supportsTags()) {
             Cache::forget($this->getCacheKey());
 
@@ -38,16 +50,5 @@ trait HasCache
         } else {
             Cache::forget($this->getCacheKey());
         }
-    }
-
-    protected static function bootHasCache(): void
-    {
-        static::saved(function (self $model): void {
-            $model->invalidateCache();
-        });
-
-        static::deleted(function (self $model): void {
-            $model->invalidateCache();
-        });
     }
 }

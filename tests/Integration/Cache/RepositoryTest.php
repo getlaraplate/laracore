@@ -373,6 +373,7 @@ it('clear methods support class-string entities and role/user key helpers branch
 
 it('clearByEntity does not throw BadMethodCallException when cache driver does not support tags (database driver simulation)', function (): void {
     // Simulate a cache driver that does not support tags (e.g. database, file)
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, new Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex());
     Cache::shouldReceive('supportsTags')->andReturn(false);
     Cache::shouldReceive('forget')->andReturn(true);
 
@@ -390,6 +391,7 @@ it('clearByEntity does not throw BadMethodCallException when cache driver does n
 
 it('clearByEntity does not throw BadMethodCallException when cache driver does not support tags (file driver simulation)', function (): void {
     // Simulate a file cache driver that does not support tags
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, new Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex());
     Cache::shouldReceive('supportsTags')->andReturn(false);
     Cache::shouldReceive('forget')->andReturn(true);
 

@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Laravel\Sanctum\PersonalAccessToken;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Cache\Labels\CacheScope;
 use Modules\Core\Helpers\ResponseBuilder;
 use Modules\Core\Models\User;
@@ -128,10 +129,6 @@ final class Repository extends BaseRepository
      */
     public function clearByEntity(Model|string|array $entity): void
     {
-        if (! $this->supportsTags()) {
-            return;
-        }
-
         foreach (Arr::wrap($entity) as $model) {
             $resolved_model = $this->resolveModel($model);
 
@@ -140,6 +137,12 @@ final class Repository extends BaseRepository
             }
 
             if (method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
+                app(CacheLabelInvalidator::class)->flushTable($this->getTableName($resolved_model), $resolved_model);
+
+                if (! $this->supportsTags()) {
+                    continue;
+                }
+
                 $this->tags(self::getCacheTags($this->getTableName($resolved_model)))->flush();
             }
         }
