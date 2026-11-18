@@ -32,6 +32,14 @@ final class CacheDependencyStubModel extends Model
     }
 
     /**
+     * @return BelongsTo<CacheDependencyEagerStubModel, $this>
+     */
+    public function eager(): BelongsTo
+    {
+        return $this->belongsTo(CacheDependencyEagerStubModel::class);
+    }
+
+    /**
      * @return MorphTo<Model, $this>
      */
     public function owner(): MorphTo

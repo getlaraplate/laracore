@@ -38,54 +38,90 @@ use SplObjectStorage;
  *   (their foreign key sits on the related row), many-to-many with its pivot, through relations with the table they
  *   go through. A segment after a to-many one keeps its own kind;
  * - a `morphTo` segment names no table before the query: the walk stops there and the dependencies are incomplete;
- * - the translations table of every translated model reached, and the tables every reached model declares through
- *   {@see IDeclaresCacheDependencies};
+ * - the translations table of every translated model reached, the tables every reached model declares through
+ *   {@see IDeclaresCacheDependencies}, and its default eager loads (`$with`), walked as displayed paths;
  * - the relations the engine loads on its own: the versions (and pending modifications) of a history read, the
- *   nodes of a tree read, which are rows of the main table.
+ *   nodes of a tree read, which are rows of the main table;
+ * - a history read needs no row label after the query: see {@see forRequest()}.
  *
  * After the query, {@see rowLabels()} gives the row labels of the records the response embeds.
+ *
+ * @phpstan-type DependencyState array{labels: list<string>, row_tables: list<string>, complete: bool, rows_after_query: bool, expanded: array<string, true>}
  */
 final readonly class CrudCacheDependencyResolver
 {
+    /**
+     * Relations the engine loads on its own for a history read, by name, with the default eager loads of the related
+     * model that the engine leaves out (a version's `versionable` is the main record itself).
+     *
+     * @var array<string, list<string>>
+     */
+    private const array HISTORY_RELATIONS = [
+        'history' => ['versionable'],
+        'modifications' => [],
+    ];
+
     public function __construct(private QueryBuilder $query_builder) {}
 
     /**
+     * A history read is recognised by its request class ({@see HistoryRequestData}): its payload is serialized inside
+     * the service, so {@see rowLabels()} finds no model in it. Its dependencies are therefore complete before the
+     * query: the main record by its row label, taken from the key the request names, and every displayed to-one
+     * relation by the set label of its table instead of a row table.
+     *
      * @param  bool  $single_record  True for a read of one record (detail, tree or history of a key), whose main table
      *                               is a row dependency; false for a read of many rows, whose main table is a set label.
+     * @param  list<string>|null  $role_keys  The caller's role keys as {@see CacheScope::roleKeys()} builds them, when
+     *                                        the caller already has them; computed from the user when null.
      */
-    public function forRequest(Model $model, SelectRequestData $request_data, ?User $user, bool $single_record): CacheDependencies
+    public function forRequest(Model $model, SelectRequestData $request_data, ?User $user, bool $single_record, ?array $role_keys = null): CacheDependencies
     {
-        $labels = [CacheLabel::all(), ...$this->scopeLabels($user)];
-        $row_tables = [];
-        $complete = true;
+        $is_history = $request_data instanceof HistoryRequestData;
+
+        /** @var DependencyState $state */
+        $state = [
+            'labels' => [CacheLabel::all(), ...$this->scopeLabels($user, $role_keys)],
+            'row_tables' => [],
+            'complete' => true,
+            'rows_after_query' => ! $is_history,
+            'expanded' => [],
+        ];
 
         if ($single_record) {
-            $row_tables[] = $model->getTable();
+            $state['row_tables'][] = $model->getTable();
+
+            if ($is_history) {
+                $state['labels'][] = self::requestedRecordLabel($model, $request_data);
+            }
         } else {
-            $labels[] = CacheLabel::table($model->getTable());
+            $state['labels'][] = CacheLabel::table($model->getTable());
         }
 
-        array_push($labels, ...$this->modelLabels($model));
+        $this->reach($model, $state, []);
 
         $paths = $this->query_builder->requestedRelationPathsByUse($model, $request_data);
 
         foreach ($paths['display'] as $path) {
-            $this->walk($model, $path, true, $labels, $row_tables, $complete);
+            $this->walk($model, $path, true, $state);
         }
 
         foreach ($paths['membership'] as $path) {
-            $this->walk($model, $path, false, $labels, $row_tables, $complete);
+            $this->walk($model, $path, false, $state);
         }
 
-        foreach ($this->engineRelations($model, $request_data) as $name) {
-            $this->walk($model, $name, false, $labels, $row_tables, $complete);
+        if ($is_history) {
+            foreach (self::HISTORY_RELATIONS as $name => $left_out) {
+                if (RelationGuard::relationOf($model, $name) instanceof Relation) {
+                    $this->walk($model, $name, false, $state, $left_out);
+                }
+            }
         }
 
         if ($request_data instanceof TreeRequestData && ($request_data->parents || $request_data->children)) {
-            $labels[] = CacheLabel::table($model->getTable());
+            $state['labels'][] = CacheLabel::table($model->getTable());
         }
 
-        return new CacheDependencies(array_values(array_unique($labels)), array_values(array_unique($row_tables)), $complete);
+        return new CacheDependencies(array_values(array_unique($state['labels'])), array_values(array_unique($state['row_tables'])), $state['complete']);
     }
 
     /**
@@ -95,6 +131,10 @@ final readonly class CrudCacheDependencyResolver
      *
      * A to-one relation loaded empty still names the row its foreign key points at, when that key is the related
      * primary key: the response changes when that row appears, is restored or becomes visible.
+     *
+     * The `morphTo` branch feeds no stored response for now: a displayed `morphTo` makes {@see forRequest()} answer
+     * incomplete dependencies, which are never stored on any index. It serves once a displayed `morphTo` gets a flag
+     * of its own (rows known only after the query).
      *
      * @param  mixed  $data  A model, a collection or paginator of models, or arrays of them.
      * @return list<string>
@@ -136,6 +176,7 @@ final readonly class CrudCacheDependencyResolver
     {
         $related = $relation->getRelated();
 
+        // Feeds no stored response yet: see the note on rowLabels().
         if ($relation instanceof MorphTo) {
             $type = $record->getAttribute($relation->getMorphType());
             $related = is_string($type) ? RelationGuard::morphModel($type) : null;
@@ -186,9 +227,29 @@ final readonly class CrudCacheDependencyResolver
     }
 
     /**
+     * The row label of the record a single-record read names by its key, known before the query; the set label of the
+     * main table when the key is composite or missing.
+     */
+    private static function requestedRecordLabel(Model $model, SelectRequestData $request_data): string
+    {
+        $key_name = $request_data->primaryKey;
+
+        if (is_string($key_name)) {
+            $id = $request_data->request->input($key_name) ?? $request_data->request->route($key_name);
+
+            if (is_int($id) || (is_string($id) && $id !== '')) {
+                return CacheLabel::row($model->getTable(), $id);
+            }
+        }
+
+        return CacheLabel::table($model->getTable());
+    }
+
+    /**
+     * @param  list<string>|null  $role_keys
      * @return list<string>
      */
-    private function scopeLabels(?User $user): array
+    private function scopeLabels(?User $user, ?array $role_keys): array
     {
         if (! $user instanceof User) {
             return [];
@@ -197,7 +258,7 @@ final readonly class CrudCacheDependencyResolver
         $key = $user->getKey();
         $labels = [CacheLabel::user(is_int($key) || is_string($key) ? $key : '0')];
 
-        foreach (CacheScope::roleKeys($user) as $role_key) {
+        foreach ($role_keys ?? CacheScope::roleKeys($user) as $role_key) {
             $labels[] = CacheLabel::role($role_key);
         }
 
@@ -231,20 +292,22 @@ final readonly class CrudCacheDependencyResolver
     }
 
     /**
-     * Label each segment of a relation path, as described on the class.
+     * Label each segment of a relation path, as described on the class, and reach each related model.
      *
-     * @param  list<string>  $labels
-     * @param  list<string>  $row_tables
+     * @param  DependencyState  $state
+     * @param  list<string>  $left_out_at_end  Default eager loads of the last related model the engine leaves out.
      */
-    private function walk(Model $model, string $path, bool $displayed, array &$labels, array &$row_tables, bool &$complete): void
+    private function walk(Model $model, string $path, bool $displayed, array &$state, array $left_out_at_end = []): void
     {
         $current = $model;
+        $names = explode('.', $path);
+        $last = count($names) - 1;
 
-        foreach (explode('.', $path) as $name) {
+        foreach ($names as $index => $name) {
             $relation = RelationGuard::relationOf($current, $name);
 
             if (! $relation instanceof Relation || $relation instanceof MorphTo) {
-                $complete = false;
+                $state['complete'] = false;
 
                 return;
             }
@@ -252,41 +315,55 @@ final readonly class CrudCacheDependencyResolver
             $related = $relation->getRelated();
 
             if ($relation instanceof BelongsTo) {
-                if ($displayed) {
-                    $row_tables[] = $related->getTable();
+                if ($displayed && $state['rows_after_query']) {
+                    $state['row_tables'][] = $related->getTable();
                 } else {
-                    $labels[] = CacheLabel::table($related->getTable());
+                    $state['labels'][] = CacheLabel::table($related->getTable());
                 }
             } else {
-                $labels[] = CacheLabel::table($related->getTable());
+                $state['labels'][] = CacheLabel::table($related->getTable());
 
                 if ($relation instanceof BelongsToMany) {
-                    $labels[] = CacheLabel::table($relation->getTable());
+                    $state['labels'][] = CacheLabel::table($relation->getTable());
                 } elseif ($relation instanceof HasOneOrManyThrough) {
-                    $labels[] = CacheLabel::table($relation->getParent()->getTable());
+                    $state['labels'][] = CacheLabel::table($relation->getParent()->getTable());
                 }
             }
 
-            array_push($labels, ...$this->modelLabels($related));
+            $this->reach($related, $state, $index === $last ? $left_out_at_end : []);
             $current = $related;
         }
     }
 
     /**
-     * The relations the engine loads on its own for the read, beside those the request names.
+     * A model the read loads or joins: its own labels, then its default eager loads (`$with`) walked as displayed
+     * paths, which load wherever the model does. Each model class is expanded once per read, which also stops a cycle
+     * of default eager loads.
      *
-     * @return list<string>
+     * @param  DependencyState  $state
+     * @param  list<string>  $left_out  Default eager loads the engine removes from this model's query.
      */
-    private function engineRelations(Model $model, SelectRequestData $request_data): array
+    private function reach(Model $model, array &$state, array $left_out): void
     {
-        if (! $request_data instanceof HistoryRequestData) {
-            return [];
+        array_push($state['labels'], ...$this->modelLabels($model));
+
+        $expansion = $model::class . '|' . implode(',', $left_out);
+
+        if (isset($state['expanded'][$expansion])) {
+            return;
         }
 
-        return array_values(array_filter(
-            ['history', 'modifications'],
-            static fn (string $name): bool => RelationGuard::relationOf($model, $name) instanceof Relation,
-        ));
+        $state['expanded'][$expansion] = true;
+
+        foreach (array_keys($model->newQueryWithoutScopes()->getEagerLoads()) as $path) {
+            $path = (string) $path;
+
+            if (in_array(explode('.', $path)[0], $left_out, true)) {
+                continue;
+            }
+
+            $this->walk($model, $path, true, $state);
+        }
     }
 
     /**

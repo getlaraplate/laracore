@@ -21,6 +21,7 @@ use Modules\Core\Models\Permission;
 use Modules\Core\Models\Role;
 use Modules\Core\Services\Crud\Cache\CrudCacheDependencyResolver;
 use Modules\Core\Support\PermissionName;
+use Modules\Core\Tests\Stubs\Cache\CacheDependencyEagerStubModel;
 use Modules\Core\Tests\Stubs\Cache\CacheDependencyStubChild;
 use Modules\Core\Tests\Stubs\Cache\CacheDependencyStubModel;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocument;
@@ -229,6 +230,47 @@ it('labels the versions a history read loads on its own', function (): void {
 
     expect($dependencies->labels)->toContain(CacheLabel::table($role->history()->getRelated()->getTable()))
         ->and($dependencies->row_tables)->toBe([CoreTables::Roles->value]);
+});
+
+it('labels a history read without rows known after the query: the record by its requested key, a to-one by its table', function (): void {
+    $request_data = new HistoryRequestData(HistoryRequest::create('/app/crud/history/core/roles', 'GET', ['id' => 1]), 'roles', ['relations' => ['parent']], 'id', 'core');
+
+    $dependencies = cache_dependency_resolver()->forRequest(new Role, $request_data, null, true);
+
+    expect($dependencies->labels)->toContain(CacheLabel::row(CoreTables::Roles->value, 1), CacheLabel::table(CoreTables::Roles->value))
+        ->and($dependencies->row_tables)->toBe([CoreTables::Roles->value])
+        ->and($dependencies->complete)->toBeTrue();
+});
+
+it('keeps a displayed to-one of a detail read as a row table', function (): void {
+    $request_data = new DetailRequestData(DetailRequest::create('/app/crud/detail/core/roles', 'GET', ['id' => 1]), 'roles', ['relations' => ['parent']], 'id', 'core');
+
+    $dependencies = cache_dependency_resolver()->forRequest(new Role, $request_data, null, true);
+
+    expect($dependencies->labels)->not->toContain(CacheLabel::table(CoreTables::Roles->value), CacheLabel::row(CoreTables::Roles->value, 1))
+        ->and($dependencies->row_tables)->toBe([CoreTables::Roles->value]);
+});
+
+it('walks the default eager loads of the main model, once per model', function (): void {
+    $dependencies = cache_dependency_resolver()->forRequest(new CacheDependencyEagerStubModel, cache_dependency_list_request([]), null, false);
+
+    expect($dependencies->row_tables)->toEqualCanonicalizing([CoreTables::Roles->value, CacheDependencyEagerStubModel::TABLE])
+        ->and($dependencies->complete)->toBeTrue();
+});
+
+it('walks the default eager loads of a model reached by a path', function (): void {
+    $dependencies = cache_dependency_resolver()->forRequest(new CacheDependencyStubModel, cache_dependency_list_request(['relations' => ['eager']]), null, false);
+
+    expect($dependencies->row_tables)->toEqualCanonicalizing([CacheDependencyEagerStubModel::TABLE, CoreTables::Roles->value]);
+});
+
+it('takes the caller role keys when given instead of reading them', function (): void {
+    ['user' => $user, 'role' => $role] = cache_dependency_caller();
+
+    $dependencies = cache_dependency_resolver()->forRequest(new ACL, cache_dependency_list_request([]), $user, false, ['42']);
+
+    expect($dependencies->labels)->toContain(CacheLabel::user($user->id), CacheLabel::role('42'))
+        ->and($dependencies->labels)->not->toContain(CacheLabel::role($role->id));
 });
 
 it('labels the main table of a tree read as a set, its nodes being rows of it', function (): void {
