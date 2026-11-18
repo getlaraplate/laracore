@@ -501,16 +501,19 @@ ACL resolutions are cached through the cache label index (`ICacheLabelIndex`), o
 - **Labels**: `acl` and `user:{user_id}`
 - **TTL**: 1 hour (3600 seconds)
 
-While a failover cache serves without Redis, resolutions are computed on every call and never stored.
+While the Redis label index is down (a plain `redis` store or the first store of a `failover` cache), resolutions are
+computed on every call and never stored. Once Redis serves again, every entry stored through the index, resolutions
+included, is flushed before anything is read (see `docs/rag/CACHE_LABELS_DEVELOPER.md`).
 
 ### Cache Invalidation
 
 Each change flushes labels after its transaction commits; none of them empties the cache store:
 
 - An ACL create, update, delete or restore (`AclObserver`) flushes `acl`, plus, for an ACL scoped to a role,
-  `role:{id}` of that role and of every role below it (they inherit the ACL), or, for an unscoped one, the table
-  label of the permission's entity. An update that moves the ACL to another role or permission flushes the old one
-  too.
+  `role:{id}` of that role and of every role below it (they inherit the ACL), or, for an unscoped one, `crud` (every
+  cached CRUD response: the entity may be embedded in any response through a relation, under row labels its table
+  label does not reach) and the table label of the permission's entity. An update that moves the ACL to another role
+  or permission flushes the old one too.
 - A grant is a pivot write, through Spatie (`assignRole()`, `givePermissionTo()`, `syncRoles()`, ...), a Filament
   relationship field or a plain `attach()`, `detach()`, `sync()` on the relation. Every one of them goes through
   Core's relation overrides, which flush the tables of the pivot and of both sides and the scope labels it changes:
@@ -518,7 +521,10 @@ Each change flushes labels after its transaction commits; none of them empties t
   - permissions of a role, or roles of a permission: `role:{id}` of those roles and of every role below them, and `acl`;
   - users of a role or of a permission: `user:{id}` of those users, or `acl` when every user is detached at once.
 
-A change of a role's parent is not a trigger: resolutions follow it within the TTL.
+- A change of the role hierarchy (`RoleObserver`): a role whose `parent_id` changes, a role moved to the bin,
+  restored or deleted for good flushes `acl` and `role:{id}` of the role and of every role below it, roles in the bin
+  included, since they inherit permissions and ACLs through it. The labels of a deleted role are read before the
+  deletion, as a deleted row names no descendant any more.
 
 Use these methods to manually clear cache:
 

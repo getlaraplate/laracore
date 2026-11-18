@@ -19,18 +19,22 @@ Label strings are built only by `Modules\Core\Cache\Labels\CacheLabel`; never wr
 | Label | Builder | Meaning | Flushed by |
 |---|---|---|---|
 | `table:{table}` | `CacheLabel::table()` | the value depends on which rows of the table exist or match | any create, update, delete, restore or pivot write on the table, any mass write that flushes it |
-| `row:{table}:{id}` | `CacheLabel::row()` | the value embeds the content of that one row | an update, delete or restore of that row |
+| `row:{table}:{id}` | `CacheLabel::row()` | the value embeds the content of that one row | an update, delete, restore or force delete of that row |
+| `rows:{table}` | `CacheLabel::rows()` | the value holds some row of the table (added by the index for every row table and row label) | a whole-table flush (`flushTable()`), used for writes that fire no model event |
 | `user:{id}` | `CacheLabel::user()` | computed for that user | `Cache::clearByUser()`, a change of the user's roles or direct permissions |
-| `role:{id}` | `CacheLabel::role()` | computed for a user holding that role | `Cache::clearByGroup()`, an ACL or permission change of the role or of a role above it |
-| `crud` | `CacheLabel::all()` | every cached CRUD response | the recovery of a failover cache |
-| `acl` | `CacheLabel::acl()` | every ACL resolution | an ACL write, a grant whose targets are unknown, `AclResolverService::flushCache()` |
+| `role:{id}` | `CacheLabel::role()` | computed for a user holding that role | `Cache::clearByGroup()`, an ACL or permission change of the role or of a role above it, a change of its parent, its move to the bin, restore or deletion, or that of a role above it |
+| `crud` | `CacheLabel::all()` | every cached CRUD response | a write of an ACL with no role |
+| `stored` | `CacheLabel::stored()` | every entry stored through a guarded (Redis) index, added by `FailoverLabelIndex` | the recovery of the Redis index after an outage |
+| `acl` | `CacheLabel::acl()` | every ACL resolution | an ACL write, a grant whose targets are unknown, a change of the role hierarchy, `AclResolverService::flushCache()` |
 | `docs` | `CacheLabel::docs()` | merged documentation files | the swagger generate command |
 | `translations` | `CacheLabel::translations()` | the translations payload | `translations:check` |
 | `inspector` | `CacheLabel::inspector()` | schema inspector results | the schema commands (`CommandListenerProvider`) |
 | `geocoding` | `CacheLabel::geocoding()` | geocoding answers | nothing by default: they expire by TTL, flush the label by hand to drop them |
 
 An update flushes both the table and the row label of its table, because an update can move a row into or out of a
-filtered list. A creation flushes only the table label: no cached value can embed a row that did not exist.
+filtered list. A creation flushes only the table label: no cached value can embed a row that did not exist. A detail
+response carries the row label of its record and not the table label, so a write that names no row must flush
+`rows:{table}` too: that is what `flushTable()` does.
 
 ## Drivers
 
@@ -39,20 +43,29 @@ counts hits, misses and flushes. Callers never branch on the driver.
 
 | Store | Index | Row labels | Behaviour |
 |---|---|---|---|
-| `redis` | `RedisLabelIndex`: one sorted set per label (score is the expiry), a hash with the last flush time of each label | yes | A flush deletes the entries and their set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back). Time comes from the Redis server clock. |
+| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), a hash with the last flush time of each label | yes | A flush deletes the entries and removes them from the set in bounded chunks, each chunk one atomic script; Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back). Time comes from the Redis server clock. Degraded mode, below. |
 | `array` | `ArrayLabelIndex`: in-process twin of the Redis index | yes | Same rules, lives for the process. |
 | `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. |
-| `failover` | `FailoverLabelIndex` around the index of its first store | as the primary | Degraded mode, below. |
+| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below. A failover store without a `stores` list throws. |
 | `null` | `NullLabelIndex` | n/a | Nothing is stored; every lookup misses. |
 
-**Failover degraded mode.** While the primary (Redis) throws a connection error, every lookup misses and nothing is
-stored, so no response or resolution is cached and nothing is read from the fallback array. Flushes issued during the
-outage cannot reach Redis, so the first successful call after it flushes `crud` before doing anything else. The outage
-is remembered in a marker on the host-local `file` store, so a later request or worker on the same host also flushes.
-A host that never saw a failure may serve entries written before the outage until some host has flushed `crud` (Redis
-is shared, one flush clears all). Only connection failures count as an outage; any other exception propagates.
+**Degraded mode.** A Redis index is always guarded by `FailoverLabelIndex`, with a plain `redis` store as with a
+`failover` one. While Redis throws a connection error, every lookup misses and nothing is stored, so no response or
+resolution is cached, and every flush is dropped instead of failing the write that issued it: an outage degrades to "no
+cache, writes succeed". Every entry stored through the guard carries the `stored` label, so the first successful call
+after an outage flushes `stored` before doing anything else, which reaches every kind of entry (CRUD responses, ACL
+resolutions, settings, cron list, docs, translations, inspector, geocoding) whose flushes may have been lost. The outage
+is remembered in a marker on the host-local `file` store, holding the time of the last failed call: a later request or
+worker on the same host also flushes, and Redis is tried at most once a second per host, so a request does not pay one
+connection timeout per call. A host that never saw a failure may serve entries written before the outage until some
+host has flushed `stored` (Redis is shared, one flush clears all). Only connection failures count as an outage; any
+other exception propagates.
 
-Entries are never stored without an expiry on any index.
+Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in different
+hash slots.
+
+Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
+TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live.
 
 ## What triggers flushes
 
@@ -60,16 +73,24 @@ Entries are never stored without an expiry on any index.
   and `forceDeleted` of every model flushes `table:{table}` and, except for a creation, `row:{table}:{id}`. A model
   needs no trait for this; `HasCache` only opts it into the CRUD response cache.
 - **Pivots.** The `BelongsToMany` and `MorphToMany` overrides (`FlushesCacheLabelsOnMutation`) flush after `attach`,
-  `detach`, `sync`, `toggle` and `updateExistingPivot`: the tables of the pivot and of both sides, plus the scope
-  labels of a grant:
+  `detach`, `sync`, `toggle` and `updateExistingPivot`, once per outer call (a `sync` calls `attach` and `detach`
+  internally; they add their keys to the one flush of the `sync`): the tables of the pivot and of both sides, plus the
+  scope labels of a grant:
   - roles or permissions of a user: `user:{id}`;
   - permissions of a role, roles of a permission: `role:{id}` of those roles and of every descendant role, and `acl`;
   - users of a role or permission: `user:{id}` of those users, or `acl` when the touched users are unknown (a detach
     of all).
-- **ACL writes.** `AclObserver` flushes `acl`, the role labels (with descendants) of the old and new role, or the table
-  label of the permission's entity for an unscoped ACL.
+- **ACL writes.** `AclObserver` flushes `acl`, the role labels (with descendants) of the old and new role, or, for an
+  ACL with no role, `crud` and the table label of the permission's entity: such an ACL narrows the entity wherever a
+  response embeds it, under row labels the table label does not reach. ACL writes are rare admin operations.
+- **Role hierarchy.** `RoleObserver` flushes `acl` and the role labels of the role and of every role below it (roles in
+  the bin included) when a role's `parent_id` changes, and when a role is moved to the bin, restored or deleted for
+  good; the labels of a deleted role are read before the deletion.
 - **Commands and helpers.** `Cache::clearByEntity()`, `clearByUser()`, `clearByGroup()`, `HasCache::invalidateCache()`,
   `AclResolverService::clearCacheFor*()` and `flushCache()`, `translations:check`, the schema commands.
+- **Core mass writes.** The settings rows written by `model:locked-remove`, `model:optimistic-lock-add`,
+  `model:optimistic-lock-remove`, `model:soft-deletes-remove` and `SettingsCleaner`, and the pending modifications a
+  record deleted for good closes (`HasApprovals`), flush their whole table with `flushTable()`.
 - **After commit.** When the owning model has an open transaction, `CacheLabelInvalidator` defers the flush to
   `afterCommit`, so a reader cannot re-cache old rows between the flush and the commit. With no transaction it flushes
   at once.
@@ -86,8 +107,9 @@ use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 $invalidator = resolve(CacheLabelInvalidator::class);
 
 // $owner is any model of the connection that holds the transaction.
-$invalidator->flushTable('cms_contents', $owner);          // table:cms_contents
-$invalidator->flushRecord($model);                          // table and row of one model
+$invalidator->flushTable('cms_contents', $owner);                // table:cms_contents and rows:cms_contents
+$invalidator->flushTables(['cms_contents', 'cms_tags'], $owner); // several whole tables in one flush call
+$invalidator->flushRecord($model);                                // table and row of one model
 $invalidator->flushLabels($owner, CacheLabel::table('cms_tags'), CacheLabel::user(5));
 ```
 
@@ -96,8 +118,12 @@ Rules:
 - Pass an owner model: the flush then waits for the commit of its connection's open transaction. Without an owner it
   runs immediately, which is only right outside a transaction.
 - Flush every table the write touched, pivots included (the table of a relation is `$model->relation()->getTable()`).
-- Flush at the end of the run. A failed run is worth flushing too: a flush that was not needed only costs a miss.
-- The CMS import is the reference: `ImportPipeline::flushWrittenTables()`.
+  `flushTable()` flushes the whole table, the cached details of its rows included; flushing only `table:{table}` by
+  hand would leave the details of updated or deleted rows cached.
+- Flush at the end of the run, with one `flushTables()` call. A failed run is worth flushing too: a flush that was not
+  needed only costs a miss.
+- The CMS import is the reference: `ImportPipeline::flushWrittenTables()` (there a defensive guarantee, since the import
+  writes through Eloquent).
 
 When a pivot is changed by a raw query, use `flushPivot($relation, $related_keys)` instead of flushing tables by hand if
 the pivot is a grant of roles or permissions, so the scope labels are flushed too.
@@ -147,14 +173,24 @@ Notes:
 - `cache:prune-labels`: removes expired entries and memberships from the label sets. It is scheduled hourly with
   `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL.
 - `cache:label-stats`: a table of hits, misses (counted per first table label of the entry) and flushes per label,
-  read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one.
+  read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Labels that
+  grow with the data are counted in buckets: every row label of a table as `row:{table}:*`, every user label as
+  `user:*`, so the counters stay as many as the tables and the fixed labels. Each counted label costs an `add` and an
+  `increment` on the stats store; the label list is written only the first time a label is seen, under a lock of the
+  stats store. Stats are best effort: a failing stats store is reported once per process and never fails the read or
+  write being measured, and nothing is counted while the Redis index is degraded.
 - The cron list is warmed by `cache:warm` under the table label of the cron table through the same index.
+
+## Opting a model into the response cache
+
+Before giving a model `HasCache`, check its ACL filters. ACL filters are runtime data written by an administrator: the
+relation paths they name are not in the request, so the response does not carry the labels of those relations' tables.
+Either no ACL filter on the model names a relation whose changes should change the response, or the model declares the
+tables through `IDeclaresCacheDependencies`. Otherwise a change of the related rows leaves a filtered response stale
+until its TTL. The same goes for global scopes and appended accessors that read other tables.
 
 ## Known limits
 
-- A role whose parent changes, or a role that is deleted, does not flush the `acl` resolutions that were computed
-  through it: they follow the change at the end of their TTL (1 hour). The CRUD responses are not affected, their key
-  holds the caller's roles.
 - With `permission.teams` enabled, Spatie's `removeRole()` and `revokePermissionTo()` on a user bypass the relation
   detach and so the flush. Teams are off in Laraplate; enabling them needs a flush added there first.
 - History reads are cached with the label of the requested record and the set labels of the versions and modifications
@@ -162,5 +198,10 @@ Notes:
 - Search is never cached (see `CRUD_SYSTEM.md`), so it needs no flush on reindex.
 - Stores without sets (`file`, `database`, `memcached`) over-invalidate: a change to one row flushes every response of
   its table, and old entries stay until their TTL.
-- A flush that failed on a Redis outage is lost; the failover wrapper covers it by flushing `crud` on recovery, but the
-  other labels (`acl`, `docs`, ...) are covered only by their TTL.
+- A Redis flush may delete an entry stored while the flush was paging its label (over-invalidation, never staleness).
+- After a Redis outage, a host that never saw the outage may serve entries stored before it until some host flushes
+  `stored`.
+- ACL filters that name relations are not labelled (see "Opting a model into the response cache").
+- Redis Cluster is not supported.
+- Each write flushes per model event; a write-heavy Redis deployment pays a few round trips per write. Collecting the
+  labels of a transaction into one flush is a follow-up.

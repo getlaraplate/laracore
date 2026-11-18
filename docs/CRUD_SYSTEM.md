@@ -732,6 +732,12 @@ answers without querying.
 entity, the right to see pending changes for a history read, and the permission on every relation the request names.
 A caller who lost a permission is refused even when no invalidation reached the entry.
 
+**Opting a model in.** Before a model gets `HasCache`, check what its ACL filters can name. ACL filters are runtime
+data written by an administrator, so the relation paths they name are not in the request and the response does not
+carry the labels of those relations' tables. Either no ACL filter on the model names a relation whose changes should
+change the response, or the model declares those tables through `IDeclaresCacheDependencies`. Otherwise a change of the
+related rows leaves a filtered response stale until its TTL.
+
 **What is stored.** A response is stored only when all of these hold:
 
 - the request is a read of the entity through `list`, `detail`, `tree` or `history`;
@@ -754,21 +760,27 @@ table is a set label (`table:{table}`) for a read of many rows, and a row label 
 a read of one record. Every relation the request names adds its table: the records of a loaded `belongsTo` get row
 labels, every other relation (`hasOne`, `hasMany`, many-to-many with its pivot, through relations, and any relation used
 only to filter, sort, group or aggregate) a set label of the related table. The translations table of a translated
-model and the tables a model declares through `IDeclaresCacheDependencies` are included.
+model and the tables a model declares through `IDeclaresCacheDependencies` are included. On an index with row labels,
+a response holding rows of a table also carries `rows:{table}`, which a whole-table flush uses to reach it.
 
 **Invalidation.**
 
-- Saving, deleting or restoring any model flushes its table label, and for an update, delete or restore its row label
-  too (one listener on the Eloquent events, so a model needs no trait for it). A creation flushes only the table label.
-- Pivot writes (`attach`, `detach`, `sync`, `toggle`, `updateExistingPivot`) flush the pivot and both side tables.
-- `Cache::clearByEntity()` flushes the table label of a `HasCache` entity, `Cache::clearByUser()` and
-  `Cache::clearByGroup()` the `user:{id}` and `role:{id}` labels (a flush of a label deletes every entry carrying it).
+- Saving, deleting, restoring or force deleting any model flushes its table label, and for an update, delete,
+  restore or force delete its row label too (one listener on the Eloquent events, so a model needs no trait for it). A
+  creation flushes only the table label.
+- Pivot writes (`attach`, `detach`, `sync`, `toggle`, `updateExistingPivot`) flush the pivot and both side tables, once
+  per call: a `sync` of many keys flushes once.
+- An ACL write and a change of the role hierarchy flush the scope labels they change, see `ACL_SYSTEM.md` ("Caching").
+- `Cache::clearByEntity()` flushes the whole table of a `HasCache` entity (its table label and `rows:{table}`, so
+  details are reached too), `Cache::clearByUser()` and `Cache::clearByGroup()` the `user:{id}` and `role:{id}` labels
+  (a flush of a label deletes every entry carrying it).
 - Every flush made inside a transaction runs after the commit.
 - A write that fires no Eloquent event must flush the labels itself, see `CACHE_LABELS_DEVELOPER.md`.
 
-**Degraded behaviour.** With the `failover` store, while Redis is down the index reads nothing and stores nothing: every
-read is computed. Invalidations issued meanwhile cannot reach Redis, so after recovery `crud` is flushed before any
-entry is read or stored. On `database`, `file`, `memcached` and similar stores, version counters replace row labels
+**Degraded behaviour.** With a `redis` store, alone or as the first store of `failover`, while Redis is down the index
+reads nothing and stores nothing: every read is computed and every write succeeds. Redis is tried again at most once a
+second per host. Invalidations issued meanwhile cannot reach Redis, so after recovery every entry stored through the
+index (label `stored`) is flushed before any entry is read or stored. On `database`, `file`, `memcached` and similar stores, version counters replace row labels
 and a record change flushes the whole table label (over-invalidation, never staleness). With the `null` store nothing
 is cached.
 
