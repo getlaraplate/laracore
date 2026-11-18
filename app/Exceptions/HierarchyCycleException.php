@@ -9,7 +9,8 @@ use LogicException;
 /**
  * Thrown when a hierarchy node would be moved under itself or under one of its own descendants, which would
  * turn the tree into a cycle. Raised by {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::moveSubtree()}
- * before any closure row changes.
+ * before any closure row changes, and by {@see \Modules\Core\Models\Concerns\HasClosureTable} before a new parent
+ * is saved.
  */
 final class HierarchyCycleException extends LogicException
 {

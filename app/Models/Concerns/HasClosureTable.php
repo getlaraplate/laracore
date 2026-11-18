@@ -4,206 +4,215 @@ declare(strict_types=1);
 
 namespace Modules\Core\Models\Concerns;
 
-use Illuminate\Database\Eloquent\Attributes\Scope;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
+use Closure;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use LogicException;
-use Modules\Core\Helpers\TreeCollection;
+use Modules\Core\Exceptions\HierarchyCycleException;
+use Modules\Core\Models\Relations\ClosureBloodline;
+use Modules\Core\Models\Relations\ClosureLineage;
+use Modules\Core\Models\Relations\ClosureRootAncestor;
+use Modules\Core\Models\Relations\Siblings;
+use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
 
 /**
- * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
+ * A hierarchy on a closure table, `{table}_closure` (see {@see \Modules\Core\Helpers\MigrateUtils::closureTable()}),
+ * kept in step with the parent column through model events.
  *
- * @template TModel of Model
+ * Relations: `parent`, `children`, `ancestors`, `ancestorsAndSelf`, `descendants`, `descendantsAndSelf`, `bloodline`,
+ * `siblings`, `siblingsAndSelf`, `rootAncestor`, `parentAndSelf`, `childrenAndSelf`, all eager-loadable. The nodes
+ * the closure relations load come by distance, nearest first, before any order a global scope adds, and carry a
+ * signed `depth`: negative above the node, `0` for the node, positive below.
+ *
+ * Maintenance, each step in a transaction on the model connection:
+ * - created: the node's closure rows;
+ * - updating with a new parent: refused with {@see HierarchyCycleException} when the parent is the node or one of
+ *   its descendants, before anything is saved;
+ * - updated with a new parent: the whole subtree moves;
+ * - deleting, when the row really goes: the subtree is detached from the node's ancestors. The node's own rows go
+ *   with the cascading foreign keys, and the children's parent column with the parent foreign key.
+ * Soft deletes and restores leave the closure as it is: a trashed node hides only itself.
+ *
+ * Writes that bypass model events leave the closure behind; {@see self::rebuildClosure()} repairs it.
+ *
+ * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  */
 trait HasClosureTable
 {
+    /**
+     * Rebuild the closure table from the parent column.
+     */
     public static function rebuildClosure(): void
     {
-        $model = new static;
-        $model->getConnection()->table($model->getClosureTable())->truncate();
-
-        static::query()
-            ->whereNull('parent_id')
-            ->orderBy('id')
-            ->chunkById(100, static function (Collection $rootNodes): void {
-                foreach ($rootNodes as $root) {
-                    self::insertClosures($root);
-                }
-            });
+        ClosureTableMaintainer::forModel(static::query()->getModel())->rebuild();
     }
 
     /**
-     * @return BelongsToMany<static>
-     */
-    public function ancestors(): BelongsToMany
-    {
-        $closureTable = $this->getClosureTable();
-        $modelTable = $this->getModelTable();
-
-        return $this->belongsToMany(
-            static::class,
-            $closureTable,
-            'descendant_id',
-            'ancestor_id',
-        )
-            ->withPivot('depth')
-            ->orderBy($this->qualifyTreeColumn('depth', $closureTable), 'desc')
-            ->select([
-                $this->qualifyTreeColumn('*', $modelTable),
-                $this->qualifyTreeColumn('depth', $closureTable),
-            ]);
-    }
-
-    /**
-     * @return BelongsToMany<static>
-     */
-    public function descendants(): BelongsToMany
-    {
-        $closureTable = $this->getClosureTable();
-        $modelTable = $this->getModelTable();
-
-        return $this->belongsToMany(
-            static::class,
-            $closureTable,
-            'ancestor_id',
-            'descendant_id',
-        )
-            ->withPivot('depth')
-            ->orderBy($this->qualifyTreeColumn('depth', $closureTable), 'asc')
-            ->select([
-                $this->qualifyTreeColumn('*', $modelTable),
-                $this->qualifyTreeColumn('depth', $closureTable),
-            ]);
-    }
-
-    /**
-     * @return BelongsToMany<static>
-     */
-    public function closure(): BelongsToMany
-    {
-        $closureTable = $this->getClosureTable();
-        $modelTable = $this->getModelTable();
-
-        return $this->belongsToMany(
-            static::class,
-            $closureTable,
-            'descendant_id',
-            'ancestor_id',
-        )
-            ->withPivot('depth')
-            ->from($modelTable . ' as closure_categories')
-            ->select('closure_categories.*');
-    }
-
-    /**
-     * @return HasMany<static>
-     */
-    public function children(): HasMany
-    {
-        return $this->hasMany(static::class, 'parent_id');
-    }
-
-    /**
-     * @return BelongsTo<static>
+     * @return BelongsTo<static, $this>
      */
     public function parent(): BelongsTo
     {
-        return $this->belongsTo(static::class, 'parent_id');
+        return $this->belongsTo(static::class, $this->getParentKeyName(), $this->getKeyName(), 'parent');
     }
 
     /**
-     * @return HasMany<static>
+     * @return HasMany<static, $this>
+     */
+    public function children(): HasMany
+    {
+        return $this->hasMany(static::class, $this->getParentKeyName(), $this->getKeyName());
+    }
+
+    /**
+     * The ancestors, closest first.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function ancestors(): BelongsToMany
+    {
+        return $this->closureLineage(towardsAncestors: true, andSelf: false, maxDistance: null, relationName: __FUNCTION__);
+    }
+
+    /**
+     * The node, then its ancestors, closest first.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function ancestorsAndSelf(): BelongsToMany
+    {
+        return $this->closureLineage(towardsAncestors: true, andSelf: true, maxDistance: null, relationName: __FUNCTION__);
+    }
+
+    /**
+     * The descendants, nearest first.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function descendants(): BelongsToMany
+    {
+        return $this->closureLineage(towardsAncestors: false, andSelf: false, maxDistance: null, relationName: __FUNCTION__);
+    }
+
+    /**
+     * The node, then its descendants, nearest first.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function descendantsAndSelf(): BelongsToMany
+    {
+        return $this->closureLineage(towardsAncestors: false, andSelf: true, maxDistance: null, relationName: __FUNCTION__);
+    }
+
+    /**
+     * The node, then its parent.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function parentAndSelf(): BelongsToMany
+    {
+        return $this->closureLineage(towardsAncestors: true, andSelf: true, maxDistance: 1, relationName: __FUNCTION__);
+    }
+
+    /**
+     * The node, then its children.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function childrenAndSelf(): BelongsToMany
+    {
+        return $this->closureLineage(towardsAncestors: false, andSelf: true, maxDistance: 1, relationName: __FUNCTION__);
+    }
+
+    /**
+     * The node and its descendants, nearest first, then its ancestors, closest first.
+     *
+     * @return BelongsToMany<static, $this>
+     */
+    public function bloodline(): BelongsToMany
+    {
+        return new ClosureBloodline($this->newRelatedInstance(static::class)->newQuery(), $this, $this->getClosureTable(), __FUNCTION__);
+    }
+
+    /**
+     * The root of the node's tree; null for a root.
+     *
+     * @return ClosureRootAncestor<static, $this>
+     */
+    public function rootAncestor(): ClosureRootAncestor
+    {
+        return new ClosureRootAncestor(
+            $this->closureLineage(towardsAncestors: true, andSelf: false, maxDistance: null, relationName: __FUNCTION__),
+        );
+    }
+
+    /**
+     * The other nodes under the same parent; the other roots for a root.
+     *
+     * @return HasMany<static, $this>
      */
     public function siblings(): HasMany
     {
-        return $this->hasMany(static::class, 'parent_id')
-            ->where('id', '!=', $this->id);
+        return new Siblings($this->newRelatedInstance(static::class)->newQuery(), $this, $this->getParentKeyName(), andSelf: false);
     }
 
     /**
-     * @return HasMany<static>
+     * The nodes under the same parent, the node included; the roots for a root.
+     *
+     * @return HasMany<static, $this>
      */
     public function siblingsAndSelf(): HasMany
     {
-        return $this->hasMany(static::class, 'parent_id');
+        return new Siblings($this->newRelatedInstance(static::class)->newQuery(), $this, $this->getParentKeyName(), andSelf: true);
     }
 
     /**
-     * @return Collection<int, static>
+     * The node's distance from its root: 0 for a root.
      */
-    public function bloodline(): Collection
-    {
-        return $this->ancestors->reverse()->push($this)->merge($this->descendants);
-    }
-
-    /**
-     * @return Collection<int, static>
-     */
-    public function bloodlineAndSelf(): Collection
-    {
-        return $this->ancestors->reverse()->push($this);
-    }
-
     public function getDepth(): int
     {
-        $cache_key = $this->depthCacheKey();
-        $closureTable = $this->getClosureTable();
+        $depth = $this->closureQuery()->where('descendant_id', $this->getKey())->max('depth');
 
-        // The in-request memo sits on the memoized store rather than in a static array:
-        // a static L1 grows by one entry per node the process ever touches, which never
-        // shrinks on a long-lived worker. The memoized store is bound per request and
-        // still exposes forget(), which invalidateDepthCache() needs.
-        return (int) Cache::memo()->remember(
-            $cache_key,
-            now()->addHours(24),
-            fn () => $this->getConnection()->table($closureTable)
-                ->where($this->qualifyTreeColumn('ancestor_id', $closureTable), $this->id)
-                ->where($this->qualifyTreeColumn('descendant_id', $closureTable), $this->id)
-                ->value($this->qualifyTreeColumn('depth', $closureTable)) ?? 0,
-        );
+        return is_numeric($depth) ? (int) $depth : 0;
     }
 
     public function isRoot(): bool
     {
-        return $this->parent_id === null;
+        return $this->getAttribute($this->getParentKeyName()) === null;
     }
 
     public function isLeaf(): bool
     {
-        return $this->children()->count() === 0;
+        return $this->children()->doesntExist();
     }
 
     public function isDescendantOf(self $ancestor): bool
     {
-        $closureTable = $this->getClosureTable();
-
-        return $this->getConnection()->table($closureTable)
-            ->where($this->qualifyTreeColumn('ancestor_id', $closureTable), $ancestor->id)
-            ->where($this->qualifyTreeColumn('descendant_id', $closureTable), $this->id)
-            ->where($this->qualifyTreeColumn('depth', $closureTable), '>', 0)
+        return $this->closureQuery()
+            ->where('ancestor_id', $ancestor->getKey())
+            ->where('descendant_id', $this->getKey())
+            ->where('depth', '>', 0)
             ->exists();
     }
 
     public function isAncestorOf(self $descendant): bool
     {
-        $closureTable = $this->getClosureTable();
-
-        return $this->getConnection()->table($closureTable)
-            ->where($this->qualifyTreeColumn('ancestor_id', $closureTable), $this->id)
-            ->where($this->qualifyTreeColumn('descendant_id', $closureTable), $descendant->id)
-            ->where($this->qualifyTreeColumn('depth', $closureTable), '>', 0)
-            ->exists();
+        return $descendant->isDescendantOf($this);
     }
 
     public function isSiblingOf(self $sibling): bool
     {
-        return $this->parent_id === $sibling->parent_id && $this->id !== $sibling->id;
+        return $this->getAttribute($this->getParentKeyName()) === $sibling->getAttribute($this->getParentKeyName())
+            && $this->getKey() !== $sibling->getKey();
     }
 
+    /**
+     * Move the node, with its subtree, under a new parent. False, with nothing changed, when the new parent is the
+     * node itself or one of its descendants.
+     *
+     * @throws LogicException When the new parent lives on another connection
+     */
     public function moveTo(self $newParent): bool
     {
         throw_if(
@@ -212,22 +221,16 @@ trait HasClosureTable
             'Cannot move tree nodes across multiple database connections.',
         );
 
-        if ($newParent->isDescendantOf($this)) {
+        if ($newParent->is($this) || $newParent->isDescendantOf($this)) {
             return false;
         }
 
         $this->getConnection()->transaction(function () use ($newParent): void {
-            $this->parent_id = $newParent->id;
+            $this->setAttribute($this->getParentKeyName(), $newParent->getKey());
             $this->save();
-            $this->updateClosureTable();
         });
 
         return true;
-    }
-
-    public function newCollection(array $models = []): TreeCollection
-    {
-        return new TreeCollection($models);
     }
 
     public function getClosureTable(): string
@@ -240,171 +243,140 @@ trait HasClosureTable
         return 'parent_id';
     }
 
-    protected static function insertClosures($model, $ancestors = []): void
-    {
-        $selfRow = [
-            'ancestor_id' => $model->id,
-            'descendant_id' => $model->id,
-            'depth' => 0,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ];
-
-        $rows = [$selfRow];
-
-        foreach ($ancestors as $i => $ancestor) {
-            $rows[] = [
-                'ancestor_id' => $ancestor->id,
-                'descendant_id' => $model->id,
-                'depth' => $i + 1,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-        }
-
-        // Batch insert for better performance
-        if ($rows !== []) {
-            $model->getConnection()->table($model->getClosureTable())->insert($rows);
-        }
-
-        $children = $model->children()->orderBy('id')->get();
-
-        foreach ($children as $child) {
-            self::insertClosures($child, array_merge([$model], $ancestors));
-        }
-    }
-
     protected static function bootHasClosureTable(): void
     {
-        static::created(function ($model): void {
-            $model->updateClosureTable();
+        static::created(static function (self $node): void {
+            $node->inClosureTransaction(static function () use ($node): void {
+                ClosureTableMaintainer::forModel($node)->insertNode($node->closureKey(), $node->closureParentKey());
+            });
         });
 
-        static::updated(function ($model): void {
-            if ($model->isDirty('parent_id')) {
-                $model->updateClosureTable();
+        static::updating(static function (self $node): void {
+            if (! $node->isDirty($node->getParentKeyName())) {
+                return;
             }
+
+            $node->inClosureTransaction(static function () use ($node): void {
+                $node->refuseCycle();
+            });
         });
 
-        static::deleted(function ($model): void {
-            $model->getConnection()->table($model->getClosureTable())
-                ->where('descendant_id', $model->id)
-                ->orWhere('ancestor_id', $model->id)
-                ->delete();
-        });
-    }
-
-    /**
-     * @param  Builder<static>  $query
-     * @return Builder<static>
-     */
-    #[Scope]
-    protected function withClosure(Builder $query): Builder
-    {
-        return $query->with(['closure', 'ancestors']);
-    }
-
-    /**
-     * @param  Builder<static>  $query
-     * @return Builder<static>
-     */
-    #[Scope]
-    protected function tree(Builder $query): Builder
-    {
-        $closureTable = $this->getClosureTable();
-        // $modelTable = $this->getModelTable();
-
-        return $query->withClosure()
-            ->whereDoesntHave('ancestors')
-            ->with([
-                'closure' => fn ($query) => $query->orderBy($this->qualifyTreeColumn('depth', $closureTable)),
-            ]);
-    }
-
-    /**
-     * @param  Builder<static>  $query
-     * @return Builder<static>
-     */
-    #[Scope]
-    protected function withSiblings(Builder $query): Builder
-    {
-        return $query->with(['siblings', 'siblingsAndSelf']);
-    }
-
-    /**
-     * @param  Builder<static>  $query
-     * @return Builder<static>
-     */
-    #[Scope]
-    protected function withBloodline(Builder $query): Builder
-    {
-        return $query->with(['ancestors', 'descendants']);
-    }
-
-    protected function getModelTable(): string
-    {
-        return $this->getTable();
-    }
-
-    protected function qualifyTreeColumn(string $column, ?string $table = null): string
-    {
-        $table ??= $this->getModelTable();
-
-        return sprintf('%s.%s', $table, $column);
-    }
-
-    protected function updateClosureTable(): void
-    {
-        $closureTable = $this->getClosureTable();
-
-        // Delete old closure entries for this node
-        $this->getConnection()->table($closureTable)
-            ->where($this->qualifyTreeColumn('descendant_id', $closureTable), $this->id)
-            ->delete();
-
-        // Prepare rows for batch insert
-        $rows = [
-            [
-                'ancestor_id' => $this->id,
-                'descendant_id' => $this->id,
-                'depth' => 0,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-        ];
-
-        // Insert records for all ancestors (batch insert for better performance)
-        if ($this->parent_id) {
-            $ancestors = $this->getConnection()->table($closureTable)
-                ->where($this->qualifyTreeColumn('descendant_id', $closureTable), $this->parent_id)
-                ->get();
-
-            foreach ($ancestors as $ancestor) {
-                $rows[] = [
-                    'ancestor_id' => $ancestor->ancestor_id,
-                    'descendant_id' => $this->id,
-                    'depth' => $ancestor->depth + 1,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ];
+        static::updated(static function (self $node): void {
+            if (! $node->wasChanged($node->getParentKeyName())) {
+                return;
             }
+
+            $node->inClosureTransaction(static function () use ($node): void {
+                ClosureTableMaintainer::forModel($node)->moveSubtree($node->closureKey(), $node->closureParentKey());
+            });
+        });
+
+        static::deleting(static function (self $node): void {
+            if (! $node->deleteRemovesRow()) {
+                return;
+            }
+
+            $node->inClosureTransaction(static function () use ($node): void {
+                ClosureTableMaintainer::forModel($node)->detachSubtreesOf(
+                    static fn (QueryBuilder $doomed): QueryBuilder => $doomed->where($node->getKeyName(), $node->closureKey()),
+                );
+            });
+        });
+    }
+
+    /**
+     * Whether the delete about to run removes the row: always without soft deletes; with them, on a force delete
+     * and, with Core's soft deletes, when they are switched off for the model. A force delete fires `deleting` too,
+     * after `forceDeleting`, and Core's switched-off delete fires `deleting` alone: listening to `deleting` covers
+     * both, and a soft delete is told apart here.
+     */
+    protected function deleteRemovesRow(): bool
+    {
+        if (! method_exists($this, 'isForceDeleting')) {
+            return true;
         }
 
-        // Batch insert all rows at once (more efficient than multiple inserts)
-        if ($rows !== []) {
-            $this->getConnection()->table($closureTable)->insert($rows);
+        if ($this->isForceDeleting() === true) {
+            return true;
         }
 
-        // Note: When a node moves, its descendants' closure entries also need to be updated
-        // This is currently handled by calling rebuildClosure() when needed, or can be
-        // optimized in the future with a more efficient SQL-based approach
-
-        // Clears both the in-request memo and the persistent entry for this node only.
-        Cache::memo()->forget($this->depthCacheKey());
+        return method_exists($this, 'softDeletesEnabledBySettings') && $this->softDeletesEnabledBySettings() === false;
     }
 
-    private function depthCacheKey(): string
+    /**
+     * @throws HierarchyCycleException When the new parent is the node itself or one of its descendants
+     */
+    protected function refuseCycle(): void
     {
-        return sprintf('%s.%s.%s.depth', $this->getConnection()->getName(), $this->getTable(), $this->id);
+        $node = $this->closureKey();
+        $new_parent = $this->closureParentKey();
+
+        if ($new_parent === null) {
+            return;
+        }
+
+        $cycles = (string) $node === (string) $new_parent
+            || $this->closureQuery()->where('ancestor_id', $node)->where('descendant_id', $new_parent)->exists();
+
+        if ($cycles) {
+            throw HierarchyCycleException::forMove($this->getTable(), $node, $new_parent);
+        }
+    }
+
+    /**
+     * @param  Closure(): void  $callback
+     */
+    protected function inClosureTransaction(Closure $callback): void
+    {
+        $this->getConnection()->transaction($callback);
+    }
+
+    /**
+     * @return ClosureLineage<static, $this>
+     */
+    private function closureLineage(bool $towardsAncestors, bool $andSelf, ?int $maxDistance, string $relationName): ClosureLineage
+    {
+        return new ClosureLineage(
+            $this->newRelatedInstance(static::class)->newQuery(),
+            $this,
+            $this->getClosureTable(),
+            $towardsAncestors,
+            $andSelf,
+            $maxDistance,
+            $relationName,
+        );
+    }
+
+    private function closureQuery(): QueryBuilder
+    {
+        return $this->getConnection()->table($this->getClosureTable());
+    }
+
+    /**
+     * @throws LogicException When the node has no key yet
+     */
+    private function closureKey(): int|string
+    {
+        $key = $this->getKey();
+
+        if (! is_int($key) && ! is_string($key)) {
+            throw new LogicException(sprintf('A node of "%s" has no key to place in its closure table.', $this->getTable()));
+        }
+
+        return $key;
+    }
+
+    /**
+     * @throws LogicException When the parent column holds something other than a key
+     */
+    private function closureParentKey(): int|string|null
+    {
+        $parent = $this->getAttribute($this->getParentKeyName());
+
+        if ($parent !== null && ! is_int($parent) && ! is_string($parent)) {
+            throw new LogicException(sprintf('A node of "%s" has a parent value that is not a key.', $this->getTable()));
+        }
+
+        return $parent;
     }
 }

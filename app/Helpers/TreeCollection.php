@@ -10,9 +10,9 @@ use Illuminate\Support\Collection;
 /**
  * Groups flat closure-table rows into a tree.
  *
- * A node is any object carrying the closure-table columns: an Eloquent model when
- * the collection comes from {@see \Modules\Core\Models\Concerns\HasClosureTable},
- * a stdClass when it comes from a raw query. `children`, `total_articles_count`
+ * A node is any object carrying the closure-table columns: an Eloquent model of a
+ * {@see \Modules\Core\Models\Concerns\HasClosureTable} hierarchy, wrapped here
+ * explicitly, or a stdClass when it comes from a raw query. `children`, `total_articles_count`
  * and `path` are written here onto whichever object arrived, so no declared type
  * describes a node and the members stay dynamic.
  */
