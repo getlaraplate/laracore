@@ -31,10 +31,5 @@ final readonly class FlushCacheLabelsOnModelWrite
         } else {
             $this->invalidator->flushRecord($model);
         }
-
-        // Until responses stop being stored under Laravel tags, a model using HasCache keeps flushing its tag.
-        if (method_exists($model, 'invalidateLegacyCache')) {
-            $model->invalidateLegacyCache();
-        }
     }
 }

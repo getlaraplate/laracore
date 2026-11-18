@@ -78,6 +78,14 @@ final readonly class CacheLabelInvalidator
             return;
         }
 
-        $owner->getConnection()->afterCommit($flush);
+        $connection = $owner->getConnection();
+
+        if ($connection->transactionLevel() === 0) {
+            $flush();
+
+            return;
+        }
+
+        $connection->afterCommit($flush);
     }
 }

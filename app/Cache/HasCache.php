@@ -33,7 +33,7 @@ trait HasCache
 
     /**
      * Flush the Laravel table tag that {@see Repository::tryByRequest()} still stores under.
-     * Called by the model-write listener for every model using this trait. Removed with the tag storage.
+     * Called by the boot hooks below and by {@see invalidateCache()}. Removed with the tag storage.
      */
     public function invalidateLegacyCache(): void
     {
@@ -50,5 +50,20 @@ trait HasCache
         } else {
             Cache::forget($this->getCacheKey());
         }
+    }
+
+    /**
+     * Keeps the Laravel table tag flushed on every save and delete, including a save that changed nothing, which
+     * the label listener does not see. Removed together with the tag storage.
+     */
+    protected static function bootHasCache(): void
+    {
+        static::saved(function (self $model): void {
+            $model->invalidateLegacyCache();
+        });
+
+        static::deleted(function (self $model): void {
+            $model->invalidateLegacyCache();
+        });
     }
 }
