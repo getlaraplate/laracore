@@ -8,10 +8,12 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Enums\CoreTables;
+use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesAddCommand;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRefreshCommand;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRemoveCommand;
 use Modules\Core\Tests\Stubs\Console\ConstructorConfiguredSoftDeleteModel;
+use Modules\Core\Tests\Stubs\SoftDeletingClosureTreeStubModel;
 use Symfony\Component\Console\Application as SymfonyConsoleApplication;
 
 it('defines expected command signatures', function (): void {
@@ -183,5 +185,46 @@ it('writes soft-delete settings through the Setting model connection', function 
         DB::purge('soft_delete_default');
         DB::disconnect('soft_delete_affinity');
         DB::purge('soft_delete_affinity');
+    }
+});
+
+it('rebuilds the closure after purging a hierarchical model', function (): void {
+    Schema::dropIfExists('closure_soft_tree_nodes_closure');
+    Schema::dropIfExists('closure_soft_tree_nodes');
+    Schema::create('closure_soft_tree_nodes', function (Illuminate\Database\Schema\Blueprint $table): void {
+        $table->id();
+        $table->foreignId('parent_id')->nullable()->constrained('closure_soft_tree_nodes')->nullOnDelete();
+        $table->softDeletes();
+        $table->boolean('is_deleted')->storedAs('deleted_at IS NOT NULL');
+        $table->timestamps();
+    });
+    MigrateUtils::closureTable('closure_soft_tree_nodes');
+
+    $root = SoftDeletingClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $middle = SoftDeletingClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    $leaf = SoftDeletingClosureTreeStubModel::query()->create(['parent_id' => $middle->id]);
+    $middle->delete();
+
+    $command = new ModelSoftDeletesRemoveCommand(new Filesystem);
+    $method = new ReflectionMethod($command, 'purgeSoftDeletedRows');
+    $purged = $method->invoke($command, new SoftDeletingClosureTreeStubModel);
+
+    $rows = static fn (): array => DB::table('closure_soft_tree_nodes_closure')
+        ->orderBy('ancestor_id')->orderBy('descendant_id')->get()
+        ->map(static fn (object $row): string => sprintf('%d>%d:%d', $row->ancestor_id, $row->descendant_id, $row->depth))
+        ->all();
+    $after_purge = $rows();
+    SoftDeletingClosureTreeStubModel::rebuildClosure();
+
+    try {
+        expect($purged)->toBe(1)
+            ->and($after_purge)->toBe($rows())
+            ->and($after_purge)->toBe([
+                sprintf('%d>%d:0', $root->id, $root->id),
+                sprintf('%d>%d:0', $leaf->id, $leaf->id),
+            ]);
+    } finally {
+        Schema::dropIfExists('closure_soft_tree_nodes_closure');
+        Schema::dropIfExists('closure_soft_tree_nodes');
     }
 });

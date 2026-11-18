@@ -11,6 +11,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Str;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
+use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Services\PerModelSettingResolver;
@@ -62,7 +63,7 @@ final class ModelSoftDeletesRemoveCommand extends Command
                 return BaseCommand::FAILURE;
             }
 
-            $purged = $instance->getConnection()->table($table)->whereNotNull('deleted_at')->delete();
+            $purged = $this->purgeSoftDeletedRows($instance);
             $this->info(sprintf('Purged %d record(s).', $purged));
         }
 
@@ -137,6 +138,21 @@ final class ModelSoftDeletesRemoveCommand extends Command
         $instance = $reflection->newInstance();
 
         return $instance instanceof Model ? $instance : null;
+    }
+
+    /**
+     * Hard delete the trashed rows. The delete bypasses model events, so a
+     * closure table would keep stale links and is rebuilt from parent_id.
+     */
+    private function purgeSoftDeletedRows(Model $model): int
+    {
+        $purged = $model->getConnection()->table($model->getTable())->whereNotNull('deleted_at')->delete();
+
+        if ($purged > 0 && in_array(HasClosureTable::class, class_uses_recursive($model), true)) {
+            $model::rebuildClosure();
+        }
+
+        return $purged;
     }
 
     private function countSoftDeletedRows(Model $model): int
