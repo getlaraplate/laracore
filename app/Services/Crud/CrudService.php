@@ -2245,11 +2245,12 @@ class CrudService
 
     /**
      * Reflectively resolve a BelongsToMany/MorphToMany relation by name, or null
-     * when it is absent or of another kind.
+     * when it is absent, of another kind, or black-listed (a hierarchy or history relation
+     * must never be exposed as a facet).
      */
     private function resolveManyRelation(Model $model, string $relation): ?BelongsToMany
     {
-        if ($relation === '') {
+        if ($relation === '' || QueryBuilder::isBlackListedPath($relation)) {
             return null;
         }
 
