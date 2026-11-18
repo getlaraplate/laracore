@@ -14,9 +14,10 @@ use Modules\Core\Services\AclResolverService;
  * Keeps the cache consistent with ACL writes, after the transaction of the write commits.
  *
  * Every create, update, delete and restore flushes the `acl` label, which every cached resolution of
- * {@see AclResolverService} carries, and the labels of the responses the ACL narrows: `role:{id}` for an ACL scoped
- * to a role, the table of its permission's entity for an unscoped one, which applies to every holder of the
- * permission. An update that moves the ACL to another role or permission flushes what it narrowed before as well.
+ * {@see AclResolverService} carries, and the labels of the responses the ACL narrows: for an ACL scoped to a role,
+ * `role:{id}` of that role and of every role below it, which inherits the ACL unless it has its own; for an unscoped
+ * one, the table of its permission's entity, as it applies to every holder of the permission. An update that moves
+ * the ACL to another role or permission flushes what it narrowed before as well.
  */
 final readonly class AclObserver
 {
@@ -55,31 +56,45 @@ final readonly class AclObserver
 
     private function flush(ACL $acl): void
     {
-        $labels = [CacheLabel::acl(), ...$this->labelsOf($acl, $acl->role_id, $acl->permission_id)];
+        $role_keys = [];
+        $tables = [];
+        $this->collect($acl, $acl->role_id, $acl->permission_id, $role_keys, $tables);
 
         if ($acl->isDirty(['role_id', 'permission_id'])) {
-            $labels = [...$labels, ...$this->labelsOf($acl, $acl->getOriginal('role_id'), $acl->getOriginal('permission_id'))];
+            $this->collect($acl, $acl->getOriginal('role_id'), $acl->getOriginal('permission_id'), $role_keys, $tables);
         }
 
-        $this->invalidator->flushLabels($acl, ...array_values(array_unique($labels)));
+        $this->invalidator->flushRoles(
+            $acl,
+            array_values(array_unique($role_keys)),
+            CacheLabel::acl(),
+            ...array_map(CacheLabel::table(...), array_values(array_unique($tables))),
+        );
     }
 
     /**
-     * @return list<string>
+     * Adds what one state of the ACL narrows: its role, or the table of its permission's entity when unscoped.
+     *
+     * @param  list<int|string>  $role_keys
+     * @param  list<string>  $tables
      */
-    private function labelsOf(ACL $acl, mixed $role_id, mixed $permission_id): array
+    private function collect(ACL $acl, mixed $role_id, mixed $permission_id, array &$role_keys, array &$tables): void
     {
         if (is_int($role_id) || (is_string($role_id) && $role_id !== '')) {
-            return [CacheLabel::role($role_id)];
+            $role_keys[] = $role_id;
+
+            return;
         }
 
         if (! is_int($permission_id) && ! is_string($permission_id)) {
-            return [];
+            return;
         }
 
         $permission = $acl->permission()->getRelated()->newQuery()->find($permission_id);
         $table = $permission instanceof Permission ? self::entityTableOf($permission) : null;
 
-        return $table === null ? [] : [CacheLabel::table($table)];
+        if ($table !== null) {
+            $tables[] = $table;
+        }
     }
 }

@@ -16,14 +16,16 @@ trait FlushesCacheLabelsOnMutation
 {
     public function attach($ids, array $attributes = [], $touch = true): void
     {
+        $keys = $this->touchedKeys($ids);
         $this->attachWithinRevision($ids, $attributes, $touch);
-        $this->flushPivotLabels();
+        $this->flushPivotLabels($keys);
     }
 
     public function detach($ids = null, $touch = true)
     {
+        $keys = $ids === null ? null : $this->touchedKeys($ids);
         $result = $this->detachWithinRevision($ids, $touch);
-        $this->flushPivotLabels();
+        $this->flushPivotLabels($keys);
 
         return $result;
     }
@@ -31,7 +33,7 @@ trait FlushesCacheLabelsOnMutation
     public function sync($ids, $detaching = true)
     {
         $result = $this->syncWithinRevision($ids, $detaching);
-        $this->flushPivotLabels();
+        $this->flushPivotLabels(self::changedKeys($result, ['attached', 'detached', 'updated']));
 
         return $result;
     }
@@ -39,21 +41,67 @@ trait FlushesCacheLabelsOnMutation
     public function toggle($ids, $touch = true)
     {
         $result = $this->toggleWithinRevision($ids, $touch);
-        $this->flushPivotLabels();
+        $this->flushPivotLabels(self::changedKeys($result, ['attached', 'detached']));
 
         return $result;
     }
 
     public function updateExistingPivot($id, array $attributes, $touch = true)
     {
+        $keys = $this->touchedKeys($id);
         $result = $this->updateExistingPivotWithinRevision($id, $attributes, $touch);
-        $this->flushPivotLabels();
+        $this->flushPivotLabels($keys);
 
         return $result;
     }
 
-    private function flushPivotLabels(): void
+    /**
+     * The related keys of the changes a sync or toggle reports.
+     *
+     * @param  list<string>  $kinds
+     * @return list<int|string>
+     */
+    private static function changedKeys(mixed $result, array $kinds): array
     {
-        app(CacheLabelInvalidator::class)->flushPivot($this);
+        $keys = [];
+
+        foreach ($kinds as $kind) {
+            foreach (is_array($result) && is_array($result[$kind] ?? null) ? $result[$kind] : [] as $key) {
+                if (is_int($key) || (is_string($key) && $key !== '')) {
+                    $keys[] = $key;
+                }
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * The related keys named by the ids of attach, detach or updateExistingPivot: a model, a collection, a key, a
+     * list of keys, or keys mapped to pivot attributes.
+     *
+     * @return list<int|string>
+     */
+    private function touchedKeys(mixed $ids): array
+    {
+        $keys = [];
+
+        foreach ($this->parseIds($ids) as $index => $value) {
+            $key = is_array($value) ? $index : $value;
+
+            if (is_int($key) || (is_string($key) && $key !== '')) {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * @param  list<int|string>|null  $related_keys
+     */
+    private function flushPivotLabels(?array $related_keys): void
+    {
+        app(CacheLabelInvalidator::class)->flushPivot($this, $related_keys);
     }
 }

@@ -507,16 +507,18 @@ While a failover cache serves without Redis, resolutions are computed on every c
 
 Each change flushes labels after its transaction commits; none of them empties the cache store:
 
-- An ACL create, update, delete or restore (`AclObserver`) flushes `acl`, plus `role:{id}` for an ACL scoped to a
-  role or the table label of the permission's entity for an unscoped one. An update that moves the ACL to another
-  role or permission flushes the old one too.
-- A role gaining or losing a permission flushes `role:{id}` and `acl`, whichever side the grant is made from.
-- A user whose roles or direct permissions change flushes `user:{id}`.
+- An ACL create, update, delete or restore (`AclObserver`) flushes `acl`, plus, for an ACL scoped to a role,
+  `role:{id}` of that role and of every role below it (they inherit the ACL), or, for an unscoped one, the table
+  label of the permission's entity. An update that moves the ACL to another role or permission flushes the old one
+  too.
+- A grant is a pivot write, through Spatie (`assignRole()`, `givePermissionTo()`, `syncRoles()`, ...), a Filament
+  relationship field or a plain `attach()`, `detach()`, `sync()` on the relation. Every one of them goes through
+  Core's relation overrides, which flush the tables of the pivot and of both sides and the scope labels it changes:
+  - roles or direct permissions of a user: `user:{id}`;
+  - permissions of a role, or roles of a permission: `role:{id}` of those roles and of every role below them, and `acl`;
+  - users of a role or of a permission: `user:{id}` of those users, or `acl` when every user is detached at once.
 
-Spatie fires no model event for a grant, so Core turns on `permission.events_enabled` and listens to its
-`RoleAttachedEvent`, `RoleDetachedEvent`, `PermissionAttachedEvent` and `PermissionDetachedEvent`. With events on,
-`syncRoles()` and `syncPermissions()` revoke and grant through those events instead of detaching silently. A change
-of a role's parent is not a trigger: resolutions follow it within the TTL.
+A change of a role's parent is not a trigger: resolutions follow it within the TTL.
 
 Use these methods to manually clear cache:
 

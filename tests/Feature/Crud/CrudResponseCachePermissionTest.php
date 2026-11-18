@@ -15,8 +15,10 @@ use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\ACL;
 use Modules\Core\Models\Permission;
 use Modules\Core\Models\Role;
+use Modules\Core\Models\Setting;
 use Modules\Core\Models\User;
 use Modules\Core\Services\AclResolverService;
+use Modules\Core\Support\PermissionName;
 use Modules\Core\Tests\Stubs\Cache\FlushCountingArrayStore;
 use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
 use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
@@ -147,21 +149,97 @@ it('flushes the role label and the ACL resolutions on a write of a role scoped A
     'deleted' => [static fn (ACL $acl): ?bool => $acl->delete()],
 ]);
 
-it('flushes the table of the permission entity and the ACL resolutions on a write of an unscoped ACL', function (Closure $write): void {
-    $permission = crudPermissionCachePermission();
+it('flushes the table label CRUD responses of the permission entity carry on a write of an unscoped ACL', function (Closure $write): void {
+    $permission = Permission::findOrCreate(PermissionName::forModel(new Setting(), 'select'), 'web');
     $acl = crudPermissionCacheAcl($permission, null);
     $index = crudPermissionCacheRecord();
 
     $write($acl);
 
-    $table = $permission->fresh()->table_name;
-
-    expect($table)->toBeString()->not->toBe('')
-        ->and($index->flushedLabels())->toContain(CacheLabel::table($table), CacheLabel::acl());
+    expect($index->flushedLabels())->toContain(CacheLabel::table((new Setting())->getTable()), CacheLabel::acl());
 })->with([
     'created' => [static fn (ACL $acl): ACL => crudPermissionCacheAcl($acl->permission, null, 'draft')],
     'updated' => [static fn (ACL $acl): bool => $acl->forceFill(['priority' => 20])->save()],
     'deleted' => [static fn (ACL $acl): ?bool => $acl->delete()],
+]);
+
+it('flushes the roles below the role of an ACL, which inherit it', function (): void {
+    $parent = crudPermissionCacheRole();
+    $child = Role::factory()->create(['name' => 'perm_labels_child_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $parent->id]);
+    $grandchild = Role::factory()->create(['name' => 'perm_labels_grandchild_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $child->id]);
+    $acl = crudPermissionCacheAcl(crudPermissionCachePermission(), $parent);
+    $index = crudPermissionCacheRecord();
+
+    $acl->forceFill(['priority' => 20])->save();
+
+    expect($index->flushedLabels())->toContain(
+        CacheLabel::role($parent->id),
+        CacheLabel::role($child->id),
+        CacheLabel::role($grandchild->id),
+        CacheLabel::acl(),
+    );
+});
+
+it('flushes the roles below a role that gains a permission, which inherit it', function (): void {
+    $parent = crudPermissionCacheRole();
+    $child = Role::factory()->create(['name' => 'perm_labels_child_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $parent->id]);
+    $index = crudPermissionCacheRecord();
+
+    $parent->permissions()->attach(crudPermissionCachePermission()->id);
+
+    expect($index->flushedLabels())->toContain(CacheLabel::role($parent->id), CacheLabel::role($child->id), CacheLabel::acl());
+});
+
+it('flushes the scope labels of a grant made through the plain relation', function (Closure $change, Closure $expected): void {
+    $user = User::factory()->create();
+    $role = crudPermissionCacheRole();
+    $permission = crudPermissionCachePermission();
+    $index = crudPermissionCacheRecord();
+
+    $change($user, $role, $permission);
+
+    expect($index->flushedLabels())->toContain(...$expected($user, $role));
+})->with([
+    'attach roles of a user' => [
+        static fn (User $user, Role $role): mixed => $user->roles()->attach($role->id),
+        static fn (User $user): array => [CacheLabel::user($user->id)],
+    ],
+    'sync roles of a user' => [
+        static fn (User $user, Role $role): array => $user->roles()->sync([$role->id]),
+        static fn (User $user): array => [CacheLabel::user($user->id)],
+    ],
+    'detach roles of a user' => [
+        static fn (User $user, Role $role): int => $user->roles()->detach($role->id),
+        static fn (User $user): array => [CacheLabel::user($user->id)],
+    ],
+    'sync permissions of a user' => [
+        static fn (User $user, Role $role, Permission $permission): array => $user->permissions()->sync([$permission->id]),
+        static fn (User $user): array => [CacheLabel::user($user->id)],
+    ],
+    'attach permissions of a role' => [
+        static fn (User $user, Role $role, Permission $permission): mixed => $role->permissions()->attach($permission->id),
+        static fn (User $user, Role $role): array => [CacheLabel::role($role->id), CacheLabel::acl()],
+    ],
+    'sync permissions of a role' => [
+        static fn (User $user, Role $role, Permission $permission): array => $role->permissions()->sync([$permission->id]),
+        static fn (User $user, Role $role): array => [CacheLabel::role($role->id), CacheLabel::acl()],
+    ],
+    'detach permissions of a role' => [
+        static fn (User $user, Role $role, Permission $permission): int => $role->permissions()->detach($permission->id),
+        static fn (User $user, Role $role): array => [CacheLabel::role($role->id), CacheLabel::acl()],
+    ],
+    'attach roles of a permission' => [
+        static fn (User $user, Role $role, Permission $permission): mixed => $permission->roles()->attach($role->id),
+        static fn (User $user, Role $role): array => [CacheLabel::role($role->id), CacheLabel::acl()],
+    ],
+    'sync users of a role' => [
+        static fn (User $user, Role $role): array => $role->users()->sync([$user->id]),
+        static fn (User $user): array => [CacheLabel::user($user->id)],
+    ],
+    'detach every user of a role' => [
+        static fn (User $user, Role $role): int => $role->users()->detach(),
+        static fn (): array => [CacheLabel::acl()],
+    ],
 ]);
 
 it('flushes the role an ACL is moved away from as well as the one it moves to', function (): void {
