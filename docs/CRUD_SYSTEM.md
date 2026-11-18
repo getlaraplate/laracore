@@ -428,6 +428,26 @@ group-by key may not name a method.
 }
 ```
 
+#### Extended rows: `with_extended`
+
+A model can be extended by models of other modules (CMS `contents` by Shop `products`, see
+`Modules/CMS/docs/CONTENT_EXTENSION.md`). The rows an extender owns are left out of every list and search of the
+host. `with_extended=true` on `/select` and `/search` of the host includes them (spec
+`docs/superpowers/specs/2026-11-17-extended-entity-search-design.md`, XS3 to XS6, XS12):
+
+- only the extenders whose table the caller may `select`; the others are left out without an error;
+- each extended row passes the ACL of the host and the ACL of its own entity (a user restricted to the products of a
+  company sees only those, in the content list too);
+- each extended row is returned as its extender (a product, with the content merged in); `extended_type` tells which
+  shape a row has: `null` for a plain row, the alias (`shop.product`) for an extended one;
+- requested `columns` and `relations` apply to the host row, which the extender carries; the extender's own row is
+  returned whole;
+- the parameter is ignored on a model that no module extends, an extender included.
+
+`/search` of an extender (`/search/shop/products`) runs on the index of its host with the extender's permission and
+ACL: a filter on an attribute the extender reads from its host, or on one of its own columns it indexes, is accepted;
+any other filter on an own column answers 400. `/select` of an extender reads its own table as any model.
+
 ### Detail Request
 
 ```json
