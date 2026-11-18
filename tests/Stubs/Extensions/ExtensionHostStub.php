@@ -23,7 +23,8 @@ use Override;
  * declares no default search filter, so only the host contract keeps extended rows out of a search.
  *
  * The engine is the database engine reading the table without the hiding scope, as an external index holds every
- * row.
+ * row. `title` is filterable, an attribute an extender mounts from its host; the mapping carries the `extension`
+ * object of the registered extenders, as a host's index does, though the database engine cannot filter on it.
  */
 final class ExtensionHostStub extends Model implements IExtendableModel
 {
@@ -78,8 +79,13 @@ final class ExtensionHostStub extends Model implements IExtendableModel
     {
         $schema ??= new SchemaDefinition($this->getTable());
         $schema->addField(new FieldDefinition('id', FieldType::Integer, [IndexType::Filterable]));
-        $schema->addField(new FieldDefinition('title', FieldType::Text, [IndexType::Searchable]));
+        $schema->addField(new FieldDefinition('title', FieldType::Text, [IndexType::Searchable, IndexType::Filterable]));
         $schema->addField(new FieldDefinition('extension_type', FieldType::Keyword, [IndexType::Filterable]));
+        $extension_properties = $this->extensionSearchMapping();
+
+        if ($extension_properties !== []) {
+            $schema->addField(new FieldDefinition('extension', FieldType::Object, [IndexType::Searchable, IndexType::Filterable], ['properties' => $extension_properties]));
+        }
 
         return $this->getSearchMappingTrait($schema);
     }

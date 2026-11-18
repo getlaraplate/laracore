@@ -48,7 +48,9 @@ use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\SelectRequestData;
 use Modules\Core\Casts\TreeRequestData;
+use Modules\Core\Contracts\IExtendsModel;
 use Modules\Core\Contracts\ILockableModel;
+use Modules\Core\Contracts\IMountsRelatedAttributes;
 use Modules\Core\Contracts\ProvidesFacetLabelSources;
 use Modules\Core\Contracts\ProvidesSyncableRelations;
 use Modules\Core\Contracts\RestrictsCrudWrites;
@@ -71,6 +73,8 @@ use Modules\Core\Overrides\CustomSoftDeletingScope;
 use Modules\Core\Search\Contracts\IAuthorizesSearchRehydration;
 use Modules\Core\Search\DTOs\AdvancedSearchResult;
 use Modules\Core\Search\Enums\SearchMode as SearchDepth;
+use Modules\Core\Search\Extensions\ExtenderFilterTranslator;
+use Modules\Core\Search\Extensions\ExtenderSearch;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
 use Modules\Core\Search\Services\SearchCostGuard;
@@ -672,6 +676,10 @@ class CrudService
     public function search(SearchRequestData $requestData): CrudResult
     {
         $model = $requestData->model;
+
+        if ($model instanceof IExtendsModel) {
+            return $this->searchExtender($requestData, $model);
+        }
 
         $is_searchable_class = class_uses_trait($model, Searchable::class);
 
@@ -3029,11 +3037,66 @@ class CrudService
         return $unexpected === [] ? null : implode(', ', $unexpected);
     }
 
-    private function searchWithScout(SearchRequestData $requestData, string $permissionName): CrudResult
+    /**
+     * The search of an extender, run on the index of its host (spec
+     * `docs/superpowers/specs/2026-11-17-extended-entity-search-design.md`, XS1): the extender has no index of its
+     * own, its text is its host row's. It is read with its own permission and ACL (XS2): the request filters and the
+     * ACL are translated to the host index ({@see ExtenderFilterTranslator}, XS10), the engine keeps the rows of the
+     * extender's alias in place of the host's exclusion of extended rows, and the hits reload as extenders under the
+     * extender's whole ACL, in the order of the engine.
+     */
+    private function searchExtender(SearchRequestData $requestData, Model&IExtendsModel $extender): CrudResult
+    {
+        $host = ExtenderFilterTranslator::host($extender);
+
+        if (! class_uses_trait($host, Searchable::class)) {
+            return new CrudResult(
+                data: null,
+                error: 'Full-search operation can be done only on Searchable entities',
+                statusCode: Response::HTTP_BAD_REQUEST,
+            );
+        }
+
+        $permission_name = $this->auth->ensurePermission(
+            $requestData->request,
+            $extender->getTable(),
+            'select',
+            $extender->getConnectionName(),
+        );
+
+        $this->authorizeRequestedRelations($requestData, lenient_filters: true);
+
+        try {
+            $search = app(ExtenderFilterTranslator::class)->search(
+                $extender,
+                $requestData->filters,
+                $this->auth->resolvedAclFilters($permission_name, $extender),
+                $requestData->sort,
+            );
+        } catch (InvalidArgumentException $exception) {
+            return $this->invalidSearchConstraintsResult($exception->getMessage());
+        }
+
+        return match ($requestData->mode) {
+            SearchMode::Orchestrated => $this->searchWithAdvanced($requestData, $permission_name, $search),
+            SearchMode::Auto => ($this->advanced_search ?? app(AdvancedSearchService::class))->available($host)
+                ? $this->searchWithAdvanced($requestData, $permission_name, $search)
+                : $this->searchWithScout($requestData, $permission_name, $search),
+            SearchMode::Basic => $this->searchWithScout($requestData, $permission_name, $search),
+        };
+    }
+
+    /**
+     * @param  ExtenderSearch|null  $extender  An extender searched through the index of its host: the engine runs on
+     *                                         the host with the translated filters and sort, the hits reload as
+     *                                         extenders ({@see self::searchExtender()})
+     */
+    private function searchWithScout(SearchRequestData $requestData, string $permissionName, ?ExtenderSearch $extender = null): CrudResult
     {
         $model = $requestData->model;
+        $engine_model = $extender?->host ?? $model;
 
-        if (is_array($model->getKeyName())) {
+        if (is_array($engine_model->getKeyName())) {
             return new CrudResult(
                 data: null,
                 error: 'Full-search operation does not support composite primary keys yet.',
@@ -3042,21 +3105,30 @@ class CrudService
         }
 
         /** @var class-string<Model> $model_class */
-        $model_class = $model::class;
+        $model_class = $engine_model::class;
         $builder = $model_class::search($requestData->qs);
 
-        foreach (DefaultSearchFilters::of($model) as $field => $value) {
+        // An extender's alias condition replaces the host's exclusion of extended rows: it is in its engine filters.
+        foreach (DefaultSearchFilters::of($engine_model, ! $extender instanceof ExtenderSearch) as $field => $value) {
             $builder->where($field, $value);
         }
 
         // The orchestrated path restricts every strategy to the requested language: the basic one does the same.
-        RequestedLocale::apply($builder, $model);
+        RequestedLocale::apply($builder, $engine_model);
 
         $request_filters = $requestData->filters;
-        $this->auth->injectAclFilters($requestData, $permissionName);
+
+        if ($extender instanceof ExtenderSearch) {
+            $engine_filters = $extender->engineFilters();
+            $engine_sort = $extender->sort;
+        } else {
+            $this->auth->injectAclFilters($requestData, $permissionName);
+            $engine_filters = $requestData->filters;
+            $engine_sort = $requestData->sort;
+        }
 
         try {
-            $this->searchConstraintApplier()->apply($builder, $model, $requestData->filters, $requestData->sort);
+            $this->searchConstraintApplier()->apply($builder, $engine_model, $engine_filters, $engine_sort);
         } catch (InvalidArgumentException $exception) {
             return $this->invalidSearchConstraintsResult($exception->getMessage());
         }
@@ -3082,12 +3154,13 @@ class CrudService
             );
         }
 
-        $query = $this->searchHitsQuery($model, $ids->all(), $permissionName, $request_filters, $requestData);
+        $hit_key = $extender?->hitKeyColumn();
+        $query = $this->searchHitsQuery($model, $ids->all(), $permissionName, $request_filters, $requestData, $hit_key);
         $this->query_builder->applyRequestedRelations($query, $requestData, $this->relationAuthorizer());
 
         $records = $query->get();
 
-        $records_by_key = $records->keyBy(static fn (Model $record): string => (string) $record->getKey());
+        $records_by_key = $records->keyBy(static fn (Model $record): string => (string) ($hit_key !== null ? $record->getAttribute($hit_key) : $record->getKey()));
         $records = new Collection(
             $ids
                 ->map(static fn (mixed $id): ?Model => $records_by_key->get((string) $id))
@@ -3110,11 +3183,16 @@ class CrudService
         );
     }
 
-    private function searchWithAdvanced(SearchRequestData $requestData, string $permissionName): CrudResult
+    /**
+     * @param  ExtenderSearch|null  $extender  An extender searched through the index of its host
+     *                                         ({@see self::searchExtender()})
+     */
+    private function searchWithAdvanced(SearchRequestData $requestData, string $permissionName, ?ExtenderSearch $extender = null): CrudResult
     {
         $advanced_search = $this->advanced_search ?? app(AdvancedSearchService::class);
+        $engine_model = $extender?->host ?? $requestData->model;
 
-        if (! $advanced_search->available($requestData->model)) {
+        if (! $advanced_search->available($engine_model)) {
             return new CrudResult(
                 data: null,
                 error: 'Orchestrated search pipeline is not available for the configured search driver.',
@@ -3127,7 +3205,15 @@ class CrudService
         }
 
         $request_filters = $requestData->filters;
-        $this->auth->injectAclFilters($requestData, $permissionName);
+
+        if ($extender instanceof ExtenderSearch) {
+            $engine_filters = $extender->filters;
+            $engine_sort = $extender->sort;
+        } else {
+            $this->auth->injectAclFilters($requestData, $permissionName);
+            $engine_filters = $requestData->filters;
+            $engine_sort = $requestData->sort;
+        }
 
         $cost_guard = app(SearchCostGuard::class);
         $withheld_reason = $requestData->cost === SearchDepth::Deep && ! $cost_guard->allowsDeep($this->searchPersonKey($requestData))
@@ -3136,23 +3222,24 @@ class CrudService
 
         try {
             $result = $advanced_search->search(
-                $requestData->model,
+                $engine_model,
                 $requestData->qs,
                 $requestData->page ?? 1,
                 max(1, $requestData->page !== null ? $requestData->pagination : $requestData->limit),
-                $requestData->filters,
-                $requestData->sort,
+                $engine_filters,
+                $engine_sort,
                 $requestData->matching,
                 $requestData->matching_options,
                 $requestData->cost,
                 $cost_guard->clampRetries($requestData->retry),
                 $withheld_reason,
+                $extender?->hostRows(),
             );
         } catch (InvalidArgumentException $exception) {
             return $this->invalidSearchConstraintsResult($exception->getMessage());
         }
 
-        return $this->searchResultFromAdvancedResult($requestData, $result, $permissionName, $request_filters);
+        return $this->searchResultFromAdvancedResult($requestData, $result, $permissionName, $request_filters, $extender?->hitKeyColumn());
     }
 
     /**
@@ -3167,8 +3254,9 @@ class CrudService
 
     /**
      * @param  FiltersGroup|null  $requestFilters  The filters of the request, without the ACL filters merged in
+     * @param  string|null  $hitKeyColumn  The column the hit keys are matched on; the primary key when null
      */
-    private function searchResultFromAdvancedResult(SearchRequestData $requestData, AdvancedSearchResult $result, string $permissionName, ?FiltersGroup $requestFilters = null): CrudResult
+    private function searchResultFromAdvancedResult(SearchRequestData $requestData, AdvancedSearchResult $result, string $permissionName, ?FiltersGroup $requestFilters = null, ?string $hitKeyColumn = null): CrudResult
     {
         $model = $requestData->model;
         $ids = $result->ids();
@@ -3180,11 +3268,11 @@ class CrudService
             );
         }
 
-        $query = $this->searchHitsQuery($model, $ids, $permissionName, $requestFilters, $requestData);
+        $query = $this->searchHitsQuery($model, $ids, $permissionName, $requestFilters, $requestData, $hitKeyColumn);
         $this->query_builder->applyRequestedRelations($query, $requestData, $this->relationAuthorizer());
 
         $records = $query->get();
-        $records_by_key = $records->keyBy(static fn (Model $record): string => (string) $record->getKey());
+        $records_by_key = $records->keyBy(static fn (Model $record): string => (string) ($hitKeyColumn !== null ? $record->getAttribute($hitKeyColumn) : $record->getKey()));
         $data = new Collection(
             collect($ids)
                 ->map(static fn (string $id): ?Model => $records_by_key->get($id))
@@ -3215,15 +3303,22 @@ class CrudService
      * only the database can run, and the OR group holding it): that part is applied here, so a request scope
      * narrows the hits as it narrows a list. The ACL filters need no such part: they are applied here whole.
      *
+     * The hits of an extender searched through the index of its host carry the keys of the host rows: they are
+     * matched on the extender's host key column, and the ACL is the extender's, applied whole here, including the
+     * conditions its translation to the host index left out (XS10).
+     *
      * @param  array<int, mixed>  $ids
      * @param  FiltersGroup|null  $requestFilters  The filters of the request, without the ACL filters merged in
+     * @param  string|null  $hitKeyColumn  The column the hit keys are matched on; the primary key when null
      * @return Builder<Model>
      */
-    private function searchHitsQuery(Model $model, array $ids, string $permissionName, ?FiltersGroup $requestFilters = null, ?SearchRequestData $requestData = null): Builder
+    private function searchHitsQuery(Model $model, array $ids, string $permissionName, ?FiltersGroup $requestFilters = null, ?SearchRequestData $requestData = null, ?string $hitKeyColumn = null): Builder
     {
-        $query = $model->newQuery()->whereKey($ids);
+        $query = $hitKeyColumn !== null
+            ? $model->newQuery()->whereIn($model->qualifyColumn($hitKeyColumn), $ids)
+            : $model->newQuery()->whereKey($ids);
 
-        $this->auth->applyAclFiltersToQuery($query, $permissionName);
+        $this->applyHitsAcl($query, $permissionName, $requestData);
 
         $database_only = $requestFilters instanceof FiltersGroup ? ScoutSearchConstraintApplier::databaseOnlyPart($requestFilters) : null;
 
@@ -3238,6 +3333,32 @@ class CrudService
         }
 
         return $query;
+    }
+
+    /**
+     * The ACL row filters of the user on the reloaded hits. A model that mounts the attributes of a related record
+     * ({@see IMountsRelatedAttributes}) has them applied the way a list applies them, by the CRUD query builder,
+     * which resolves a mounted attribute on the relation: the ACL of an extender names the attributes of its host
+     * row (a product's `valid_from`), which are no columns of its table.
+     *
+     * @param  Builder<Model>  $query
+     */
+    private function applyHitsAcl(Builder $query, string $permissionName, ?SearchRequestData $requestData): void
+    {
+        $model = $query->getModel();
+
+        if (! $model instanceof IMountsRelatedAttributes) {
+            $this->auth->applyAclFiltersToQuery($query, $permissionName);
+
+            return;
+        }
+
+        $acl_filters = $this->auth->resolvedAclFilters($permissionName, $model);
+
+        if ($acl_filters instanceof FiltersGroup) {
+            $relation_columns = [];
+            $this->query_builder->applyFilters($query, $acl_filters, $relation_columns, $this->relationAuthorizer(), $requestData?->request);
+        }
     }
 
     private function searchConstraintApplier(): ScoutSearchConstraintApplier

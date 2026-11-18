@@ -7,14 +7,16 @@ namespace Modules\Core\Tests\Stubs\Extensions;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Core\Contracts\IExtendsModel;
+use Modules\Core\Contracts\IMountsRelatedAttributes;
 use Modules\Core\Search\Extensions\HidesExtendedRows;
 use Modules\Core\Search\Schema\FieldType;
 use Override;
 
 /**
- * An extender of {@see ExtensionHostStub}, keyed to its host row by `host_id`.
+ * An extender of {@see ExtensionHostStub}, keyed to its host row by `host_id`, with its own key (XS8). It mounts the
+ * attributes of its host row, as a product mounts its content's: a filter on `title` is a filter on the host.
  */
-final class FirstExtenderStub extends Model implements IExtendsModel
+final class FirstExtenderStub extends Model implements IExtendsModel, IMountsRelatedAttributes
 {
     public const string TABLE = 'extension_first_stubs';
 
@@ -52,6 +54,16 @@ final class FirstExtenderStub extends Model implements IExtendsModel
     public function extensionOwnColumns(): array
     {
         return ['id', 'host_id', 'kind', 'created_at', 'updated_at'];
+    }
+
+    public function mountedRelation(): string
+    {
+        return 'host';
+    }
+
+    public function isMountedAttribute(string $key): bool
+    {
+        return ! in_array($key, $this->extensionOwnColumns(), true) && $key !== 'host';
     }
 
     /**

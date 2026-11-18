@@ -12,9 +12,11 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
+use Modules\Core\Casts\Sort;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Services\Crud\CrudService;
+use Modules\Core\Services\Crud\DTOs\CrudResult;
 use Modules\Core\Tests\Stubs\Search\DefaultFilteredSearchStub;
 use Modules\Core\Tests\Stubs\Search\ValidatedSearchRequestStub;
 use ReflectionClass;
@@ -76,6 +78,23 @@ final class DefaultFilteredSearchFixture
      */
     public static function search(SearchMode $mode, int $limit, ?FiltersGroup $filters = null, ?User $user = null, ?Model $model = null): array
     {
+        $result = self::run($mode, $limit, $filters, $user, $model);
+
+        if ($result->error !== null) {
+            throw new RuntimeException(sprintf('The %s search failed: %s', $mode->value, $result->error));
+        }
+
+        return array_values($result->data->map(static fn (Model $record): int => (int) $record->getKey())->all());
+    }
+
+    /**
+     * A CRUD search of {@see self::QUERY}, its result as the service returns it, errors included.
+     *
+     * @param  Model|null  $model  The model searched; {@see DefaultFilteredSearchStub} when null
+     * @param  list<Sort>  $sort
+     */
+    public static function run(SearchMode $mode, int $limit, ?FiltersGroup $filters = null, ?User $user = null, ?Model $model = null, array $sort = []): CrudResult
+    {
         $user ??= self::superadmin();
         Auth::login($user);
 
@@ -93,7 +112,7 @@ final class DefaultFilteredSearchFixture
             'connection' => $model->getConnectionName(),
             'columns' => [],
             'relations' => [],
-            'sort' => [],
+            'sort' => $sort,
             'filters' => $filters,
             'group_by' => [],
             'qs' => self::QUERY,
@@ -108,12 +127,6 @@ final class DefaultFilteredSearchFixture
             (new ReflectionProperty($data, $property))->setValue($data, $value);
         }
 
-        $result = app(CrudService::class)->search($data);
-
-        if ($result->error !== null) {
-            throw new RuntimeException(sprintf('The %s search failed: %s', $mode->value, $result->error));
-        }
-
-        return array_values($result->data->map(static fn (Model $record): int => (int) $record->getKey())->all());
+        return app(CrudService::class)->search($data);
     }
 }

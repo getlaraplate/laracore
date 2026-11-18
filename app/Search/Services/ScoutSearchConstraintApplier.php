@@ -90,6 +90,15 @@ final readonly class ScoutSearchConstraintApplier
     }
 
     /**
+     * Whether the engine of the model filters on the property: the check {@see apply()} makes before it pushes a
+     * column filter, which refuses the search when it fails.
+     */
+    public function isFilterable(Model $model, string $property): bool
+    {
+        return $this->filterField($model, $property) !== null;
+    }
+
+    /**
      * The filters the engine can take. Two node kinds are never pushed to it: a relation filter (a condition on a
      * related record) and a scope filter (a model scope, which only the database can run). The records behind the
      * hits are checked against them when they are reloaded ({@see databaseOnlyPart()}).

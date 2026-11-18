@@ -73,7 +73,8 @@ final readonly class AdvancedSearchService
      *
      * The model's default search filters ({@see \Modules\Core\Contracts\ProvidesDefaultSearchFilters}) are joined to
      * `$filters` here, ahead of them, so every caller of this service keeps out of the engine hits what the basic
-     * search path keeps out: see {@see DefaultSearchFilters}. A caller passes only its own filters.
+     * search path keeps out: see {@see DefaultSearchFilters}. A caller passes only its own filters. On a host of
+     * extenders, `$hostRows` replaces the exclusion of the rows its extenders own: see {@see DefaultSearchFilters::merge()}.
      *
      * A date the query names becomes a filter on the date field the model declares (`searchDateField()`), and
      * `meta['date_filter']` reports it: see {@see self::searchWithDates()}. A model that declares none, a query
@@ -93,6 +94,7 @@ final readonly class AdvancedSearchService
         SearchMode $mode = SearchMode::Fast,
         ?int $retries = null,
         ?string $withheld_reason = null,
+        Filter|FiltersGroup|null $hostRows = null,
     ): AdvancedSearchResult {
         $degradations = $this->app->make(SearchDegradations::class);
         $degradations->reset();
@@ -116,7 +118,7 @@ final readonly class AdvancedSearchService
         $plan['intent'] = $intent;
         $plan['retrieval']['size'] = $perPage;
         $date_filter = $this->dateFilterFor($model, $intent, $plan, $filters, $perPage);
-        $engine_filters = DefaultSearchFilters::merge($model, $filters);
+        $engine_filters = DefaultSearchFilters::merge($model, $filters, $hostRows);
         $run = function (array $plan, string $search_query) use ($model, $engine, $strategy, $query, $page, $perPage, $engine_filters, $sort, $matching, $matchingOptions, $timings, $date_filter): array {
             $plan = $this->applyEngineCapabilities($engine, $plan);
             $text_match = app(TextMatchOptionsResolver::class)->resolve($search_query, $matching, $matchingOptions);

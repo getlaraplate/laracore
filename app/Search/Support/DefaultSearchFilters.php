@@ -30,14 +30,22 @@ final class DefaultSearchFilters
      * `IS NULL`, so the rows extenders own stay out without the host declaring it
      * (spec 2026-11-17-extended-entity-search-design.md, XS11). One entry per field.
      *
+     * @param  bool  $excludeExtended  False leaves the type column of a host out, for a caller that puts its own
+     *                                 condition on it ({@see self::merge()})
      * @return array<string, scalar|null>
      */
-    public static function of(Model $model): array
+    public static function of(Model $model, bool $excludeExtended = true): array
     {
         $defaults = $model instanceof ProvidesDefaultSearchFilters ? $model->defaultSearchFilters() : [];
 
         if ($model instanceof IExtendableModel) {
-            $defaults[$model->extensionTypeColumn()] = null;
+            $type_column = $model->extensionTypeColumn();
+
+            if ($excludeExtended) {
+                $defaults[$type_column] = null;
+            } else {
+                unset($defaults[$type_column]);
+            }
         }
 
         return $defaults;
@@ -46,13 +54,23 @@ final class DefaultSearchFilters
     /**
      * The filters of the search with the model's default search filters ({@see self::of()}) ahead of them. The
      * filters as they are when the model has none.
+     *
+     * `$hostRows` replaces, on a host, the exclusion of the rows its extenders own: the extender searched through
+     * the index of its host keeps only its alias (XS1), a host opened to its extenders keeps the aliases the user
+     * may read (XS3). Replaced, not joined: joined to `<type column> IS NULL`, it would select nothing. Ignored on a
+     * model that is not a host (XS12).
      */
-    public static function merge(Model $model, ?FiltersGroup $filters): ?FiltersGroup
+    public static function merge(Model $model, ?FiltersGroup $filters, Filter|FiltersGroup|null $hostRows = null): ?FiltersGroup
     {
+        $replaced = $hostRows !== null && $model instanceof IExtendableModel;
         $defaults = [];
 
-        foreach (self::of($model) as $field => $value) {
+        foreach (self::of($model, ! $replaced) as $field => $value) {
             $defaults[] = new Filter((string) $field, $value, FilterOperator::Equals);
+        }
+
+        if ($replaced) {
+            $defaults[] = $hostRows;
         }
 
         if ($defaults === []) {
