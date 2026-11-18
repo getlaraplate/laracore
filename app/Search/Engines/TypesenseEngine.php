@@ -8,6 +8,7 @@ use Exception;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Builder;
@@ -24,6 +25,7 @@ use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
 use Override;
+use Typesense\Collection as TypesenseCollection;
 use Typesense\Exceptions\TypesenseClientError;
 
 /**
@@ -32,6 +34,22 @@ use Typesense\Exceptions\TypesenseClientError;
 final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
 {
     use CommonEngineFunctions;
+
+    /**
+     * The value a null string field is indexed with, and the value an equality on null filters on. Typesense neither
+     * indexes a null nor takes an empty value in `filter_by`; its documentation advises a placeholder value
+     * (https://typesense.org/docs/guide/tips-for-filtering.html). It is alphanumeric, so it is indexed without
+     * `symbols_to_index`. Only top-level `string` fields of the mapping get it: a numeric or nested field cannot hold
+     * a string, and a filter on its null still finds nothing.
+     */
+    public const string NULL_PLACEHOLDER = 'typesensenullvalue';
+
+    /**
+     * The top-level string fields of the model being indexed by {@see self::update()}.
+     *
+     * @var list<string>
+     */
+    private array $null_placeholder_fields = [];
 
     //    public array $config;
 
@@ -139,6 +157,25 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
     }
 
     /**
+     * Scout's update, with each null in a top-level string field of the model's mapping indexed as
+     * {@see self::NULL_PLACEHOLDER}, so an equality on null finds the row.
+     *
+     * @param  \Illuminate\Support\Collection<int, Model>  $models
+     */
+    #[Override]
+    public function update($models): void
+    {
+        $first = $models->first();
+        $this->null_placeholder_fields = $first instanceof Model ? $this->stringFields($first) : [];
+
+        try {
+            parent::update($models);
+        } finally {
+            $this->null_placeholder_fields = [];
+        }
+    }
+
+    /**
      * @param  array<string, mixed>  $filters
      */
     #[Override]
@@ -168,8 +205,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
                     $filter_strings[] = sprintf('%s:[%s]', $field, implode(',', $formatted_values));
                 }
             } else {
-                $formatted_value = is_string($value) ? sprintf('"%s"', $value) : (is_scalar($value) ? (string) $value : '');
-                $filter_strings[] = sprintf('%s:=%s', $field, $formatted_value);
+                $filter_strings[] = sprintf('%s:=%s', $field, $this->formatTypesenseFilterValue($value));
             }
         }
 
@@ -540,8 +576,55 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
         };
     }
 
+    /**
+     * @param  array<int, mixed>  $documents
+     *
+     * @throws \JsonException
+     * @throws TypesenseClientError
+     * @throws \Http\Client\Exception
+     */
+    #[Override]
+    protected function importDocuments(TypesenseCollection $collectionIndex, array $documents, ?string $action = null): SupportCollection
+    {
+        foreach ($documents as $index => $document) {
+            if (! is_array($document)) {
+                continue;
+            }
+
+            foreach ($this->null_placeholder_fields as $field) {
+                if (array_key_exists($field, $document) && $document[$field] === null) {
+                    $documents[$index][$field] = self::NULL_PLACEHOLDER;
+                }
+            }
+        }
+
+        return parent::importDocuments($collectionIndex, $documents, $action);
+    }
+
+    /**
+     * The top-level fields the model's mapping types as `string`.
+     *
+     * @return list<string>
+     */
+    private function stringFields(Model $model): array
+    {
+        $fields = [];
+
+        foreach ($this->getSearchMapping($model)['fields'] ?? [] as $field) {
+            if (is_array($field) && ($field['type'] ?? null) === 'string' && is_string($field['name'] ?? null) && ! str_contains($field['name'], '.')) {
+                $fields[] = $field['name'];
+            }
+        }
+
+        return $fields;
+    }
+
     private function formatTypesenseFilterValue(mixed $value): string
     {
+        if ($value === null) {
+            return sprintf('"%s"', self::NULL_PLACEHOLDER);
+        }
+
         if (is_string($value)) {
             return sprintf('"%s"', $value);
         }
@@ -645,9 +728,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
             return sprintf('%s:[%s]', $field_name, implode(',', $formatted_values));
         }
 
-        $formatted_value = is_string($value) ? sprintf('"%s"', $value) : (is_scalar($value) ? (string) $value : '');
-
-        return sprintf('%s:=%s', $field_name, $formatted_value);
+        return sprintf('%s:=%s', $field_name, $this->formatTypesenseFilterValue($value));
     }
 
     /**
