@@ -6,11 +6,13 @@ namespace Modules\Core\Tests\Stubs\Cache;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Core\Models\Role;
 
 /**
  * A model whose default eager loads name a `belongsTo` and the model itself, a cycle the cache dependency resolver
- * must expand once. It has no table: the resolver never queries.
+ * must expand once, and whose default counts name a `hasMany` under an alias. It has no table: the resolver never
+ * queries.
  */
 final class CacheDependencyEagerStubModel extends Model
 {
@@ -22,6 +24,11 @@ final class CacheDependencyEagerStubModel extends Model
      * @var list<string>
      */
     protected $with = ['role', 'previous'];
+
+    /**
+     * @var list<string>
+     */
+    protected $withCount = ['notes as notes_total'];
 
     /**
      * @return BelongsTo<Role, $this>
@@ -37,5 +44,13 @@ final class CacheDependencyEagerStubModel extends Model
     public function previous(): BelongsTo
     {
         return $this->belongsTo(self::class, 'previous_id');
+    }
+
+    /**
+     * @return HasMany<CacheDependencyStubChild, $this>
+     */
+    public function notes(): HasMany
+    {
+        return $this->hasMany(CacheDependencyStubChild::class, 'eager_id');
     }
 }

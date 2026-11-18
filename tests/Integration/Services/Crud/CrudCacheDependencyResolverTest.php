@@ -264,6 +264,19 @@ it('walks the default eager loads of a model reached by a path', function (): vo
     expect($dependencies->row_tables)->toEqualCanonicalizing([CacheDependencyEagerStubModel::TABLE, CoreTables::Roles->value]);
 });
 
+it('labels the relations a model counts by default as sets, on the main model and on one reached by a path', function (array $case): void {
+    [$model, $request_data] = $case;
+
+    $dependencies = cache_dependency_resolver()->forRequest($model, $request_data, null, false);
+
+    expect($dependencies->labels)->toContain(CacheLabel::table(CacheDependencyStubChild::TABLE), CacheLabel::table(CacheDependencyStubChild::DECLARED_TABLE))
+        ->and($dependencies->row_tables)->not->toContain(CacheDependencyStubChild::TABLE)
+        ->and($dependencies->complete)->toBeTrue();
+})->with([
+    'main model' => fn (): array => [new CacheDependencyEagerStubModel, cache_dependency_list_request([])],
+    'reached by a path' => fn (): array => [new CacheDependencyStubModel, cache_dependency_list_request(['relations' => ['eager']])],
+]);
+
 it('takes the caller role keys when given instead of reading them', function (): void {
     ['user' => $user, 'role' => $role] = cache_dependency_caller();
 

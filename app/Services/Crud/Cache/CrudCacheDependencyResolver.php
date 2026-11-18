@@ -39,7 +39,8 @@ use SplObjectStorage;
  *   go through. A segment after a to-many one keeps its own kind;
  * - a `morphTo` segment names no table before the query: the walk stops there and the dependencies are incomplete;
  * - the translations table of every translated model reached, the tables every reached model declares through
- *   {@see IDeclaresCacheDependencies}, and its default eager loads (`$with`), walked as displayed paths;
+ *   {@see IDeclaresCacheDependencies}, its default eager loads (`$with`), walked as displayed paths, and its default
+ *   relation counts (`$withCount`), walked as membership paths: a count depends on which related rows exist;
  * - the relations the engine loads on its own: the versions (and pending modifications) of a history read, the
  *   nodes of a tree read, which are rows of the main table;
  * - a history read needs no row label after the query: see {@see forRequest()}.
@@ -246,6 +247,31 @@ final readonly class CrudCacheDependencyResolver
     }
 
     /**
+     * The relations a model counts on every query (`$withCount`), by name: an aliased count (`items as total`) and a
+     * constrained one (`'items' => fn`) name the relation `items`. Eloquent exposes the list to no public reader.
+     *
+     * @return list<string>
+     */
+    private static function defaultCountedRelations(Model $model): array
+    {
+        /** @var array<int|string, mixed> $counts */
+        $counts = (fn (): array => $this->withCount)->call($model);
+        $names = [];
+
+        foreach ($counts as $key => $value) {
+            $entry = is_string($key) ? $key : $value;
+
+            if (! is_string($entry)) {
+                continue;
+            }
+
+            $names[] = mb_trim((string) preg_replace('/\s+as\s+.*$/i', '', $entry));
+        }
+
+        return array_values(array_unique(array_filter($names, static fn (string $name): bool => $name !== '')));
+    }
+
+    /**
      * @param  list<string>|null  $role_keys
      * @return list<string>
      */
@@ -337,8 +363,8 @@ final readonly class CrudCacheDependencyResolver
 
     /**
      * A model the read loads or joins: its own labels, then its default eager loads (`$with`) walked as displayed
-     * paths, which load wherever the model does. Each model class is expanded once per read, which also stops a cycle
-     * of default eager loads.
+     * paths and its default relation counts (`$withCount`) walked as membership paths, both applied wherever the model
+     * is queried. Each model class is expanded once per read, which also stops a cycle of defaults.
      *
      * @param  DependencyState  $state
      * @param  list<string>  $left_out  Default eager loads the engine removes from this model's query.
@@ -363,6 +389,10 @@ final readonly class CrudCacheDependencyResolver
             }
 
             $this->walk($model, $path, true, $state);
+        }
+
+        foreach (self::defaultCountedRelations($model) as $name) {
+            $this->walk($model, $name, false, $state);
         }
     }
 
