@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Modules\Core\Cache\Labels\ArrayLabelIndex;
 use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
+use Modules\Core\Cache\Labels\CacheLookup;
 use Modules\Core\Cache\Labels\FailoverLabelIndex;
 use Modules\Core\Cache\Repository;
 use Modules\Core\Contracts\ICacheLabelIndex;
@@ -41,6 +42,26 @@ beforeEach(function (): void {
     $this->index = new SpyLabelIndex();
     app()->instance(ICacheLabelIndex::class, $this->index);
 });
+
+/**
+ * The stores of CRUD responses, leaving out the ACL resolutions the permission checks keep in the same index.
+ *
+ * @return list<array{lookup: CacheLookup, value: mixed, ttl: int, row_labels: list<string>, stored: bool}>
+ */
+function crudResponseCacheStores(SpyLabelIndex $index): array
+{
+    return array_values(array_filter($index->stores, static fn (array $store): bool => str_starts_with($store['lookup']->key, 'crud:')));
+}
+
+/**
+ * The lookups of CRUD responses, leaving out those of the ACL resolutions.
+ *
+ * @return list<CacheLookup>
+ */
+function crudResponseCacheLookups(SpyLabelIndex $index): array
+{
+    return array_values(array_filter($index->lookups, static fn (CacheLookup $lookup): bool => str_starts_with($lookup->key, 'crud:')));
+}
 
 /**
  * How many queries the call runs on the model's connection that name the model's table.
@@ -144,8 +165,8 @@ it('serves a second identical list without querying its table', function (): voi
     expect($first_queries)->toBeGreaterThan(0)
         ->and($second_queries)->toBe(0)
         ->and($second->json('data'))->toBe($first->json('data'))
-        ->and($this->index->stores)->toHaveCount(1)
-        ->and($this->index->stores[0]['ttl'])->toBe(Repository::resolveDefaultCacheSeconds());
+        ->and(crudResponseCacheStores($this->index))->toHaveCount(1)
+        ->and(crudResponseCacheStores($this->index)[0]['ttl'])->toBe(Repository::resolveDefaultCacheSeconds());
 });
 
 it('serves a second identical detail and history without querying the table', function (string $route, string $entity, Closure $record): void {
@@ -177,7 +198,7 @@ it('answers 403 on a cached url once the permission is removed straight from the
 
     $this->actingAs($viewer->fresh())->getJson($url)->assertForbidden();
 
-    expect($this->index->stores)->toHaveCount(1);
+    expect(crudResponseCacheStores($this->index))->toHaveCount(1);
 });
 
 it('answers 403 on a cached url once the permission of a requested relation is removed', function (): void {
@@ -215,7 +236,7 @@ it('keeps the responses of two guest locales apart', function (): void {
         ->and($italian->json('meta.locale'))->toBe('it')
         ->and($english_again->json('meta.locale'))->toBe('en')
         ->and($english_queries)->toBe(0)
-        ->and($this->index->stores)->toHaveCount(2);
+        ->and(crudResponseCacheStores($this->index))->toHaveCount(2);
 });
 
 it('keeps the responses of a guest and of a user on one url apart', function (): void {
@@ -229,8 +250,8 @@ it('keeps the responses of a guest and of a user on one url apart', function ():
     $user_queries = crudResponseCacheQueriesOn(new Setting(), fn () => $this->actingAs($viewer)->getJson($url, ['Accept-Language' => 'en'])->assertOk());
 
     expect($user_queries)->toBeGreaterThan(0)
-        ->and($this->index->stores)->toHaveCount(2)
-        ->and($this->index->stores[0]['lookup']->key)->not->toBe($this->index->stores[1]['lookup']->key);
+        ->and(crudResponseCacheStores($this->index))->toHaveCount(2)
+        ->and(crudResponseCacheStores($this->index)[0]['lookup']->key)->not->toBe(crudResponseCacheStores($this->index)[1]['lookup']->key);
 });
 
 it('refuses a caller without the permission before telling it a requested name is not a relation', function (): void {
@@ -238,7 +259,7 @@ it('refuses a caller without the permission before telling it a requested name i
         ->getJson(crudResponseCacheSettingsUrl(['relations' => ['not_a_relation']]))
         ->assertForbidden();
 
-    expect($this->index->lookups)->toBe([]);
+    expect(crudResponseCacheLookups($this->index))->toBe([]);
 });
 
 it('does not store a refused response', function (): void {
@@ -253,7 +274,7 @@ it('does not store a refused response', function (): void {
 
     $this->actingAs($viewer->fresh())->getJson($url)->assertOk();
 
-    expect($this->index->stores)->toHaveCount(1);
+    expect(crudResponseCacheStores($this->index))->toHaveCount(1);
 });
 
 it('does not store a response whose status is not 200', function (int $status): void {
@@ -267,7 +288,7 @@ it('does not store a response whose status is not 200', function (int $status): 
     $this->getJson($url)->assertStatus($status);
     $this->getJson($url)->assertStatus($status);
 
-    expect($this->index->stores)->toBe([]);
+    expect(crudResponseCacheStores($this->index))->toBe([]);
 })->with([
     'unprocessable' => Response::HTTP_UNPROCESSABLE_ENTITY,
     'forbidden' => Response::HTTP_FORBIDDEN,
@@ -283,8 +304,8 @@ it('bypasses the cache with no_cache', function (): void {
     $second_queries = crudResponseCacheQueriesOn(new Setting(), fn () => $this->getJson($url)->assertOk());
 
     expect($second_queries)->toBeGreaterThan(0)
-        ->and($this->index->lookups)->toBe([])
-        ->and($this->index->stores)->toBe([]);
+        ->and(crudResponseCacheLookups($this->index))->toBe([])
+        ->and(crudResponseCacheStores($this->index))->toBe([]);
 });
 
 it('never stores the response of a model without HasCache', function (): void {
@@ -296,7 +317,7 @@ it('never stores the response of a model without HasCache', function (): void {
     $second_queries = crudResponseCacheQueriesOn($actor, fn () => $this->getJson($url)->assertOk());
 
     expect($second_queries)->toBeGreaterThan(0)
-        ->and($this->index->stores)->toBe([]);
+        ->and(crudResponseCacheStores($this->index))->toBe([]);
 });
 
 it('never stores a response whose dependencies are incomplete', function (Closure $index): void {
@@ -378,7 +399,7 @@ it('does not route a search through the response cache', function (): void {
     $this->getJson($url)->assertOk();
     $this->getJson($url)->assertOk();
 
-    expect($this->index->lookups)->toBe([]);
+    expect(crudResponseCacheLookups($this->index))->toBe([]);
 });
 
 /**

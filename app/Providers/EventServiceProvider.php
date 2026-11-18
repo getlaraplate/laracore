@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Event;
 use Modules\Core\Events\ModificationPreProcessingCompleted;
 use Modules\Core\Events\ModificationRequiresModeration;
 use Modules\Core\Listeners\FlushCacheLabelsOnModelWrite;
+use Modules\Core\Listeners\FlushCacheLabelsOnPermissionChange;
 use Modules\Core\Listeners\RemoveOriginOfDeletedRecord;
 use Modules\Core\Locking\LockedModelSubscriber;
 use Modules\Core\Models\CronJob;
@@ -26,6 +27,10 @@ use Modules\Core\Models\Preset;
 use Modules\Core\Services\DynamicContentsService;
 use Modules\Core\Support\OwnerTimestamp;
 use Override;
+use Spatie\Permission\Events\PermissionAttachedEvent;
+use Spatie\Permission\Events\PermissionDetachedEvent;
+use Spatie\Permission\Events\RoleAttachedEvent;
+use Spatie\Permission\Events\RoleDetachedEvent;
 
 final class EventServiceProvider extends ServiceProvider
 {
@@ -60,6 +65,11 @@ final class EventServiceProvider extends ServiceProvider
             \Modules\Core\Listeners\AfterLoginListener::class,
             \Modules\Core\Listeners\LogoutOtherDevicesListener::class . '@handleLogin',
         ],
+        // Spatie fires these only with `permission.events_enabled`, which CoreServiceProvider turns on.
+        RoleAttachedEvent::class => [FlushCacheLabelsOnPermissionChange::class],
+        RoleDetachedEvent::class => [FlushCacheLabelsOnPermissionChange::class],
+        PermissionAttachedEvent::class => [FlushCacheLabelsOnPermissionChange::class],
+        PermissionDetachedEvent::class => [FlushCacheLabelsOnPermissionChange::class],
     ];
 
     /**

@@ -233,6 +233,10 @@ final class CoreServiceProvider extends ModuleServiceProvider
         $this->registerCacheManager();
         $this->registerCacheLabelIndex();
 
+        // Role and permission grants fire no model event: Spatie's events are how a grant reaches the cache
+        // labels of the user or role it changed ({@see \Modules\Core\Listeners\FlushCacheLabelsOnPermissionChange}).
+        config(['permission.events_enabled' => true]);
+
         $this->registerPostgresConnection();
 
         $this->registerIconSet();

@@ -496,24 +496,38 @@ For user-specific access (e.g., "see only your own records"), you would need to 
 
 ## Caching
 
-ACL resolutions are cached for performance:
+ACL resolutions are cached through the cache label index (`ICacheLabelIndex`), one entry per user and permission:
 
-- **Cache key**: `acl:resolved:user:{user_id}:perm:{permission_id}`
+- **Labels**: `acl` and `user:{user_id}`
 - **TTL**: 1 hour (3600 seconds)
+
+While a failover cache serves without Redis, resolutions are computed on every call and never stored.
 
 ### Cache Invalidation
 
-Cache is cleared when:
-- User roles change
-- ACL records are modified
-- Permissions are modified
+Each change flushes labels after its transaction commits; none of them empties the cache store:
+
+- An ACL create, update, delete or restore (`AclObserver`) flushes `acl`, plus `role:{id}` for an ACL scoped to a
+  role or the table label of the permission's entity for an unscoped one. An update that moves the ACL to another
+  role or permission flushes the old one too.
+- A role gaining or losing a permission flushes `role:{id}` and `acl`, whichever side the grant is made from.
+- A user whose roles or direct permissions change flushes `user:{id}`.
+
+Spatie fires no model event for a grant, so Core turns on `permission.events_enabled` and listens to its
+`RoleAttachedEvent`, `RoleDetachedEvent`, `PermissionAttachedEvent` and `PermissionDetachedEvent`. With events on,
+`syncRoles()` and `syncPermissions()` revoke and grant through those events instead of detaching silently. A change
+of a role's parent is not a trigger: resolutions follow it within the TTL.
 
 Use these methods to manually clear cache:
 
 ```php
 $resolver->clearCacheForUser($user);
 $resolver->clearCacheForPermission($permission);
+$resolver->flushCache(); // every resolution
 ```
+
+`clearCacheForPermission()` forgets the entries of the users holding the permission, or flushes `acl` when they are
+more than `core.acl.clear_threshold` (500).
 
 ## Best Practices
 
