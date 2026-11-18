@@ -15,6 +15,7 @@ use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Support\Hierarchy\OwnerCascadeRegistry;
 use Override;
 use ReflectionClass;
 use Symfony\Component\Console\Command\Command as BaseCommand;
@@ -27,8 +28,10 @@ final class ModelSoftDeletesRemoveCommand extends Command
     #[Override]
     protected $description = 'Remove SoftDeletes support (trait + migration + runtime setting) from a model. <fg=green>(⚡ Modules\Core)</fg=green>';
 
-    public function __construct(private readonly Filesystem $files)
-    {
+    public function __construct(
+        private readonly Filesystem $files,
+        private readonly OwnerCascadeRegistry $ownerCascades,
+    ) {
         parent::__construct();
     }
 
@@ -142,14 +145,31 @@ final class ModelSoftDeletesRemoveCommand extends Command
 
     /**
      * Hard delete the trashed rows. The delete bypasses model events, so a
-     * closure table would keep stale links and is rebuilt from parent_id.
+     * closure table would keep stale links and is rebuilt from parent_id: the
+     * model's own, and those of the hierarchies whose rows the purged owners
+     * took along by cascading foreign keys.
      */
     private function purgeSoftDeletedRows(Model $model): int
     {
         $purged = $model->getConnection()->table($model->getTable())->whereNotNull('deleted_at')->delete();
 
-        if ($purged > 0 && in_array(HasClosureTable::class, class_uses_recursive($model), true)) {
+        if ($purged === 0) {
+            return 0;
+        }
+
+        if (in_array(HasClosureTable::class, class_uses_recursive($model), true)) {
             $model::rebuildClosure();
+        }
+
+        $rebuilt = [];
+
+        foreach ($this->ownerCascades->for($model::class) as $cascade) {
+            if (in_array($cascade->hierarchyTable, $rebuilt, true)) {
+                continue;
+            }
+
+            $cascade->maintainerFor($model)->rebuild();
+            $rebuilt[] = $cascade->hierarchyTable;
         }
 
         return $purged;

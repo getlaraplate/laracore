@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Casts\EntityType as AppEntityType;
+use App\Models\Entity as AppEntity;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Filesystem\Filesystem;
@@ -12,8 +14,11 @@ use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesAddCommand;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRefreshCommand;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRemoveCommand;
+use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
+use Modules\Core\Support\Hierarchy\OwnerCascadeRegistry;
 use Modules\Core\Tests\Stubs\Console\ConstructorConfiguredSoftDeleteModel;
 use Modules\Core\Tests\Stubs\SoftDeletingClosureTreeStubModel;
+use Modules\Core\Tests\Support\AppDynamicEntities;
 use Symfony\Component\Console\Application as SymfonyConsoleApplication;
 
 it('defines expected command signatures', function (): void {
@@ -56,7 +61,7 @@ it('refresh command merges application quiet option without duplicate definition
 });
 
 it('instantiates the soft-delete model through its constructor', function (): void {
-    $command = new ModelSoftDeletesRemoveCommand(new Filesystem);
+    $command = new ModelSoftDeletesRemoveCommand(new Filesystem, app(OwnerCascadeRegistry::class));
     $method = new ReflectionMethod($command, 'instantiateModel');
     $model = $method->invoke($command, new ReflectionClass(ConstructorConfiguredSoftDeleteModel::class));
 
@@ -169,7 +174,7 @@ it('writes soft-delete settings through the Setting model connection', function 
         }
     });
 
-    $command = new ModelSoftDeletesRemoveCommand(new Filesystem);
+    $command = new ModelSoftDeletesRemoveCommand(new Filesystem, app(OwnerCascadeRegistry::class));
     $method = new ReflectionMethod($command, 'upsertSoftDeletesSetting');
     $method->setAccessible(true);
 
@@ -205,7 +210,7 @@ it('rebuilds the closure after purging a hierarchical model', function (): void 
     $leaf = SoftDeletingClosureTreeStubModel::query()->create(['parent_id' => $middle->id]);
     $middle->delete();
 
-    $command = new ModelSoftDeletesRemoveCommand(new Filesystem);
+    $command = new ModelSoftDeletesRemoveCommand(new Filesystem, app(OwnerCascadeRegistry::class));
     $method = new ReflectionMethod($command, 'purgeSoftDeletedRows');
     $purged = $method->invoke($command, new SoftDeletingClosureTreeStubModel);
 
@@ -227,4 +232,33 @@ it('rebuilds the closure after purging a hierarchical model', function (): void 
         Schema::dropIfExists('closure_soft_tree_nodes_closure');
         Schema::dropIfExists('closure_soft_tree_nodes');
     }
+});
+
+it('rebuilds the closures of the hierarchies its purge of an owner reached by cascade', function (): void {
+    $taxonomies = new ClosureTableMaintainer(DB::connection(), CoreTables::Taxonomies->value, CoreTables::TaxonomiesClosure->value);
+    $other_preset = AppDynamicEntities::preset(AppEntityType::Authors);
+    $other_presettable = (int) DB::table(CoreTables::Presettables->value)->where('preset_id', $other_preset->id)->value('id');
+    $trashed_entity = AppDynamicEntities::entity(AppEntityType::Pages);
+    $add = static function (int $entityId, ?int $parentId) use ($taxonomies, $other_presettable): int {
+        $id = (int) DB::table(CoreTables::Taxonomies->value)->insertGetId(['entity_id' => $entityId, 'presettable_id' => $other_presettable, 'parent_id' => $parentId]);
+        $taxonomies->insertNode($id, $parentId);
+
+        return $id;
+    };
+    $top = $add((int) $other_preset->entity_id, null);
+    $doomed = $add((int) $trashed_entity->id, $top);
+    $reply = $add((int) $other_preset->entity_id, $doomed);
+    $trashed_entity->delete();
+
+    $command = new ModelSoftDeletesRemoveCommand(new Filesystem, app(OwnerCascadeRegistry::class));
+    $purged = (new ReflectionMethod($command, 'purgeSoftDeletedRows'))->invoke($command, new AppEntity);
+
+    expect($purged)->toBe(1)
+        ->and(DB::table(CoreTables::Taxonomies->value)->where('id', $reply)->value('parent_id'))->toBeNull()
+        ->and(DB::table(CoreTables::TaxonomiesClosure->value)->orderBy('ancestor_id')->get()
+            ->map(static fn (object $row): string => sprintf('%d>%d:%d', $row->ancestor_id, $row->descendant_id, $row->depth))
+            ->all())->toBe([
+                sprintf('%d>%d:0', $top, $top),
+                sprintf('%d>%d:0', $reply, $reply),
+            ]);
 });
