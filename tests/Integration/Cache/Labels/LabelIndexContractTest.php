@@ -116,3 +116,19 @@ it('never hits with the null index', function (): void {
         ->and($index->supportsRowLabels())->toBeFalse()
         ->and($index->pruneStale())->toBe(0);
 });
+
+it('hits after a flush, lookup and store under a frozen clock', function (Closure $make): void {
+    Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::now());
+
+    try {
+        $index = $make();
+        $dependencies = new CacheDependencies(['table:core_users']);
+
+        $index->flush('table:core_users');
+        $index->store($index->lookup('k', $dependencies), 'v', 60);
+
+        expect($index->lookup('k', $dependencies)->hit)->toBeTrue();
+    } finally {
+        Illuminate\Support\Carbon::setTestNow();
+    }
+})->with('label indexes');

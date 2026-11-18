@@ -27,13 +27,18 @@ final class ArrayLabelIndex implements ICacheLabelIndex
      */
     private array $flushed_at = [];
 
+    /**
+     * Orders lookups and flushes; independent of the (possibly frozen) Carbon clock.
+     */
+    private int $sequence = 0;
+
     #[Override]
     public function lookup(string $key, CacheDependencies $dependencies): CacheLookup
     {
-        $started_at = Clock::micros();
+        $started_at = ++$this->sequence;
         $entry = $this->values[$key] ?? null;
 
-        if ($entry !== null && $entry['expires_at'] > $started_at) {
+        if ($entry !== null && $entry['expires_at'] > Clock::micros()) {
             return new CacheLookup($key, true, $entry['value'], $started_at, $dependencies);
         }
 
@@ -46,7 +51,7 @@ final class ArrayLabelIndex implements ICacheLabelIndex
         $labels = [...$lookup->dependencies->labels, ...$row_labels];
 
         foreach ($labels as $label) {
-            if (($this->flushed_at[$label] ?? -1) >= $lookup->started_at) {
+            if (($this->flushed_at[$label] ?? 0) > $lookup->started_at) {
                 return false;
             }
         }
@@ -70,10 +75,8 @@ final class ArrayLabelIndex implements ICacheLabelIndex
     #[Override]
     public function flush(string ...$labels): void
     {
-        $now = Clock::micros();
-
         foreach ($labels as $label) {
-            $this->flushed_at[$label] = $now;
+            $this->flushed_at[$label] = ++$this->sequence;
 
             foreach (array_keys($this->memberships[$label] ?? []) as $key) {
                 unset($this->values[$key]);

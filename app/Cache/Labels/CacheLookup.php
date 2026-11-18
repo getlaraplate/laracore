@@ -10,7 +10,7 @@ namespace Modules\Core\Cache\Labels;
 final readonly class CacheLookup
 {
     /**
-     * @param  int  $started_at  Microseconds since the epoch, taken before the read.
+     * @param  int  $started_at  Ordering token taken before the read. Its unit is implementation-defined and only compared within the index that issued it.
      */
     public function __construct(
         public string $key,
