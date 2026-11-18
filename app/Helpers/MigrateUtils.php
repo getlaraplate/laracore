@@ -175,6 +175,9 @@ final class MigrateUtils
      * link its ancestors to its descendants are removed by
      * {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::detachSubtreesOf()}. No timestamps: rows
      * are derived from the model table's parent column and rebuilt from it.
+     *
+     * Assumes the model table's key is a big-integer `id` (as created by `$table->id()`): both keys are
+     * `foreignId()` columns referencing it.
      */
     public static function closureTable(string $modelTable, ?ConnectionInterface $connection = null): void
     {

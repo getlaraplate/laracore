@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -194,6 +195,84 @@ it('detaches the subtrees of nested doomed nodes without touching surviving link
         [$leaf, $leaf, 0],
         [$survivor, $leaf, 1],
     ]));
+});
+
+it('refuses to move a node under a parent missing from the closure', function (): void {
+    $root = ($this->addNode)(null);
+    $moved = ($this->addNode)($root);
+    $unlinked_parent = (int) DB::table(MAINTAINER_NODES)->insertGetId(['parent_id' => null]);
+    $before = maintainerClosureRows();
+
+    expect(fn () => $this->maintainer->moveSubtree($moved, $unlinked_parent))
+        ->toThrow(LogicException::class, 'has no self row')
+        ->and(maintainerClosureRows())->toBe($before);
+});
+
+it('detaches only the nodes selected by a query the closure returns instead', function (): void {
+    $root = ($this->addNode)(null);
+    $doomed = ($this->addNode)($root);
+    $doomed_child = ($this->addNode)($doomed);
+    $survivor = ($this->addNode)($root);
+    $survivor_child = ($this->addNode)($survivor);
+    $other_doomed = ($this->addNode)($survivor_child);
+    $other_doomed_child = ($this->addNode)($other_doomed);
+
+    $this->maintainer->detachSubtreesOf(static fn (Builder $ignored): Builder => DB::table(MAINTAINER_NODES)->where('id', $doomed));
+    $this->maintainer->detachSubtreesOf(
+        static fn (Builder $ignored): EloquentBuilder => (new ClosureTreeStubModel)->setTable(MAINTAINER_NODES)->newQuery()->whereKey($other_doomed),
+    );
+
+    $rows = maintainerClosureRows();
+
+    expect($rows)->toContain(sprintf('%d>%d:1', $survivor, $survivor_child))
+        ->and($rows)->toContain(sprintf('%d>%d:2', $root, $survivor_child))
+        ->and($rows)->toContain(sprintf('%d>%d:3', $root, $other_doomed))
+        ->and($rows)->not->toContain(sprintf('%d>%d:2', $root, $doomed_child))
+        ->and($rows)->not->toContain(sprintf('%d>%d:1', $doomed, $doomed_child))
+        ->and($rows)->not->toContain(sprintf('%d>%d:4', $root, $other_doomed_child))
+        ->and($rows)->not->toContain(sprintf('%d>%d:2', $survivor, $other_doomed_child));
+
+    expect(fn () => $this->maintainer->detachSubtreesOf(static fn (Builder $query): bool => true))
+        ->toThrow(LogicException::class, 'must return a query builder or nothing');
+});
+
+it('moves and detaches a subtree larger than one delete chunk', function (): void {
+    $root = ($this->addNode)(null);
+    $old_parent = ($this->addNode)($root);
+    $moved = ($this->addNode)($old_parent);
+    $branch = ($this->addNode)($moved);
+
+    for ($index = 0; $index < 300; $index++) {
+        ($this->addNode)($moved);
+        ($this->addNode)($branch);
+    }
+
+    $new_root = ($this->addNode)(null);
+    $new_parent = ($this->addNode)($new_root);
+    $subtree_size = 602;
+
+    ($this->moveNode)($moved, $new_parent);
+    $incremental = maintainerClosureRows();
+
+    expect(DB::table(MAINTAINER_CLOSURE)->where('ancestor_id', $new_root)->count())->toBe($subtree_size + 2)
+        ->and(DB::table(MAINTAINER_CLOSURE)->where('ancestor_id', $root)->count())->toBe(2)
+        ->and(DB::table(MAINTAINER_CLOSURE)->where('ancestor_id', $old_parent)->count())->toBe(1);
+
+    $this->maintainer->rebuild();
+
+    expect(maintainerClosureRows())->toBe($incremental);
+
+    $this->maintainer->detachSubtreesOf(static fn (Builder $query): Builder => $query->whereIn('id', [$moved, $branch]));
+    DB::table(MAINTAINER_NODES)->whereIn('id', [$moved, $branch])->delete();
+    DB::table(MAINTAINER_NODES)->whereIn('parent_id', [$moved, $branch])->update(['parent_id' => null]);
+    $incremental = maintainerClosureRows();
+
+    expect(DB::table(MAINTAINER_CLOSURE)->where('ancestor_id', $new_root)->count())->toBe(2)
+        ->and(count($incremental))->toBe(6 + $subtree_size - 2);
+
+    $this->maintainer->rebuild();
+
+    expect(maintainerClosureRows())->toBe($incremental);
 });
 
 it('rebuilds to the same rows as incremental maintenance', function (): void {

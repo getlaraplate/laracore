@@ -6,8 +6,10 @@ namespace Modules\Core\Support\Hierarchy;
 
 use Closure;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use LogicException;
 use Modules\Core\Exceptions\HierarchyCycleException;
 
@@ -20,15 +22,22 @@ use Modules\Core\Exceptions\HierarchyCycleException;
  * The few raw select fragments name only closure columns, unqualified: the other side of each join is a derived
  * table whose columns are renamed (`node_key`, `subtree_depth`, ...), so the fragments stay unambiguous and need no
  * table alias, which the connection's table prefix would otherwise rewrite.
- * Deletes never read the closure table in their own subquery (MySQL error 1093): the pairs to remove are selected
- * first, then deleted by key in chunks.
+ * Deletes never read the closure table in their own subquery (MySQL error 1093): the keys to unlink are selected
+ * first, then deleted by key in chunks. Memory stays bounded: a subtree is read by keyset pages, never whole, and
+ * the only lists held in full are a node's ancestors (at most its depth) and the doomed nodes that have descendants.
  */
 final readonly class ClosureTableMaintainer
 {
     /**
-     * Maximum bindings of one delete statement, below the 999 variables of older SQLite builds.
+     * Ancestor keys per delete statement. With {@see self::DESCENDANT_CHUNK_SIZE} a statement binds at most 500
+     * values, below the 999 variables of older SQLite builds.
      */
-    private const int DELETE_CHUNK_SIZE = 500;
+    private const int ANCESTOR_CHUNK_SIZE = 100;
+
+    /**
+     * Subtree keys read per page and bound per delete statement.
+     */
+    private const int DESCENDANT_CHUNK_SIZE = 400;
 
     /**
      * The closure table's columns, in the order every insert selects them.
@@ -95,21 +104,31 @@ final readonly class ClosureTableMaintainer
      * and the cross product of the new parent's ancestors-and-self with the subtree comes in.
      *
      * @throws HierarchyCycleException When the new parent is the node itself or one of its descendants
+     * @throws LogicException When the new parent has no self row in the closure (the closure needs a rebuild)
      */
     public function moveSubtree(int|string $id, int|string|null $newParentId): void
     {
         $this->connection->transaction(function () use ($id, $newParentId): void {
-            if ($newParentId !== null && $this->wouldCycle($id, $newParentId)) {
-                throw HierarchyCycleException::forMove($this->table, $id, $newParentId);
+            if ($newParentId !== null) {
+                if ($this->wouldCycle($id, $newParentId)) {
+                    throw HierarchyCycleException::forMove($this->table, $id, $newParentId);
+                }
+
+                if (! $this->hasSelfRow($newParentId)) {
+                    throw new LogicException(sprintf(
+                        'Cannot move node [%s] of "%s" under [%s]: the new parent has no self row in "%s"; rebuild the closure first.',
+                        $id,
+                        $this->table,
+                        $newParentId,
+                        $this->closureTable,
+                    ));
+                }
             }
 
-            $this->deletePairs(
-                $this->connection->table($this->closureTable . ' as old_ancestor')
-                    ->crossJoin($this->closureTable . ' as subtree')
-                    ->select(['old_ancestor.ancestor_id', 'subtree.descendant_id'])
-                    ->where('old_ancestor.descendant_id', $id)
-                    ->where('old_ancestor.depth', '>', 0)
-                    ->where('subtree.ancestor_id', $id),
+            $this->unlinkFromAncestors(
+                $id,
+                $this->keys($this->closure()->where('descendant_id', $id)->where('depth', '>', 0), 'ancestor_id'),
+                includeNode: true,
             );
 
             if ($newParentId === null) {
@@ -139,27 +158,35 @@ final readonly class ClosureTableMaintainer
      * whose ancestor or descendant is a doomed node itself go with the node, through the cascading foreign keys.
      * Call it before the delete: afterwards the doomed nodes' rows are already gone and the links cannot be found.
      *
-     * @param  Closure(Builder): mixed  $doomedKeys  Receives a query on the model table and adds the conditions
-     *                                               selecting the doomed nodes; it may select the key column itself,
-     *                                               otherwise the key column is selected
+     * Only the doomed nodes with descendants are visited, one at a time: their ancestors-and-self are unlinked from
+     * their strict descendants. The order does not matter: a link a node finds already gone was removed by another
+     * doomed node on the same path, together with every pair that link would have produced.
+     *
+     * `$doomedKeys` receives a query on the model table. Either it adds the conditions to that query and returns it
+     * or nothing, or it returns another query, used instead (an Eloquent one is reduced with `toBase()`). The query
+     * may select the key column; otherwise the key column is selected.
+     *
+     * @param  Closure(Builder): (Builder|EloquentBuilder<Model>|null)  $doomedKeys
+     *
+     * @throws LogicException When the closure returns something other than a query builder or null
      */
     public function detachSubtreesOf(Closure $doomedKeys): void
     {
-        $doomed = $this->connection->table($this->table);
-        $doomedKeys($doomed);
-
-        if ($doomed->columns === null) {
-            $doomed->select($this->keyColumn);
-        }
+        $doomed = $this->doomedQuery($doomedKeys);
 
         $this->connection->transaction(function () use ($doomed): void {
-            $this->deletePairs(
-                $this->connection->table($this->closureTable . ' as above')
-                    ->join($this->closureTable . ' as below', 'below.ancestor_id', '=', 'above.descendant_id')
-                    ->select(['above.ancestor_id', 'below.descendant_id'])
-                    ->whereIn('above.descendant_id', $doomed)
-                    ->where('below.depth', '>', 0),
+            $doomed_with_descendants = $this->keys(
+                $this->closure()->whereIn('ancestor_id', $doomed)->where('depth', '>', 0)->distinct(),
+                'ancestor_id',
             );
+
+            foreach ($doomed_with_descendants as $doomed_id) {
+                $this->unlinkFromAncestors(
+                    $doomed_id,
+                    $this->keys($this->closure()->where('descendant_id', $doomed_id), 'ancestor_id'),
+                    includeNode: false,
+                );
+            }
         });
     }
 
@@ -167,9 +194,9 @@ final readonly class ClosureTableMaintainer
      * Rebuild the closure from the parent column, set-based.
      *
      * Every node gets its self row, the roots' being the first level, then each depth is inserted from the previous
-     * one: the rows at depth k are the rows at depth k - 1 ending at each node's parent, extended to the node. One statement per level of the deepest
-     * branch, none per node. The table is emptied with a delete, not a truncate, so the rebuild stays inside the
-     * caller's transaction on every driver.
+     * one: the rows at depth k are the rows at depth k - 1 ending at each node's parent, extended to the node. One
+     * statement per level of the deepest branch, none per node. The table is emptied with a delete, not a truncate,
+     * so the rebuild stays inside the caller's transaction on every driver.
      */
     public function rebuild(): void
     {
@@ -215,54 +242,94 @@ final readonly class ClosureTableMaintainer
     }
 
     /**
-     * Select the `(ancestor_id, descendant_id)` pairs first, then delete them by key, grouped by ancestor and packed
-     * into statements of at most {@see self::DELETE_CHUNK_SIZE} bindings.
+     * The values of one key column of the closure.
+     *
+     * @throws LogicException When a value is not a key
+     *
+     * @return list<int|string>
      */
-    private function deletePairs(Builder $pairs): void
+    private function keys(Builder $query, string $column): array
     {
-        /** @var array<int|string, list<int|string>> $descendants_by_ancestor */
-        $descendants_by_ancestor = [];
+        $keys = [];
 
-        foreach ($pairs->distinct()->get() as $pair) {
-            $descendants_by_ancestor[$pair->ancestor_id][] = $pair->descendant_id;
-        }
-
-        /** @var list<array{0: int|string, 1: list<int|string>}> $statement */
-        $statement = [];
-        $bindings = 0;
-
-        foreach ($descendants_by_ancestor as $ancestor_id => $descendant_ids) {
-            foreach (array_chunk($descendant_ids, self::DELETE_CHUNK_SIZE - 1) as $chunk) {
-                if ($statement !== [] && $bindings + count($chunk) + 1 > self::DELETE_CHUNK_SIZE) {
-                    $this->deleteLinks($statement);
-                    $statement = [];
-                    $bindings = 0;
-                }
-
-                $statement[] = [$ancestor_id, $chunk];
-                $bindings += count($chunk) + 1;
+        foreach ($query->pluck($column) as $key) {
+            if (! is_int($key) && ! is_string($key)) {
+                throw new LogicException(sprintf('The closure table "%s" holds a non-key %s value.', $this->closureTable, $column));
             }
+
+            $keys[] = $key;
         }
 
-        if ($statement !== []) {
-            $this->deleteLinks($statement);
-        }
+        return $keys;
+    }
+
+    private function hasSelfRow(int|string $id): bool
+    {
+        return $this->closure()
+            ->where('ancestor_id', $id)
+            ->where('descendant_id', $id)
+            ->exists();
     }
 
     /**
-     * @param  list<array{0: int|string, 1: list<int|string>}>  $links  Each ancestor with the descendants to unlink from it
+     * The query selecting the doomed keys, from what the caller's closure did or returned.
+     *
+     * @param  Closure(Builder): mixed  $doomedKeys
      */
-    private function deleteLinks(array $links): void
+    private function doomedQuery(Closure $doomedKeys): Builder
     {
-        $this->closure()
-            ->where(static function (Builder $query) use ($links): void {
-                foreach ($links as [$ancestor_id, $descendant_ids]) {
-                    $query->orWhere(static fn (Builder $link): Builder => $link
-                        ->where('ancestor_id', $ancestor_id)
-                        ->whereIn('descendant_id', $descendant_ids));
-                }
-            })
-            ->delete();
+        $query = $this->connection->table($this->table);
+        $returned = $doomedKeys($query);
+
+        $doomed = match (true) {
+            $returned === null => $query,
+            $returned instanceof Builder => $returned,
+            $returned instanceof EloquentBuilder => $returned->toBase(),
+            default => throw new LogicException(sprintf(
+                'The doomed keys closure for "%s" must return a query builder or nothing, %s returned.',
+                $this->table,
+                get_debug_type($returned),
+            )),
+        };
+
+        if ($doomed->columns === null) {
+            $doomed->select($this->keyColumn);
+        }
+
+        return $doomed;
+    }
+
+    /**
+     * Delete the links from the given ancestors to the subtree of a node, the node itself included or not.
+     *
+     * The subtree is read by keyset pages of {@see self::DESCENDANT_CHUNK_SIZE} keys, so deleting rows of pages
+     * already read cannot shift the next one; each page is deleted against the ancestors in chunks of
+     * {@see self::ANCESTOR_CHUNK_SIZE}.
+     *
+     * @param  list<int|string>  $ancestorIds
+     */
+    private function unlinkFromAncestors(int|string $nodeId, array $ancestorIds, bool $includeNode): void
+    {
+        if ($ancestorIds === []) {
+            return;
+        }
+
+        $subtree = $this->closure()->select('descendant_id')->where('ancestor_id', $nodeId);
+
+        if (! $includeNode) {
+            $subtree->where('depth', '>', 0);
+        }
+
+        $subtree->chunkById(self::DESCENDANT_CHUNK_SIZE, function (Collection $rows) use ($ancestorIds): void {
+            $descendant_ids = $rows->pluck('descendant_id')->all();
+
+            foreach (array_chunk($ancestorIds, self::ANCESTOR_CHUNK_SIZE) as $ancestor_chunk) {
+                $this->closure()
+                    ->whereIn('ancestor_id', $ancestor_chunk)
+                    ->whereIn('descendant_id', $descendant_ids)
+                    ->delete();
+            }
+        }, 'descendant_id');
     }
 
     private function closure(): Builder
