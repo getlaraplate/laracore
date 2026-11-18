@@ -63,6 +63,7 @@ use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Locking\Locked;
 use Modules\Core\Locking\LockIntent;
 use Modules\Core\Models\Concerns\HasApprovals;
+use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Disapproval;
 use Modules\Core\Models\Modification;
@@ -97,11 +98,11 @@ use Modules\Core\Services\ModificationVoteService;
 use Modules\Core\SoftDeletes\SoftDeletes as CoreSoftDeletes;
 use Modules\Core\Support\ColumnKinds;
 use Modules\Core\Support\ComputedColumnGuard;
+use Modules\Core\Support\Hierarchy\ClosurePaths;
 use Modules\Core\Support\PermissionName;
 use Modules\Core\Support\ReadableColumnGuard;
 use Modules\Core\Support\RelationGuard;
 use ReflectionMethod;
-use Staudenmeir\LaravelAdjacencyList\Eloquent\HasRecursiveRelationships;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 use UnexpectedValueException;
@@ -814,19 +815,19 @@ class CrudService
         $this->query_builder->prepareAuthorizedQuery($query, $requestData, $this->relationAuthorizer());
 
         if (is_string($tree_relation_type)) {
-            // The nodes are records of the same entity: the root's ACL leaves out the ones it hides. The tree query
-            // reads a recursive expression named after neither the table nor the model, so the visible keys are
-            // matched on the key column of that expression.
+            // The nodes are records of the same entity: the root's ACL leaves out the ones it hides. The tree
+            // relation joins the closure table, whose columns share no name with the model table, so the visible
+            // keys are matched on the qualified key of the related model.
             $visible = $this->visibleRelatedKeys($requestData->request, $model, $model->newInstance(), $model->getKeyName());
 
-            $query->with([$tree_relation_type => function (Relation $nodes) use ($visible, $model, $requestData): void {
+            $query->with([$tree_relation_type => function (Relation $nodes) use ($visible, $requestData): void {
                 // Added after the request relations, so the guard has not seen this query: the relations the nodes
                 // load on their own, and the ones their appended attributes read (a cover), follow the rule here,
                 // once for all the nodes.
                 $this->query_builder->guardEngineQuery($nodes->getQuery(), $this->relationAuthorizer(), $requestData->request);
 
                 if ($visible !== null) {
-                    $nodes->getQuery()->whereIn($nodes->getQuery()->getModel()->qualifyColumn($model->getKeyName()), $visible);
+                    $nodes->getQuery()->whereIn($nodes->getRelated()->getQualifiedKeyName(), $visible);
                 }
             }]);
         }
@@ -834,6 +835,12 @@ class CrudService
         $data = $requestData->request->has(is_array($requestData->primaryKey) ? $requestData->primaryKey[0] : $requestData->primaryKey)
             ? $query->sole()
             : $query->get();
+
+        if (is_string($tree_relation_type)) {
+            // Each node carries its signed `depth` from the relation and the `path` of keys from the node the
+            // walk starts at, read from the closure rows so that a node the ACL hides still stands in the path.
+            ClosurePaths::forModel($model)->assign($data instanceof Model ? [$data] : $data, $tree_relation_type);
+        }
 
         $this->applyComputedMethods($data, $requestData);
 
@@ -2969,7 +2976,7 @@ class CrudService
 
     private function useRecursiveRelationships(Model $model): bool
     {
-        return class_uses_trait($model, HasRecursiveRelationships::class);
+        return class_uses_trait($model, HasClosureTable::class);
     }
 
     private function useHasApproval(Model $model): bool

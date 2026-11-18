@@ -16,7 +16,7 @@ use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\QueryBuilder;
 use Modules\Core\Tests\Fixtures\CrudServiceTestSingleRelChild;
 use Modules\Core\Tests\Fixtures\CrudServiceTestSingleRelParent;
-use Staudenmeir\LaravelAdjacencyList\Eloquent\HasRecursiveRelationships;
+use Modules\Core\Tests\Stubs\ClosureTreeStubModel;
 
 it('normalizes scalar and array key values to where condition', function (): void {
     $service = new CrudService(app(AuthorizationService::class), app(QueryBuilder::class));
@@ -42,10 +42,7 @@ it('normalizes scalar and array key values to where condition', function (): voi
 it('detects models using recursive, approval, and history traits', function (): void {
     $service = new CrudService(app(AuthorizationService::class), app(QueryBuilder::class));
 
-    $recursive = new class extends Model
-    {
-        use HasRecursiveRelationships;
-    };
+    $recursive = new ClosureTreeStubModel;
 
     $approvable = new class extends Model
     {

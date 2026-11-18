@@ -45,6 +45,8 @@ return new class extends Migration
             MigrateUtils::prefixIndex($table, 'parent_id');
         });
 
+        MigrateUtils::closureTable($taxonomies_table, $connection);
+
         // Evita auto-relazione (categoria che punta sé stessa)
         $driver_name = $connection->getDriverName();
         $grammar = $connection->getQueryGrammar();
@@ -87,6 +89,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        app('db')->connection()->getSchemaBuilder()->dropIfExists(CoreTables::Taxonomies->value);
+        $schema = app('db')->connection()->getSchemaBuilder();
+        $schema->dropIfExists(CoreTables::TaxonomiesClosure->value);
+        $schema->dropIfExists(CoreTables::Taxonomies->value);
     }
 };

@@ -19,9 +19,9 @@ use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasActivation;
 use Modules\Core\Models\Concerns\HasApprovals;
+use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Concerns\HasPath;
 use Modules\Core\Models\Concerns\HasTranslatedDynamicContents;
-use Modules\Core\Models\Concerns\HasTypedRecursiveRelationships;
 use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\SortableTrait;
 use Modules\Core\Models\Translations\TaxonomyTranslation;
@@ -39,6 +39,7 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         HasApprovals::toArray as private approvalsToArray;
         HasApprovals::requiresApprovalWhen as private requiresApprovalWhenTrait;
     }
+    use HasClosureTable;
     use HasLocks;
     use HasPath;
     use HasTranslatedDynamicContents {
@@ -47,7 +48,6 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         HasTranslatedDynamicContents::casts as private translatedDynamicContentsCasts;
         HasTranslatedDynamicContents::getTranslationModelClass as private getTranslationModelClassDynamicContents;
     }
-    use HasTypedRecursiveRelationships;
     use HasValidity;
     use SortableTrait {
         SortableTrait::scopeOrdered as private scopePriorityOrdered;
@@ -278,14 +278,8 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
      */
     private function buildAncestorChain(string $field, string $separator): string
     {
-        $ancestors = $this->ancestors;
-
-        if (! $ancestors instanceof Collection) {
-            $ancestors = collect();
-        }
-
         /** @var Collection<int,mixed> $segments */
-        $segments = $ancestors
+        $segments = $this->ancestors
             ->pluck($field)
             ->filter(static fn (mixed $value): bool => $value !== null && $value !== '')
             ->reverse()

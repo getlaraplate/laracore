@@ -505,7 +505,7 @@ it('inherits ACL filters from an ancestor role when the direct role has no ACL r
     $parent->givePermissionTo($permission);
 
     $child = Role::factory()->create(['name' => 'acl_child_' . uniqid(), 'guard_name' => 'web']);
-    $child->forceFill(['parent_id' => $parent->id])->saveQuietly();
+    $child->forceFill(['parent_id' => $parent->id])->save();
 
     $filter_group = new FiltersGroup([
         new Filter('tenant_id', 42, FilterOperator::Equals),
@@ -799,7 +799,7 @@ it('resolveAcls correctly inherits ACL from ancestor role when direct role has n
 
     // Child role has no ACL — should inherit from parent
     $child = Role::factory()->create(['name' => 'acl_batch_child_' . uniqid(), 'guard_name' => 'web']);
-    $child->forceFill(['parent_id' => $parent->id])->saveQuietly();
+    $child->forceFill(['parent_id' => $parent->id])->save();
 
     $user = User::factory()->create();
     $user->assignRole($child);

@@ -23,6 +23,7 @@ use Modules\Core\Casts\ModifyRequestData;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\TreeRequestData;
+use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Modification;
@@ -40,8 +41,9 @@ use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\QueryBuilder;
 use Modules\Core\Tests\Stubs\ActivationStubModel;
+use Modules\Core\Tests\Stubs\Crud\AncestorTreeStubModel;
+use Modules\Core\Tests\Stubs\Crud\TreeStubModel;
 use Modules\Core\Tests\Stubs\Search\FixedSearchStrategyResolver;
-use Staudenmeir\LaravelAdjacencyList\Eloquent\HasRecursiveRelationships;
 use Symfony\Component\HttpFoundation\Response;
 
 function crud_cov_set(object $obj, string $prop, mixed $value): void
@@ -496,16 +498,10 @@ it('tree selects relation type and switches between sole and get modes', functio
             $table->string('name');
             $table->timestamps();
         });
+        MigrateUtils::closureTable('crud_cov_tree');
     }
 
-    $tree_model = new class extends Model
-    {
-        use HasRecursiveRelationships;
-
-        protected $table = 'crud_cov_tree';
-
-        protected $guarded = [];
-    };
+    $tree_model = new TreeStubModel;
 
     $root = $tree_model->newQuery()->create(['name' => 'root']);
 
@@ -960,6 +956,7 @@ it('history returns record and version history for versionable models', function
 });
 
 it('tree uses ancestorsAndSelf when only parents are requested', function (): void {
+    Schema::dropIfExists('crud_cov_tree_anc_closure');
     Schema::dropIfExists('crud_cov_tree_anc');
     Schema::create('crud_cov_tree_anc', function (Illuminate\Database\Schema\Blueprint $table): void {
         $table->id();
@@ -967,15 +964,9 @@ it('tree uses ancestorsAndSelf when only parents are requested', function (): vo
         $table->string('name');
         $table->timestamps();
     });
+    MigrateUtils::closureTable('crud_cov_tree_anc');
 
-    $tree_model = new class extends Model
-    {
-        use HasRecursiveRelationships;
-
-        protected $table = 'crud_cov_tree_anc';
-
-        protected $guarded = [];
-    };
+    $tree_model = new AncestorTreeStubModel;
 
     $solo = $tree_model->newQuery()->create(['name' => 'solo-node', 'parent_id' => null]);
 
