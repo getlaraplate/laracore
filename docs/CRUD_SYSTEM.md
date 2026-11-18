@@ -694,6 +694,21 @@ permission and ACL; see [Related records](#related-records).
 }
 ```
 
+### Response cache
+
+A read response of an entity whose model uses `HasCache` is cached by `Cache::tryByRequest()`, keyed by the path,
+the query, the user, the roles and the token. It is tagged with the entity's table and with the user (`U{id}`) and
+role (`R{id}`) tags, each namespaced with the app name (`{app}:{tag}`), deduplicated and sorted so the order in which
+they are composed never changes the key. So:
+
+- saving or deleting a record of the entity flushes its table tag (`HasCache::invalidateCache()`, `Cache::clearByEntity()`);
+- `Cache::clearByUser()` and `Cache::clearByGroup()` flush every response cached for that user or role, whatever the
+  entity: a flush invalidates every entry carrying any one of the tags, never only those carrying all of them;
+- `Cache::clearByRequest()` forgets one response and must receive the same entities, in any order, for a request of
+  the same user, because the tags of an entry are part of its key.
+
+On a store without tag support (`file`, `database`) the response is cached untagged and expires by its TTL only.
+
 ## Dynamic Entity Resolution
 
 The CRUD system uses `DynamicEntity` to resolve model classes from entity names:
