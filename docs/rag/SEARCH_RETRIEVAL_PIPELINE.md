@@ -489,29 +489,48 @@ returned (a strategy that dropped the filters, an index out of date) is dropped 
 hit takes a place in the page. The CMS and SAO application-content providers have always reloaded through an
 authorized query.
 
-A model's default search filters (`ProvidesDefaultSearchFilters`, such as CMS `Content`'s `extended_type IS
-NULL`) reach the engine on every path. The basic path puts them on the Scout builder
-(`CrudService::searchWithScout()`). `AdvancedSearchService::search()` joins them to the filters its caller
-passes, ahead of them (`DefaultSearchFilters::merge()`), so the orchestrated and auto paths and every direct
-caller of the service, such as the CMS application-content provider of the in-app assistant, inherit them. A
-caller passes only its own filters and never adds the defaults itself. They used to reach the engine on the basic
-path only: on the others an extended content that matched the query came back from the engine, took a place in
-the page and was dropped on reload by the `HidesExtendedContent` scope, so the page held fewer records than asked
-for. The merged tree gives the Scout builder the same calls in the same order as the basic path, so an explicit
+A model's default search filters reach the engine on every path: the ones it declares
+(`ProvidesDefaultSearchFilters`), and, on a host of extenders (`IExtendableModel`, such as CMS `Content`), its type
+column `IS NULL`, derived from the host contract (`DefaultSearchFilters::of()`), so the rows extenders own stay out.
+The basic path puts them on the Scout builder (`CrudService::searchWithScout()`). `AdvancedSearchService::search()`
+joins them to the filters its caller passes, ahead of them (`DefaultSearchFilters::merge()`), so the orchestrated
+and auto paths and every direct caller of the service, such as the CMS application-content provider of the in-app
+assistant, inherit them. A caller passes only its own filters and never adds the defaults itself. They used to reach
+the engine on the basic path only: on the others an extended content that matched the query came back from the
+engine, took a place in the page and was dropped on reload by the hiding scope, so the page held fewer records than
+asked for. The merged tree gives the Scout builder the same calls in the same order as the basic path, so an explicit
 request filter on the same field behaves the same on both: an equality replaces the default on Elasticsearch and
 Typesense, which keep one equality per field, and is ANDed with it on the database engine; any other condition is
 ANDed with it everywhere. A default field must be filterable in the model's search schema, since the orchestrated
-path applies it through the same constraint applier as the request filters.
+path applies it through the same constraint applier as the request filters. An equality on null is `must_not
+exists` on Elasticsearch and the null placeholder on Typesense (see `MODULE.md`, "Search abstractions and engines").
+
+**Extended rows.** Two searches replace the host's exclusion of extended rows, never join it (`$hostRows` of
+`DefaultSearchFilters::merge()` and `AdvancedSearchService::search()`), and the constraint applier then removes the
+host's hiding scope from the engine's database queries and from the hydration of the hits, so the rows the filters
+select survive them (spec `2026-11-17-extended-entity-search-design.md`):
+
+- **An extender** (`/search/shop/products`) runs on the index of its host, kept to its alias, with its own
+  permission and ACL (XS1, XS2). `ExtenderFilterTranslator` maps a request filter, an ACL condition and a sort to the
+  host index by one rule (XS10): an attribute the extender mounts from its host to the host field of the same name, an
+  own column the extender indexes as filterable to `extension.<column>`. A request filter or sort it cannot map
+  answers 400; an ACL condition it cannot map is left out of the engine. The hits reload as extenders by their host
+  key, under the extender's whole ACL, in the order of the engine.
+- **A host opened with `with_extended`** (`/search/cms/contents?with_extended=true`) keeps a plain row, or a row of an
+  alias whose table the user may `select` with the part of that extender's ACL the index can apply (XS3 to XS5). The
+  reload applies the host ACL to every row and each extender's whole ACL to its rows, then upcasts the extended rows.
 
 | Constraint | Basic | Orchestrated, Auto, direct `AdvancedSearchService` callers |
 |---|---|---|
-| Default search filters | engine (builder `where()`) | engine (merged into the filters) |
+| Default search filters, host exclusion of extended rows | engine (builder `where()`) | engine (merged into the filters) |
+| Alias condition of an extender, readable aliases of `with_extended` | engine, in place of the host exclusion; reload | engine, in place of the host exclusion; reload |
 | ACL row filters | engine, then reload | engine, then reload |
+| Extender ACL (extender search, `with_extended`) | engine for the translatable part, then reload whole | engine for the translatable part, then reload whole |
 | Request filters | engine; scopes and relation filters on reload | engine; scopes and relation filters on reload |
 | Requested locale (`locales`) | engine, when the engine filters by locale | engine, when the engine filters by locale |
 
 `SearchPathEligibilityContractTest` runs Basic, Orchestrated and Auto on the same rows, filters and user and
-requires the same records from each. The database engine has no locale field, so `RequestedLocaleSearchPathTest`
+requires the same records from each, on a host opened to its extenders and on an extender too. The database engine has no locale field, so `RequestedLocaleSearchPathTest`
 covers the locale: on an engine that filters by locale, every path hands it the `locales` restriction, once.
 
 The text is matched on the fields of the requested language only (`title.it`, `subtitle.it`, `content.it`, with

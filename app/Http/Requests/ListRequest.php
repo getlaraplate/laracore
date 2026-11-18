@@ -38,6 +38,8 @@ class ListRequest extends SelectRequest
             'limit' => ['integer', 'numeric', 'min:1', 'exclude_if:count,true'],
             'count' => ['boolean'],
             'totals' => ['boolean'],
+            /** On a host of extenders: include the extended rows the user may read, each as its extender (XS3). */
+            'with_extended' => ['boolean'],
             'sort.*.property' => ['string'],
             'sort.*.direction' => ['in:asc,desc,ASC,DESC'],
             'filters' => [new QueryBuilder(), new ClientScopeFilters($this->model)],

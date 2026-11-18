@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FilterOperator;
@@ -13,8 +14,13 @@ use Modules\Core\Models\ACL;
 use Modules\Core\Models\Permission;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
+use Modules\Core\Services\Crud\DTOs\CrudResult;
+use Modules\Core\Tests\Stubs\Extensions\ExtensionHostStub;
+use Modules\Core\Tests\Stubs\Extensions\FirstExtenderStub;
+use Modules\Core\Tests\Stubs\Extensions\SecondExtenderStub;
 use Modules\Core\Tests\Stubs\Search\DefaultFilteredSearchStub;
 use Modules\Core\Tests\Support\DefaultFilteredSearchFixture;
+use Modules\Core\Tests\Support\ExtensionFixture;
 use Modules\Core\Tests\Support\FakeVectorProfile;
 
 /*
@@ -138,4 +144,49 @@ it('lets no search path return a record another path excludes, for a user the AC
         'orchestrated' => $eligible,
         'auto' => $eligible,
     ]);
+});
+
+it('lets no search path return a row another path excludes, on a host opened to its extenders and on an extender', function (): void {
+    ExtensionFixture::setUp();
+
+    try {
+        $plain = ExtensionFixture::row('needle plain');
+        $allowed = ExtensionFixture::row('needle first allowed', FirstExtenderStub::ALIAS, 'gold');
+        // Excluded by the ACL of its own entity, which only the reload can apply (an own column not indexed).
+        $denied = ExtensionFixture::row('needle first denied', FirstExtenderStub::ALIAS, 'gold');
+        // Excluded because the user may not select the table of its extender.
+        ExtensionFixture::row('needle second', SecondExtenderStub::ALIAS, 'gold');
+
+        $role = Role::factory()->create(['name' => 'eligibility_extended_' . uniqid(), 'guard_name' => 'web']);
+        $role->givePermissionTo(Permission::findOrCreate('default.' . ExtensionHostStub::TABLE . '.select', 'web'));
+        $first = Permission::findOrCreate('default.' . FirstExtenderStub::TABLE . '.select', 'web');
+        $role->givePermissionTo($first);
+        $acl = new ACL;
+        $acl->setSkipValidation(true);
+        $acl->forceFill([
+            'permission_id' => $first->id,
+            'filters' => new FiltersGroup([new Filter('host_id', [$denied->id], FilterOperator::NotEquals)]),
+            'unrestricted' => false,
+            'priority' => 10,
+            'is_active' => true,
+        ]);
+        $acl->save();
+        $user = User::factory()->create();
+        $user->assignRole($role);
+
+        $host_keys = static function (CrudResult $result): array {
+            expect($result->error)->toBeNull();
+            $keys = $result->data->map(static fn (Model $row): int => (int) ($row instanceof ExtensionHostStub ? $row->getKey() : $row->getAttribute('host_id')))->all();
+            sort($keys);
+
+            return $keys;
+        };
+
+        foreach ([SearchMode::Basic, SearchMode::Orchestrated, SearchMode::Auto] as $mode) {
+            expect($host_keys(DefaultFilteredSearchFixture::run($mode, 20, null, $user, new ExtensionHostStub, [], true)))->toBe([$plain->id, $allowed->id])
+                ->and($host_keys(DefaultFilteredSearchFixture::run($mode, 20, null, $user, new FirstExtenderStub)))->toBe([$allowed->id]);
+        }
+    } finally {
+        ExtensionFixture::tearDown();
+    }
 });

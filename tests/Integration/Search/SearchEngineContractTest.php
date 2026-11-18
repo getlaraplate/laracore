@@ -260,3 +260,57 @@ it('preserves filterable field metadata across search schema translations', func
         ->and($database_indexes->where('type', 'btree')->pluck('columns')->contains(['title']))->toBeFalse()
         ->and($manager->translateForEngine($schema, 'database')['columns']['title']['filterable'] ?? null)->toBeFalse();
 });
+
+it('reads an equality on null as the absence of a value on elasticsearch, which takes no null term', function (): void {
+    $engine = (new ReflectionClass(ElasticsearchEngine::class))->newInstanceWithoutConstructor();
+    $missing = ['bool' => ['must_not' => [['exists' => ['field' => 'extended_type']]]]];
+
+    expect($engine->buildSearchFilters(['extended_type' => null]))->toBe([$missing])
+        ->and($engine->buildSearchFilters([
+            'operator' => 'or',
+            'filters' => [
+                ['field' => 'extended_type', 'operator' => '=', 'value' => null],
+                ['field' => 'extended_type', 'operator' => '!=', 'value' => null],
+            ],
+        ]))->toBe([[
+            'bool' => [
+                'should' => [$missing, ['exists' => ['field' => 'extended_type']]],
+                'minimum_should_match' => 1,
+            ],
+        ]]);
+});
+
+it('filters an equality on null by the placeholder typesense indexes a null string with', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    $placeholder = TypesenseEngine::NULL_PLACEHOLDER;
+
+    expect($engine->buildSearchFilters(['extended_type' => null]))->toBe(sprintf('extended_type:="%s"', $placeholder))
+        ->and($engine->buildSearchFilters([
+            'operator' => 'or',
+            'filters' => [
+                ['field' => 'extended_type', 'operator' => '=', 'value' => null],
+                ['field' => 'extended_type', 'operator' => '!=', 'value' => null],
+            ],
+        ]))->toBe(sprintf('(extended_type:="%s" || extended_type:!="%s")', $placeholder, $placeholder));
+});
+
+it('indexes a null in a top-level string field of typesense as the placeholder', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    (new ReflectionProperty($engine, 'null_placeholder_fields'))->setValue($engine, ['extended_type']);
+
+    $documents = Mockery::mock(Typesense\Documents::class);
+    $documents->shouldReceive('import')
+        ->once()
+        ->with([
+            ['id' => '1', 'extended_type' => TypesenseEngine::NULL_PLACEHOLDER, 'title' => null],
+            ['id' => '2', 'extended_type' => 'shop.product', 'title' => 'x'],
+        ], ['action' => 'upsert'])
+        ->andReturn([['success' => true], ['success' => true]]);
+    $collection = Mockery::mock(Typesense\Collection::class);
+    $collection->shouldReceive('getDocuments')->andReturn($documents);
+
+    (new ReflectionMethod($engine, 'importDocuments'))->invoke($engine, $collection, [
+        ['id' => '1', 'extended_type' => null, 'title' => null],
+        ['id' => '2', 'extended_type' => 'shop.product', 'title' => 'x'],
+    ], 'upsert');
+});
