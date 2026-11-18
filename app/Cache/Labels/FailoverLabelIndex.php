@@ -13,34 +13,45 @@ use RedisException;
 use Throwable;
 
 /**
- * Wraps the primary index of a failover cache. While the primary throws, every lookup misses and
- * nothing is stored; invalidations issued meanwhile are lost, so the first successful call after
- * an outage flushes every entry (`crud`) before anything else.
+ * Guards an index whose store can go down (Redis, alone or as the first store of a failover cache). While the primary
+ * throws, every lookup misses and nothing is stored; invalidations issued meanwhile are lost, so the first successful
+ * call after an outage flushes every entry stored through this wrapper before anything else: each entry carries
+ * {@see CacheLabel::stored()}, whatever it holds (CRUD responses, ACL resolutions, settings, documentation, ...).
  *
- * The outage is recorded in a marker on the host-local `file` cache store, so a later request,
- * Octane worker or queue worker on the same host still flushes after recovery. Residual: a host
- * that never saw a failure may serve stale entries until some host flushes `crud` (Redis is
- * shared, so one flush clears all). Only connection failures count as an outage; any other
- * exception is a bug and propagates.
+ * The outage is recorded in a marker on the host-local `file` cache store, holding the time of the last failed call,
+ * so a later request, Octane worker or queue worker on the same host still flushes after recovery, and the primary is
+ * tried at most once a second per host while it is down: a request never pays one connection timeout per call.
+ * Residual: a host that never saw a failure may serve stale entries until some host flushes the label (Redis is
+ * shared, so one flush clears all). Only connection failures count as an outage; any other exception is a bug and
+ * propagates.
  */
 final class FailoverLabelIndex implements ICacheLabelIndex
 {
     public const string MARKER_KEY = 'cache-labels:degraded';
 
-    private const int MARKER_CHECK_MICROS = 1_000_000;
+    /**
+     * How often the marker is read again, and how long the primary is left alone after a failed call.
+     */
+    private const int INTERVAL_MICROS = 1_000_000;
 
-    private bool $degraded = false;
+    /**
+     * Microseconds of the last failed call on the primary, as last read or seen; null while the primary serves.
+     */
+    private ?int $failed_at = null;
 
-    private int $checked_at = 0;
+    private ?int $checked_at = null;
 
     public function __construct(private readonly ICacheLabelIndex $primary, private readonly ?Repository $marker = null) {}
 
     #[Override]
     public function lookup(string $key, CacheDependencies $dependencies): CacheLookup
     {
+        $dependencies = $dependencies->withLabels(CacheLabel::stored());
+
         return $this->guard(
             fn (): CacheLookup => $this->primary->lookup($key, $dependencies),
-            static fn (): CacheLookup => new CacheLookup($key, false, null, Clock::micros(), $dependencies),
+            // Started at the beginning of time: any flush recorded since refuses a store of what was computed now.
+            static fn (): CacheLookup => new CacheLookup($key, false, null, 0, $dependencies),
         );
     }
 
@@ -81,10 +92,38 @@ final class FailoverLabelIndex implements ICacheLabelIndex
         return $this->primary->supportsRowLabels();
     }
 
+    /**
+     * Whether the primary was found down and has not served since, on this host.
+     */
+    public function isDegraded(): bool
+    {
+        $now = Clock::micros();
+
+        if ($this->checked_at === null || $now - $this->checked_at >= self::INTERVAL_MICROS) {
+            $this->checked_at = $now;
+            $this->failed_at = self::failureTimeOf($this->markerStore()->get(self::MARKER_KEY));
+        }
+
+        return $this->failed_at !== null;
+    }
+
     private static function isOutage(Throwable $throwable): bool
     {
         return $throwable instanceof RedisException
             || (class_exists(PredisException::class) && $throwable instanceof PredisException);
+    }
+
+    /**
+     * The failure time a marker holds; a marker written before it held one (`true`) allows a retry at once.
+     */
+    private static function failureTimeOf(mixed $marker): ?int
+    {
+        return match (true) {
+            is_int($marker) => $marker,
+            is_numeric($marker) => (int) $marker,
+            $marker === null, $marker === false => null,
+            default => 0,
+        };
     }
 
     /**
@@ -96,10 +135,16 @@ final class FailoverLabelIndex implements ICacheLabelIndex
      */
     private function guard(callable $call, callable $fallback): mixed
     {
+        $degraded = $this->isDegraded();
+
+        if ($degraded && Clock::micros() - (int) $this->failed_at < self::INTERVAL_MICROS) {
+            return $fallback();
+        }
+
         try {
-            if ($this->isDegraded()) {
-                $this->primary->flush(CacheLabel::all());
-                $this->setDegraded(false);
+            if ($degraded) {
+                $this->primary->flush(CacheLabel::stored());
+                $this->markRecovered();
             }
 
             return $call();
@@ -108,41 +153,28 @@ final class FailoverLabelIndex implements ICacheLabelIndex
                 throw $throwable;
             }
 
-            if (! $this->isDegraded()) {
+            if (! $degraded) {
                 report($throwable);
             }
 
-            $this->setDegraded(true);
+            $this->markFailed();
 
             return $fallback();
         }
     }
 
-    private function isDegraded(): bool
+    private function markFailed(): void
     {
-        if ($this->degraded) {
-            return true;
-        }
-
         $now = Clock::micros();
-
-        if ($now - $this->checked_at >= self::MARKER_CHECK_MICROS) {
-            $this->checked_at = $now;
-            $this->degraded = (bool) $this->markerStore()->get(self::MARKER_KEY, false);
-        }
-
-        return $this->degraded;
+        $this->markerStore()->forever(self::MARKER_KEY, $now);
+        $this->failed_at = $now;
+        $this->checked_at = $now;
     }
 
-    private function setDegraded(bool $degraded): void
+    private function markRecovered(): void
     {
-        if ($degraded) {
-            $this->markerStore()->forever(self::MARKER_KEY, true);
-        } else {
-            $this->markerStore()->forget(self::MARKER_KEY);
-        }
-
-        $this->degraded = $degraded;
+        $this->markerStore()->forget(self::MARKER_KEY);
+        $this->failed_at = null;
         $this->checked_at = Clock::micros();
     }
 

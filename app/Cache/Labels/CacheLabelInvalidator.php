@@ -6,6 +6,7 @@ namespace Modules\Core\Cache\Labels;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
@@ -20,9 +21,30 @@ final readonly class CacheLabelInvalidator
 {
     public function __construct(private ICacheLabelIndex $index) {}
 
+    /**
+     * Flushes everything that depends on the table: which of its rows exist (`table:{table}`) and the content of any of
+     * its rows (`rows:{table}`). Use it after a write that fires no model event, whose rows are not named one by one.
+     */
     public function flushTable(string $table, ?Model $owner = null): void
     {
-        $this->flushLabels($owner, CacheLabel::table($table));
+        $this->flushTables([$table], $owner);
+    }
+
+    /**
+     * {@see flushTable()} for several tables, in one flush call.
+     *
+     * @param  list<string>  $tables
+     */
+    public function flushTables(array $tables, ?Model $owner = null): void
+    {
+        $labels = [];
+
+        foreach (array_unique($tables) as $table) {
+            $labels[] = CacheLabel::table($table);
+            $labels[] = CacheLabel::rows($table);
+        }
+
+        $this->flushLabels($owner, ...$labels);
     }
 
     public function flushRecord(Model $model, bool $with_table = true): void
@@ -109,6 +131,43 @@ final readonly class CacheLabelInvalidator
         $connection->afterCommit($flush);
     }
 
+    /**
+     * `acl` and the labels of the roles and of their descendants, roles in the bin included; nothing for no role.
+     * Read before a role is deleted when its subtree must be flushed after: the deleted row names no descendant.
+     *
+     * @param  list<int|string>  $role_keys
+     * @return list<string>
+     */
+    public function roleLabels(array $role_keys): array
+    {
+        if ($role_keys === []) {
+            return [];
+        }
+
+        $keys = [];
+
+        // A role in the bin still names the roles below it, which inherit through it again once it is restored.
+        $roles = Role::query()
+            ->withTrashed()
+            ->whereKey($role_keys)
+            ->with(['descendants' => static fn (Relation $descendants): Relation => $descendants->withTrashed()])
+            ->get();
+
+        foreach ($roles as $role) {
+            foreach ($role->descendants as $descendant) {
+                $key = self::scalarKey($descendant->getKey());
+
+                if ($key !== null) {
+                    $keys[] = $key;
+                }
+            }
+        }
+
+        $keys = array_values(array_unique([...$role_keys, ...$keys]));
+
+        return [CacheLabel::acl(), ...array_map(CacheLabel::role(...), $keys)];
+    }
+
     private static function scalarKey(mixed $key): int|string|null
     {
         return is_int($key) || (is_string($key) && $key !== '') ? $key : null;
@@ -149,34 +208,5 @@ final readonly class CacheLabelInvalidator
         }
 
         return [];
-    }
-
-    /**
-     * `acl` and the labels of the roles and of their descendants; nothing for no role.
-     *
-     * @param  list<int|string>  $role_keys
-     * @return list<string>
-     */
-    private function roleLabels(array $role_keys): array
-    {
-        if ($role_keys === []) {
-            return [];
-        }
-
-        $keys = [];
-
-        foreach (Role::query()->whereKey($role_keys)->with('descendants')->get() as $role) {
-            foreach ($role->descendants as $descendant) {
-                $key = self::scalarKey($descendant->getKey());
-
-                if ($key !== null) {
-                    $keys[] = $key;
-                }
-            }
-        }
-
-        $keys = array_values(array_unique([...$role_keys, ...$keys]));
-
-        return [CacheLabel::acl(), ...array_map(CacheLabel::role(...), $keys)];
     }
 }

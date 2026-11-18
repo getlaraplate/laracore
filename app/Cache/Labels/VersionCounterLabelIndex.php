@@ -11,11 +11,17 @@ use Override;
 /**
  * Index for stores without sets: each label has a version counter and the entry key embeds
  * the versions it was built under, so flushing a label orphans every older key.
- * Row labels are not tracked; a row flush bumps its table counter instead.
+ * Row labels are not tracked; a row flush, or a flush of `rows:{table}`, bumps its table counter instead, once per
+ * flush call however many labels map to it.
  */
 final readonly class VersionCounterLabelIndex implements ICacheLabelIndex
 {
     private const string PREFIX = 'labelv:';
+
+    /**
+     * Ten years: far beyond the ttl of any entry, so a counter never resets while entries of its versions live.
+     */
+    private const int COUNTER_TTL = 315_360_000;
 
     public function __construct(private CacheRepository $cache) {}
 
@@ -61,13 +67,15 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex
     #[Override]
     public function flush(string ...$labels): void
     {
-        foreach (array_unique($labels) as $label) {
-            $target = CacheLabel::isRow($label) ? CacheLabel::tableOfRow($label) : $label;
+        $targets = array_unique(array_map(self::counterLabelOf(...), $labels));
+
+        foreach ($targets as $target) {
             $counter = self::PREFIX . $target;
 
             // The database and memcached stores do not increment a missing key: the counter starts at 1 instead,
-            // and a flush that created it in between is followed by an increment of its own.
-            if ($this->cache->increment($counter) === false && ! $this->cache->add($counter, 1)) {
+            // through the store's own atomic add (a ttl is required for it, so a very long one is given), and a
+            // flush that created it in between is followed by an increment of its own.
+            if ($this->cache->increment($counter) === false && ! $this->cache->add($counter, 1, self::COUNTER_TTL)) {
                 $this->cache->increment($counter);
             }
         }
@@ -83,5 +91,18 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex
     public function supportsRowLabels(): bool
     {
         return false;
+    }
+
+    /**
+     * The counter a label moves: a row label and a `rows:{table}` label move their table's counter, since keys hold
+     * table versions only.
+     */
+    private static function counterLabelOf(string $label): string
+    {
+        return match (true) {
+            CacheLabel::isRow($label) => CacheLabel::tableOfRow($label),
+            CacheLabel::isRows($label) => CacheLabel::tableOfRows($label),
+            default => $label,
+        };
     }
 }

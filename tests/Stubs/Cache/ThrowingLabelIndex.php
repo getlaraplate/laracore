@@ -25,10 +25,21 @@ final class ThrowingLabelIndex implements ICacheLabelIndex
      */
     public array $calls = [];
 
+    /**
+     * Every call made, failed ones included.
+     */
+    public int $attempts = 0;
+
+    /**
+     * @var list<CacheDependencies>
+     */
+    public array $dependencies = [];
+
     #[Override]
     public function lookup(string $key, CacheDependencies $dependencies): CacheLookup
     {
         $this->record('lookup');
+        $this->dependencies[] = $dependencies;
 
         return new CacheLookup($key, true, 'cached', 1, $dependencies);
     }
@@ -69,6 +80,8 @@ final class ThrowingLabelIndex implements ICacheLabelIndex
 
     private function record(string $call): void
     {
+        $this->attempts++;
+
         if ($this->failing) {
             throw $this->failure ?? new RedisException('primary down');
         }

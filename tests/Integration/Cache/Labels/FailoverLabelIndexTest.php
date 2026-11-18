@@ -5,7 +5,9 @@ declare(strict_types=1);
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Exceptions;
+use Modules\Core\Cache\Labels\ArrayLabelIndex;
 use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\FailoverLabelIndex;
 use Modules\Core\Tests\Stubs\Cache\ThrowingLabelIndex;
 
@@ -42,7 +44,7 @@ it('misses and stores nothing while the primary throws', function (): void {
         ->and($primary->calls)->toBe([]);
 });
 
-it('flushes crud on the primary before the first call after recovery', function (): void {
+it('flushes the label of every stored entry on the primary before the first call after recovery', function (): void {
     $primary = new ThrowingLabelIndex();
     $primary->failing = true;
     $index = new FailoverLabelIndex($primary, failoverMarkerStore());
@@ -50,15 +52,39 @@ it('flushes crud on the primary before the first call after recovery', function 
 
     $index->lookup('k', $dependencies);
     $primary->failing = false;
+    $this->travel(2)->seconds();
 
     $lookup = $index->lookup('k', $dependencies);
 
     expect($lookup->hit)->toBeTrue()
-        ->and($primary->calls)->toBe(['flush:crud', 'lookup']);
+        ->and($primary->calls)->toBe(['flush:' . CacheLabel::stored(), 'lookup']);
 
     $index->lookup('k', $dependencies);
 
-    expect($primary->calls)->toBe(['flush:crud', 'lookup', 'lookup']);
+    expect($primary->calls)->toBe(['flush:' . CacheLabel::stored(), 'lookup', 'lookup']);
+});
+
+it('stores every entry under the label flushed on recovery', function (): void {
+    $primary = new ThrowingLabelIndex();
+    $index = new FailoverLabelIndex($primary, failoverMarkerStore());
+
+    $lookup = $index->lookup('k', new CacheDependencies(['acl', 'user:5']));
+
+    expect($primary->dependencies[0]->labels)->toBe(['acl', 'user:5', CacheLabel::stored()])
+        ->and($lookup->dependencies->labels)->toContain(CacheLabel::stored());
+});
+
+it('makes an ACL resolution stored before an outage miss after the recovery', function (): void {
+    $primary = new ArrayLabelIndex();
+    $marker = failoverMarkerStore();
+    $index = new FailoverLabelIndex($primary, $marker);
+    $dependencies = new CacheDependencies([CacheLabel::acl(), CacheLabel::user(5)]);
+    $index->store($index->lookup('acl:5', $dependencies), 'resolution', 60);
+
+    // An outage seen by this host: the flush of `acl` issued meanwhile never reached the primary.
+    $marker->forever(FailoverLabelIndex::MARKER_KEY, 0);
+
+    expect(new FailoverLabelIndex($primary, $marker)->lookup('acl:5', $dependencies)->hit)->toBeFalse();
 });
 
 it('does not store a value computed during the outage once the primary is back', function (): void {
@@ -67,9 +93,43 @@ it('does not store a value computed during the outage once the primary is back',
     $index = new FailoverLabelIndex($primary, failoverMarkerStore());
     $lookup = $index->lookup('k', new CacheDependencies(['table:core_users']));
     $primary->failing = false;
+    $this->travel(2)->seconds();
 
     expect($index->store($lookup, 'v', 60))->toBeFalse()
-        ->and($primary->calls)->toBe(['flush:crud']);
+        ->and($primary->calls)->toBe(['flush:' . CacheLabel::stored()]);
+});
+
+it('tries the primary at most once a second while it is down', function (): void {
+    $primary = new ThrowingLabelIndex();
+    $primary->failing = true;
+    $index = new FailoverLabelIndex($primary, failoverMarkerStore());
+    $dependencies = new CacheDependencies(['t']);
+
+    $lookup = $index->lookup('a', $dependencies);
+    $index->lookup('b', $dependencies);
+    $index->store($lookup, 'v', 60);
+    $index->flush('t');
+    $index->pruneStale();
+
+    expect($primary->attempts)->toBe(1);
+
+    $this->travel(2)->seconds();
+    $index->lookup('c', $dependencies);
+
+    expect($primary->attempts)->toBe(2);
+});
+
+it('waits for the interval after a failed attempt of another worker on the same host', function (): void {
+    $marker = failoverMarkerStore();
+    $failing = new ThrowingLabelIndex();
+    $failing->failing = true;
+    new FailoverLabelIndex($failing, $marker)->lookup('k', new CacheDependencies(['t']));
+
+    $primary = new ThrowingLabelIndex();
+    $primary->failing = true;
+    new FailoverLabelIndex($primary, $marker)->lookup('k', new CacheDependencies(['t']));
+
+    expect($primary->attempts)->toBe(0);
 });
 
 it('shares the outage marker between instances', function (): void {
@@ -77,12 +137,13 @@ it('shares the outage marker between instances', function (): void {
     $failing = new ThrowingLabelIndex();
     $failing->failing = true;
     new FailoverLabelIndex($failing, $marker)->lookup('k', new CacheDependencies(['t']));
+    $this->travel(2)->seconds();
 
     $healthy = new ThrowingLabelIndex();
     $fresh = new FailoverLabelIndex($healthy, $marker);
     $fresh->lookup('k', new CacheDependencies(['t']));
 
-    expect($healthy->calls)->toBe(['flush:crud', 'lookup'])
+    expect($healthy->calls)->toBe(['flush:' . CacheLabel::stored(), 'lookup'])
         ->and($marker->get(FailoverLabelIndex::MARKER_KEY))->toBeNull();
 });
 
@@ -95,7 +156,8 @@ it('keeps the marker when the recovery flush throws', function (): void {
     $lookup = new FailoverLabelIndex($primary, $marker)->lookup('k', new CacheDependencies(['t']));
 
     expect($lookup->hit)->toBeFalse()
-        ->and($marker->get(FailoverLabelIndex::MARKER_KEY))->toBeTrue();
+        ->and($primary->attempts)->toBe(1)
+        ->and($marker->get(FailoverLabelIndex::MARKER_KEY))->not->toBeNull();
 });
 
 it('lets non-outage exceptions propagate', function (): void {
@@ -113,7 +175,9 @@ it('reports only the first failure of an outage', function (): void {
     $index = new FailoverLabelIndex($primary, failoverMarkerStore());
 
     $index->lookup('a', new CacheDependencies(['t']));
+    $this->travel(2)->seconds();
     $index->lookup('b', new CacheDependencies(['t']));
 
+    expect($primary->attempts)->toBe(2);
     Exceptions::assertReportedCount(1);
 });

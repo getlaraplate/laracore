@@ -15,14 +15,14 @@ use Modules\Core\Models\User;
 use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
 use Modules\Core\Tests\Stubs\Cache\TaggedCacheStubModel;
 
-it('clearByEntity flushes the label of its table only', function (): void {
+it('clearByEntity flushes its whole table only', function (): void {
     $index = new RecordingLabelIndex();
     app()->instance(ICacheLabelIndex::class, $index);
     $repository = new Repository(new ArrayStore());
 
     $repository->clearByEntity(new TaggedCacheStubModel());
 
-    expect($index->flushedLabels())->toBe([CacheLabel::table('tagged_cache_stub_models')]);
+    expect($index->flushedLabels())->toBe([CacheLabel::table('tagged_cache_stub_models'), CacheLabel::rows('tagged_cache_stub_models')]);
 });
 
 it('clearByUser flushes the label of that user only', function (): void {
@@ -101,6 +101,7 @@ it('clear methods flush the labels of class-string entities, users and roles', f
 
     expect($index->flushedLabels())->toBe([
         CacheLabel::table('tagged_cache_stub_models'),
+        CacheLabel::rows('tagged_cache_stub_models'),
         CacheLabel::user($user->getKey()),
         CacheLabel::role($role->getKey()),
     ]);
@@ -123,7 +124,7 @@ it('clearByEntity does not throw BadMethodCallException when cache driver does n
     };
 
     expect(fn () => $repository->clearByEntity($cacheable))->not->toThrow(BadMethodCallException::class);
-    expect($index->flushedLabels())->toBe([CacheLabel::table('cacheable_no_tags')]);
+    expect($index->flushedLabels())->toBe([CacheLabel::table('cacheable_no_tags'), CacheLabel::rows('cacheable_no_tags')]);
 });
 
 it('clearByEntity does not throw BadMethodCallException when cache driver does not support tags (file driver simulation)', function (): void {
@@ -143,7 +144,7 @@ it('clearByEntity does not throw BadMethodCallException when cache driver does n
     };
 
     expect(fn () => $repository->clearByEntity($cacheable))->not->toThrow(BadMethodCallException::class);
-    expect($index->flushedLabels())->toBe([CacheLabel::table('cacheable_file_no_tags')]);
+    expect($index->flushedLabels())->toBe([CacheLabel::table('cacheable_file_no_tags'), CacheLabel::rows('cacheable_file_no_tags')]);
 });
 
 it('ping succeeds on a working store and fails when the store throws', function (): void {

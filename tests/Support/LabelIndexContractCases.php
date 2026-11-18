@@ -119,4 +119,38 @@ return [
             Illuminate\Support\Carbon::setTestNow();
         }
     },
+    'misses after the whole table of its row label is flushed' => function (Closure $make): void {
+        $index = $make();
+        $dependencies = new CacheDependencies(['crud'], ['core_users']);
+        $index->store($index->lookup('k', $dependencies), 'v', 60, ['row:core_users:5']);
+
+        $index->flush('table:core_users', 'rows:core_users');
+
+        expect($index->lookup('k', $dependencies)->hit)->toBeFalse();
+    },
+    'keeps an entry with a row of the table when only the table label is flushed' => function (Closure $make): void {
+        $index = $make();
+
+        if (! $index->supportsRowLabels()) {
+            $this->markTestSkipped('Membership indexes only: counters turn a row table into its table label.');
+        }
+        $dependencies = new CacheDependencies(['crud'], ['core_users']);
+        $index->store($index->lookup('k', $dependencies), 'v', 60, ['row:core_users:5']);
+
+        $index->flush('table:core_users');
+
+        expect($index->lookup('k', $dependencies)->hit)->toBeTrue();
+    },
+    'reaches an entry stored after a flush with the next flush' => function (Closure $make): void {
+        $index = $make();
+        $dependencies = new CacheDependencies(['table:core_users']);
+        $index->store($index->lookup('old', $dependencies), 'v', 60);
+        $index->flush('table:core_users');
+
+        expect($index->store($index->lookup('fresh', $dependencies), 'v', 60))->toBeTrue();
+
+        $index->flush('table:core_users');
+
+        expect($index->lookup('fresh', $dependencies)->hit)->toBeFalse();
+    },
 ];

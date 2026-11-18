@@ -19,6 +19,9 @@ use Redis;
  *
  * All keys live under the store prefix. Nothing is stored without an expiry.
  * A cached null reads back as a miss on phpredis with a native serializer.
+ *
+ * Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in
+ * different hash slots.
  */
 final readonly class RedisLabelIndex implements ICacheLabelIndex
 {
@@ -77,6 +80,21 @@ end
 return 1
 LUA;
 
+    /**
+     * Deletes one chunk of a label's members and removes the same members from its set, atomically, so a member added
+     * by a store that lands between two chunks keeps its membership for the next flush.
+     * KEYS: label set. ARGV: chunk size. Returns how many members were removed (0 when the set is empty or gone).
+     */
+    private const string LUA_FLUSH_CHUNK = <<<'LUA'
+local members = redis.call('ZRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1)
+if #members == 0 then
+    return 0
+end
+redis.call('DEL', unpack(members))
+redis.call('ZREM', KEYS[1], unpack(members))
+return #members
+LUA;
+
     public function __construct(private RedisStore $store) {}
 
     #[Override]
@@ -97,7 +115,7 @@ LUA;
     public function store(CacheLookup $lookup, mixed $value, int $ttl, array $row_labels = []): bool
     {
         $connection = $this->store->connection();
-        $labels = array_values(array_unique([...$lookup->dependencies->labels, ...$row_labels]));
+        $labels = CacheLabel::storedUnder($lookup->dependencies, $row_labels);
         $prefix = $this->store->getPrefix();
 
         $keys = [
@@ -141,15 +159,11 @@ LUA;
             ...$labels,
         );
 
+        // Redis deletes a sorted set once its last member is removed, so the set needs no delete of its own.
         foreach ($labels as $label) {
-            $set = $prefix . self::LABEL_KEY . $label;
-
-            while (($members = $connection->zrange($set, 0, self::CHUNK - 1)) !== []) {
-                $connection->del(...$this->withoutConnectionPrefix($members, $connection));
-                $connection->zrem($set, ...$members);
-            }
-
-            $connection->del($set);
+            do {
+                $removed = (int) $connection->eval(self::LUA_FLUSH_CHUNK, 1, $prefix . self::LABEL_KEY . $label, (string) self::CHUNK);
+            } while ($removed > 0);
         }
     }
 
@@ -199,7 +213,7 @@ LUA;
      */
     private function pruneFlushTimes(Connection $connection, int $now, string $hash): void
     {
-        $durations = array_filter((array) config('cache.duration'), is_int(...));
+        $durations = array_map(intval(...), array_filter((array) config('cache.duration'), is_numeric(...)));
         $cutoff = $now - ($durations === [] ? 86400 : max($durations)) * 1_000_000;
         $cursor = $this->initialCursor($connection);
 

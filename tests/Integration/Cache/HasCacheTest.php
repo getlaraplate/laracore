@@ -32,11 +32,11 @@ it('invalidates cache when a cached model is saved or deleted', function (): voi
     expect($setting->usesCache())->toBeTrue();
 });
 
-it('invalidates the label of its table', function (): void {
+it('invalidates its whole table, rows included', function (): void {
     $index = new RecordingLabelIndex();
     app()->instance(ICacheLabelIndex::class, $index);
 
     (new Setting())->invalidateCache();
 
-    expect($index->flushedLabels())->toBe([CacheLabel::table((new Setting())->getTable())]);
+    expect($index->flushedLabels())->toBe([CacheLabel::table((new Setting())->getTable()), CacheLabel::rows((new Setting())->getTable())]);
 });

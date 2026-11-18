@@ -242,6 +242,85 @@ it('flushes the scope labels of a grant made through the plain relation', functi
     ],
 ]);
 
+it('flushes a role, the roles below it and the ACL resolutions when the role moves or leaves the hierarchy', function (Closure $change): void {
+    $root = crudPermissionCacheRole();
+    $other_root = crudPermissionCacheRole();
+    $role = Role::factory()->create(['name' => 'perm_labels_moved_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $root->id]);
+    $below = Role::factory()->create(['name' => 'perm_labels_below_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $role->id]);
+    $index = crudPermissionCacheRecord();
+
+    $change($role, $other_root, $index);
+
+    expect($index->flushedLabels())->toContain(CacheLabel::acl(), CacheLabel::role($role->id), CacheLabel::role($below->id));
+})->with([
+    'parent changed' => [static fn (Role $role, Role $other_root): bool => $role->forceFill(['parent_id' => $other_root->id])->save()],
+    'moved to the bin' => [static fn (Role $role): ?bool => $role->delete()],
+    'restored' => [static function (Role $role, Role $other_root, RecordingLabelIndex $index): void {
+        $role->delete();
+        $index->flushes = [];
+        $role->restore();
+    }],
+    'force deleted' => [static fn (Role $role): ?bool => $role->forceDelete()],
+]);
+
+it('resolves the ACLs of a role again once it is moved under a role with an ACL', function (): void {
+    $permission = crudPermissionCachePermission();
+    $parent = crudPermissionCacheRole();
+    $parent->givePermissionTo($permission);
+    crudPermissionCacheAcl($permission, $parent);
+    $role = crudPermissionCacheRole();
+    $user = User::factory()->create();
+    $user->assignRole($role);
+    $service = new AclResolverService();
+
+    expect($service->getEffectiveAcls($user, $permission))->toBeEmpty();
+
+    $role->forceFill(['parent_id' => $parent->id])->save();
+
+    expect($service->getEffectiveAcls($user->fresh(), $permission))->toHaveCount(1);
+});
+
+it('resolves the ACLs of a role again once the role above it is moved to the bin', function (): void {
+    $permission = crudPermissionCachePermission();
+    $parent = crudPermissionCacheRole();
+    $parent->givePermissionTo($permission);
+    crudPermissionCacheAcl($permission, $parent);
+    $role = Role::factory()->create(['name' => 'perm_labels_child_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $parent->id]);
+    $user = User::factory()->create();
+    $user->assignRole($role);
+    $service = new AclResolverService();
+
+    expect($service->getEffectiveAcls($user, $permission))->toHaveCount(1);
+
+    $parent->delete();
+
+    expect($service->getEffectiveAcls($user->fresh(), $permission))->toBeEmpty();
+});
+
+it('flushes every cached CRUD response on a write of an unscoped ACL', function (Closure $write): void {
+    $permission = Permission::findOrCreate(PermissionName::forModel(new Setting(), 'select'), 'web');
+    $acl = crudPermissionCacheAcl($permission, null);
+    $index = crudPermissionCacheRecord();
+
+    $write($acl);
+
+    expect($index->flushedLabels())->toContain(CacheLabel::all(), CacheLabel::acl());
+})->with([
+    'created' => [static fn (ACL $acl): ACL => crudPermissionCacheAcl($acl->permission, null, 'draft')],
+    'updated' => [static fn (ACL $acl): bool => $acl->forceFill(['priority' => 20])->save()],
+    'deleted' => [static fn (ACL $acl): ?bool => $acl->delete()],
+    'moved to a role' => [static fn (ACL $acl): bool => $acl->forceFill(['role_id' => crudPermissionCacheRole()->id])->save()],
+]);
+
+it('keeps the CRUD responses of other roles on a write of a role scoped ACL', function (): void {
+    $acl = crudPermissionCacheAcl(crudPermissionCachePermission(), crudPermissionCacheRole());
+    $index = crudPermissionCacheRecord();
+
+    $acl->forceFill(['priority' => 20])->save();
+
+    expect($index->flushedLabels())->not->toContain(CacheLabel::all());
+});
+
 it('flushes the role an ACL is moved away from as well as the one it moves to', function (): void {
     $from = crudPermissionCacheRole();
     $to = crudPermissionCacheRole();

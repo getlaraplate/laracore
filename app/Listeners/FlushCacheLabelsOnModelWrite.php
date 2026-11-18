@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Listeners;
 
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 
 /**
@@ -27,7 +28,7 @@ final readonly class FlushCacheLabelsOnModelWrite
         }
 
         if (str_starts_with($event, 'eloquent.created:')) {
-            $this->invalidator->flushTable($model->getTable(), $model);
+            $this->invalidator->flushLabels($model, CacheLabel::table($model->getTable()));
         } else {
             $this->invalidator->flushRecord($model);
         }

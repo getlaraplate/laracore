@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\Permission;
 use Modules\Core\Models\Role;
@@ -36,7 +37,8 @@ it('flushes table and row labels on update, delete', function (): void {
     $this->index->flushes = [];
     $role->delete();
 
-    expect($this->index->flushedLabels())->toBe($expected);
+    // A role leaving the hierarchy flushes its scope labels too, see RoleObserver.
+    expect($this->index->flushedLabels())->toContain(...$expected);
 });
 
 it('flushes table and row labels on restore and force delete', function (): void {
@@ -111,13 +113,69 @@ it('flushes pivot, parent and related tables on every pivot mutation', function 
     }
 });
 
-it('flushes the label of the model table on invalidateCache', function (): void {
+it('flushes the table label and every row of the model table on invalidateCache', function (): void {
     $role = makeLabelRole();
     $this->index->flushes = [];
 
     $role->invalidateCache();
 
-    expect($this->index->flushedLabels())->toBe([CacheLabel::table($role->getTable())]);
+    expect($this->index->flushes)->toBe([[CacheLabel::table($role->getTable()), CacheLabel::rows($role->getTable())]]);
+});
+
+it('flushes several whole tables in one flush call', function (): void {
+    app(CacheLabelInvalidator::class)->flushTables(['cms_contents', 'cms_tags', 'cms_contents']);
+
+    expect($this->index->flushes)->toBe([[
+        CacheLabel::table('cms_contents'),
+        CacheLabel::rows('cms_contents'),
+        CacheLabel::table('cms_tags'),
+        CacheLabel::rows('cms_tags'),
+    ]]);
+});
+
+it('flushes a pivot grant once for a sync that attaches and detaches several keys', function (): void {
+    $role = makeLabelRole();
+    $held = Permission::query()->create(['name' => 'label.held.' . uniqid(), 'guard_name' => 'web']);
+    $role->permissions()->attach($held->getKey());
+    $added = [
+        Permission::query()->create(['name' => 'label.add1.' . uniqid(), 'guard_name' => 'web'])->getKey(),
+        Permission::query()->create(['name' => 'label.add2.' . uniqid(), 'guard_name' => 'web'])->getKey(),
+    ];
+    $this->index->flushes = [];
+
+    $role->permissions()->sync($added);
+
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushes[0])->toContain(CacheLabel::role($role->getKey()), CacheLabel::acl());
+});
+
+it('flushes a pivot grant once for a toggle that attaches and detaches', function (): void {
+    $role = makeLabelRole();
+    $held = Permission::query()->create(['name' => 'label.held.' . uniqid(), 'guard_name' => 'web']);
+    $other = Permission::query()->create(['name' => 'label.other.' . uniqid(), 'guard_name' => 'web']);
+    $role->permissions()->attach($held->getKey());
+    $this->index->flushes = [];
+
+    $role->permissions()->toggle([$held->getKey(), $other->getKey()]);
+
+    expect($this->index->flushes)->toHaveCount(1);
+});
+
+it('finds the roles below a role through a role in the bin', function (): void {
+    $parent = makeLabelRole();
+    $child = Role::factory()->create(['name' => 'label_child_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $parent->getKey()]);
+    $grandchild = Role::factory()->create(['name' => 'label_grandchild_' . uniqid(), 'guard_name' => 'web', 'parent_id' => $child->getKey()]);
+    $child->delete();
+    $this->index->flushes = [];
+
+    app(CacheLabelInvalidator::class)->flushRoles(null, [$parent->getKey()]);
+
+    expect($this->index->flushedLabels())->toContain(
+        CacheLabel::acl(),
+        CacheLabel::role($parent->getKey()),
+        CacheLabel::role($child->getKey()),
+        CacheLabel::role($grandchild->getKey()),
+    );
 });
 
 it('flushes pivot labels through the morph relation of a user', function (): void {

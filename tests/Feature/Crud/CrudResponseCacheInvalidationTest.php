@@ -164,6 +164,22 @@ it('misses the list and the detail of a row once it is updated', function (strin
     crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $detail));
 })->with(['array', 'file']);
 
+it('misses the detail of a row once a mass write flushes its whole table', function (string $kind): void {
+    $spy = crudInvalidationBind($kind);
+    $setting = crudInvalidationNewSetting();
+    $this->actingAs(crudInvalidationSuperadmin());
+    $detail = route('core.crud.detail', ['module' => 'core', 'entity' => 'settings']) . '?' . http_build_query(['id' => $setting->getKey()]);
+
+    crudInvalidationRead($spy, new Setting(), $detail);
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail));
+
+    // A detail carries the row label of its record, not the table label: the whole-table flush must still reach it.
+    $setting->newQuery()->whereKey($setting->getKey())->update(['description' => 'mass ' . uniqid()]);
+    app(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable($setting->getTable(), $setting);
+
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $detail));
+})->with(['array', 'file']);
+
 it('still hits after a write to the table of another entity', function (string $kind): void {
     $spy = crudInvalidationBind($kind);
     crudInvalidationNewSetting();
@@ -221,8 +237,8 @@ it('flushes once, after the commit, and leaves the hit after a rollback', functi
         ->and($spy->flushes[0])->toEqualCanonicalizing([$table_label, $row_label]);
 
     if ($kind === 'file') {
-        // A counter index bumps the table counter once for each of the two labels, and never before the commit.
-        expect($counter())->toBe($counter_before + 2);
+        // A counter index bumps the table counter once for the table and row labels together, never before the commit.
+        expect($counter())->toBe($counter_before + 1);
     }
 
     crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $url));

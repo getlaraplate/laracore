@@ -48,7 +48,7 @@ final class ArrayLabelIndex implements ICacheLabelIndex
     #[Override]
     public function store(CacheLookup $lookup, mixed $value, int $ttl, array $row_labels = []): bool
     {
-        $labels = [...$lookup->dependencies->labels, ...$row_labels];
+        $labels = CacheLabel::storedUnder($lookup->dependencies, $row_labels);
 
         foreach ($labels as $label) {
             if (($this->flushed_at[$label] ?? 0) > $lookup->started_at) {
