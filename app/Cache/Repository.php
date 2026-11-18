@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Laravel\Sanctum\PersonalAccessToken;
+use Modules\Core\Cache\Labels\CacheScope;
 use Modules\Core\Helpers\ResponseBuilder;
 use Modules\Core\Models\User;
 use Override;
@@ -422,33 +423,7 @@ final class Repository extends BaseRepository
         }
 
         $tags = ['U' . $user->id];
-        $role_tags = $user->roles()->get()->map(static function (Model $role): string {
-            $key = $role->getKey();
-
-            return 'R' . (is_scalar($key) ? (string) $key : '0');
-        })->all();
-
-        foreach (['groups', 'user_groups', 'user_roles'] as $relation_name) {
-            if (! method_exists($user, $relation_name) || ! $user->relationLoaded($relation_name)) {
-                continue;
-            }
-
-            $related = $user->getRelation($relation_name);
-
-            if (! $related instanceof \Illuminate\Support\Collection) {
-                continue;
-            }
-
-            foreach ($related as $related_model) {
-                if (! $related_model instanceof Model) {
-                    continue;
-                }
-
-                $key = $related_model->getKey();
-                $role_tags[] = 'R' . (is_scalar($key) ? (string) $key : '0');
-            }
-        }
-
+        $role_tags = array_map(static fn (string $key): string => 'R' . $key, CacheScope::roleKeys($user));
         sort($role_tags);
         array_push($tags, ...$role_tags);
 
