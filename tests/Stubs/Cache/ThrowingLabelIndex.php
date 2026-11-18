@@ -8,7 +8,8 @@ use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLookup;
 use Modules\Core\Contracts\ICacheLabelIndex;
 use Override;
-use RuntimeException;
+use RedisException;
+use Throwable;
 
 /**
  * Index that records its calls and throws while `$failing` is set.
@@ -16,6 +17,8 @@ use RuntimeException;
 final class ThrowingLabelIndex implements ICacheLabelIndex
 {
     public bool $failing = false;
+
+    public ?Throwable $failure = null;
 
     /**
      * @var list<string>
@@ -67,7 +70,7 @@ final class ThrowingLabelIndex implements ICacheLabelIndex
     private function record(string $call): void
     {
         if ($this->failing) {
-            throw new RuntimeException('primary down');
+            throw $this->failure ?? new RedisException('primary down');
         }
 
         $this->calls[] = $call;

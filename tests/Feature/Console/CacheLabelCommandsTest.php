@@ -35,3 +35,16 @@ it('lists hits, misses and flushes per label', function (): void {
 
     $this->artisan('cache:label-stats')->expectsOutputToContain('table:core_users')->assertSuccessful();
 });
+
+it('touches the label list only the first time a label is counted', function (): void {
+    $stats = Mockery::mock(Illuminate\Contracts\Cache\Repository::class);
+    $stats->shouldReceive('add')->twice()->andReturn(true, false);
+    $stats->shouldReceive('increment')->twice();
+    $stats->shouldReceive('get')->once()->with('labelstats:labels', [])->andReturn([]);
+    $stats->shouldReceive('put')->once();
+    $index = new MeasuredLabelIndex(new ArrayLabelIndex(), $stats);
+    $dependencies = new CacheDependencies(['table:core_users']);
+
+    $index->lookup('k', $dependencies);
+    $index->lookup('k', $dependencies);
+});

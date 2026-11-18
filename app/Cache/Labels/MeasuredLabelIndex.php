@@ -7,10 +7,14 @@ namespace Modules\Core\Cache\Labels;
 use Illuminate\Contracts\Cache\Repository;
 use Modules\Core\Contracts\ICacheLabelIndex;
 use Override;
+use Predis\PredisException;
+use RedisException;
 use Throwable;
 
 /**
  * Counts hits, misses (per first table label) and flushes (per label) on any cache driver.
+ * Cost per counted call: one add and one increment on the stats store; the label list is only
+ * touched the first time a label is seen. Connection failures of the stats store are ignored.
  */
 final readonly class MeasuredLabelIndex implements ICacheLabelIndex
 {
@@ -95,8 +99,12 @@ final readonly class MeasuredLabelIndex implements ICacheLabelIndex
     {
         try {
             $key = self::PREFIX . $metric . ':' . $label;
-            $this->stats->add($key, 0, 86400 * 30);
+            $first_time = $this->stats->add($key, 0, 86400 * 30);
             $this->stats->increment($key);
+
+            if (! $first_time) {
+                return;
+            }
 
             $labels = $this->stats->get(self::LABELS_KEY, []);
             $labels = is_array($labels) ? $labels : [];
@@ -105,8 +113,10 @@ final readonly class MeasuredLabelIndex implements ICacheLabelIndex
                 $labels[] = $label;
                 $this->stats->put(self::LABELS_KEY, $labels, 86400 * 30);
             }
-        } catch (Throwable) {
-            // Measurement never breaks a request.
+        } catch (Throwable $throwable) {
+            if (! $throwable instanceof RedisException && ! (class_exists(PredisException::class) && $throwable instanceof PredisException)) {
+                throw $throwable;
+            }
         }
     }
 }

@@ -4,20 +4,36 @@ declare(strict_types=1);
 
 namespace Modules\Core\Cache\Labels;
 
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 use Modules\Core\Contracts\ICacheLabelIndex;
 use Override;
+use Predis\PredisException;
+use RedisException;
 use Throwable;
 
 /**
  * Wraps the primary index of a failover cache. While the primary throws, every lookup misses and
  * nothing is stored; invalidations issued meanwhile are lost, so the first successful call after
  * an outage flushes every entry (`crud`) before anything else.
+ *
+ * The outage is recorded in a marker on the host-local `file` cache store, so a later request,
+ * Octane worker or queue worker on the same host still flushes after recovery. Residual: a host
+ * that never saw a failure may serve stale entries until some host flushes `crud` (Redis is
+ * shared, so one flush clears all). Only connection failures count as an outage; any other
+ * exception is a bug and propagates.
  */
 final class FailoverLabelIndex implements ICacheLabelIndex
 {
+    public const string MARKER_KEY = 'cache-labels:degraded';
+
+    private const int MARKER_CHECK_MICROS = 1_000_000;
+
     private bool $degraded = false;
 
-    public function __construct(private readonly ICacheLabelIndex $primary) {}
+    private int $checked_at = 0;
+
+    public function __construct(private readonly ICacheLabelIndex $primary, private readonly ?Repository $marker = null) {}
 
     #[Override]
     public function lookup(string $key, CacheDependencies $dependencies): CacheLookup
@@ -31,7 +47,7 @@ final class FailoverLabelIndex implements ICacheLabelIndex
     #[Override]
     public function store(CacheLookup $lookup, mixed $value, int $ttl, array $row_labels = []): bool
     {
-        if ($this->degraded) {
+        if ($this->isDegraded()) {
             // The value was computed during the outage and the flush it needs may predate it: drop it.
             $this->guard(static fn (): bool => true, static fn (): bool => false);
 
@@ -65,6 +81,12 @@ final class FailoverLabelIndex implements ICacheLabelIndex
         return $this->primary->supportsRowLabels();
     }
 
+    private static function isOutage(Throwable $throwable): bool
+    {
+        return $throwable instanceof RedisException
+            || (class_exists(PredisException::class) && $throwable instanceof PredisException);
+    }
+
     /**
      * @template T
      *
@@ -75,16 +97,57 @@ final class FailoverLabelIndex implements ICacheLabelIndex
     private function guard(callable $call, callable $fallback): mixed
     {
         try {
-            if ($this->degraded) {
+            if ($this->isDegraded()) {
                 $this->primary->flush(CacheLabel::all());
-                $this->degraded = false;
+                $this->setDegraded(false);
             }
 
             return $call();
-        } catch (Throwable) {
-            $this->degraded = true;
+        } catch (Throwable $throwable) {
+            if (! self::isOutage($throwable)) {
+                throw $throwable;
+            }
+
+            if (! $this->isDegraded()) {
+                report($throwable);
+            }
+
+            $this->setDegraded(true);
 
             return $fallback();
         }
+    }
+
+    private function isDegraded(): bool
+    {
+        if ($this->degraded) {
+            return true;
+        }
+
+        $now = Clock::micros();
+
+        if ($now - $this->checked_at >= self::MARKER_CHECK_MICROS) {
+            $this->checked_at = $now;
+            $this->degraded = (bool) $this->markerStore()->get(self::MARKER_KEY, false);
+        }
+
+        return $this->degraded;
+    }
+
+    private function setDegraded(bool $degraded): void
+    {
+        if ($degraded) {
+            $this->markerStore()->forever(self::MARKER_KEY, true);
+        } else {
+            $this->markerStore()->forget(self::MARKER_KEY);
+        }
+
+        $this->degraded = $degraded;
+        $this->checked_at = Clock::micros();
+    }
+
+    private function markerStore(): Repository
+    {
+        return $this->marker ?? Cache::store('file');
     }
 }
