@@ -26,6 +26,7 @@ use Modules\Core\Tests\Stubs\DeleteCancellingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\DeleteRefusingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\HardDeletingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\OrderedClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\ReparentingDeleteClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\SoftDeletingClosureTreeStubModel;
 
 const CLOSURE_TREE_RELATIONS = [
@@ -767,4 +768,20 @@ it('eager loads on parents where one is an ancestor of another', function (): vo
         ->and($pairs($a1->descendants))->toBe([])
         ->and($pairs($a->bloodline))->toBe([[$forest['a']->id, 0], [$forest['a1']->id, 1], [$forest['r1']->id, -1]])
         ->and($pairs($a1->bloodline))->toBe([[$forest['a1']->id, 0], [$forest['a']->id, -1], [$forest['r1']->id, -2]]);
+});
+
+it('keeps the links of children a deleting listener moved up to the grandparent', function (): void {
+    $root = ReparentingDeleteClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $middle = ReparentingDeleteClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    $moved = ReparentingDeleteClosureTreeStubModel::query()->create(['parent_id' => $middle->id]);
+    $grandchild = ReparentingDeleteClosureTreeStubModel::query()->create(['parent_id' => $moved->id]);
+
+    $middle->delete();
+
+    $rows = closureTreeRows();
+    ClosureTreeStubModel::rebuildClosure();
+
+    expect($rows)->toBe(closureTreeRows())
+        ->and($moved->fresh()->parent_id)->toBe($root->id)
+        ->and($grandchild->fresh()->ancestors->modelKeys())->toBe([$moved->id, $root->id]);
 });

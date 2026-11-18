@@ -34,7 +34,8 @@ use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
  * - updated with a new parent: the whole subtree moves;
  * - deleting, when the row really goes: the node's children and strict ancestors are read, nothing is written, so
  *   a listener that cancels the delete leaves the closure as it was;
- * - deleted, once the row is gone: each child's subtree is unlinked from those ancestors. The node's own rows go
+ * - deleted, once the row is gone: the subtree of each child still orphaned by the delete is unlinked from those
+ *   ancestors (a child a `deleting` listener re-parented was moved by its own save). The node's own rows go
  *   with the cascading foreign keys, and the children's parent column with the parent foreign key.
  * Soft deletes and restores leave the closure as it is: a trashed node hides only itself.
  *
@@ -297,9 +298,39 @@ trait HasClosureTable
             }
 
             $node->inClosureTransaction(static function () use ($node, $detachment): void {
-                ClosureTableMaintainer::forModel($node)->detachChildren($detachment['children'], $detachment['ancestors']);
+                ClosureTableMaintainer::forModel($node)->detachChildren(
+                    $node->childrenLeftByDelete($detachment['children']),
+                    $detachment['ancestors'],
+                );
             });
         });
+    }
+
+    /**
+     * The children read before the delete that the delete left behind: their parent column is null (the parent
+     * foreign key cleared it) or still the deleted key. A child a `deleting` listener re-parented with a save was
+     * moved, closure included, by that save, and keeps the links it has now.
+     *
+     * @param  list<int|string>  $childIds
+     * @return list<int|string>
+     */
+    protected function childrenLeftByDelete(array $childIds): array
+    {
+        if ($childIds === []) {
+            return [];
+        }
+
+        $parent_column = $this->getParentKeyName();
+
+        return self::closureKeys(
+            $this->getConnection()->table($this->getTable())
+                ->whereIn($this->getKeyName(), $childIds)
+                ->where(function (QueryBuilder $orphaned) use ($parent_column): void {
+                    $orphaned->whereNull($parent_column)->orWhere($parent_column, $this->closureKey());
+                })
+                ->pluck($this->getKeyName())
+                ->all(),
+        );
     }
 
     /**
