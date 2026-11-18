@@ -91,9 +91,9 @@ final class ElasticsearchCompatibilityHeader
 
     /**
      * The connection config with the middleware applied when `elastic.client.compatible_with` is set,
-     * unchanged otherwise. Called where the container builds the Elasticsearch client, the only place
-     * that does: the service, the jobs and the other modules resolve that client instead of building
-     * their own, so none of them can be left announcing the version of the client.
+     * unchanged otherwise. Called by {@see ElasticClientBuilder}, the one builder of Elasticsearch clients: the
+     * container's client (the service, the jobs, the other modules) and the Scout driver's (index lifecycle and
+     * search) both come from it, so none of them can be left announcing the version of the client.
      *
      * @param  array<string, mixed>  $config
      * @return array<string, mixed>

@@ -9,8 +9,8 @@ use BladeUI\Icons\Factory as IconFactory;
 use Carbon\CarbonImmutable;
 use Closure;
 use Cron\CronExpression;
+use Elastic\Client\ClientBuilderInterface;
 use Elastic\Elasticsearch\Client as ElasticsearchClient;
-use Elastic\Elasticsearch\ClientBuilder;
 use Exception;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceCreateRecordPageClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceEditRecordPageClassGenerator;
@@ -112,7 +112,7 @@ use Modules\Core\Search\Engines\ElasticsearchEngine;
 use Modules\Core\Search\Engines\TypesenseEngine;
 use Modules\Core\Search\OwnerAuthorizerRegistry;
 use Modules\Core\Search\SearchableContributorRegistry;
-use Modules\Core\Search\Support\ElasticsearchCompatibilityHeader;
+use Modules\Core\Search\Support\ElasticClientBuilder;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
 use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\CronParameters;
@@ -563,17 +563,16 @@ final class CoreServiceProvider extends ModuleServiceProvider
      */
     private function registerSearchClients(): void
     {
+        // One builder for every Elasticsearch client, the Scout driver's included: the testing hack of
+        // ElasticsearchCompatibilityHeader reaches them all, and changes nothing unless its option is set.
+        $this->app->singleton(ClientBuilderInterface::class, ElasticClientBuilder::class);
+
         // Register Elasticsearch client
         $this->app->singleton(static function (Application $app): ElasticsearchClient {
             $default_connection = config('elastic.client.default', 'default');
             $default_connection = is_string($default_connection) ? $default_connection : 'default';
-            $config = config('elastic.client.connections.' . $default_connection);
-            $config = is_array($config) ? $config : [];
 
-            // Testing hack, see ElasticsearchCompatibilityHeader: nothing changes unless the option is set.
-            $config = ElasticsearchCompatibilityHeader::forConnection($config);
-
-            return ClientBuilder::fromConfig($config);
+            return $app->make(ClientBuilderInterface::class)->connection($default_connection);
         });
 
         // Register Typesense client

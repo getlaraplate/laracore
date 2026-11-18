@@ -218,7 +218,7 @@ SOCIALITE_REDIRECT= 							#socialite redirect
 
 The Elasticsearch client of the stack (`elasticsearch/elasticsearch` 9) writes `compatible-with=9` into the `Accept` and `Content-Type` headers of every request, and a server of major 8 refuses it with a `400 media_type_header_exception` ("Accept version must be either version 8 or 7, but found 9"). The supported setup is a server and a client of the same major.
 
-`ELASTIC_COMPATIBLE_WITH=8` is a **hack for testing**: it rewrites that number in the outgoing headers (`Search\Support\ElasticsearchCompatibilityHeader`, a Guzzle middleware put on the client built by `CoreServiceProvider`), so the version 9 client can be tried against a version 8 cluster.
+`ELASTIC_COMPATIBLE_WITH=8` is a **hack for testing**: it rewrites that number in the outgoing headers (`Search\Support\ElasticsearchCompatibilityHeader`, a Guzzle middleware put on every client built by `Search\Support\ElasticClientBuilder`: the container's client and the Scout driver's, which creates and deletes the indexes), so the version 9 client can be tried against a version 8 cluster.
 
 - **No guarantee.** Only the header changes. The requests are still those of the version 9 client, so a call that the server does not know still fails, a request that the server parses differently can misbehave, and a client update can break it. Nothing in the test suite runs against a real server of another major.
 - **Not for production.** Use it on a development or test machine, to see whether an indexing or a search runs. For anything else use a server of the major of the client, or a client of the major of the server.
