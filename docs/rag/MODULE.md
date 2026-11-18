@@ -171,7 +171,7 @@ flowchart TB
   Auth[AuthorizationService]
   ChkPerm["ensurePermission(entity, op)"]
   Resolve["AclResolverService.getEffectiveAcls"]
-  Cache["Cache 1h: acl:resolved:user:perm"]
+  Cache["Label index 1h: labels acl, user:id"]
   Roles[user.roles]
   Inherit[Parent role ancestors]
   Direct["ACL on role.permission"]
@@ -192,6 +192,8 @@ flowchart TB
   Filters --> Inject
   Inject --> Crud
 ```
+
+**Caching.** Cached values are stored under a plain key through `ICacheLabelIndex`; labels (`table:{table}`, `row:{table}:{id}`, `user:{id}`, `role:{id}`, `crud`, `acl` and the named `docs`, `translations`, `inspector`, `geocoding`) only record which entries to delete on a write, and are not part of the key. Laravel cache tags are not used. ACL resolutions (1 hour, labels `acl` and `user:{id}`) and CRUD read responses of `HasCache` models (key from path, sorted input, user, roles, token and locale; looked up before the service runs; a hit still checks the permissions; 200 only; never for search or `no_cache=1`) both go through it. A write flushes the labels it can affect after the commit: the Eloquent events through one listener, pivot writes through the relation overrides, ACL writes through `AclObserver`, with no `Cache::flush()`. Redis (and `failover` while it serves) keeps a membership index with row labels, `array` an in-memory twin, other stores version counters (row flushes become table flushes), `null` nothing. `cache:prune-labels` runs hourly, `cache:label-stats` shows hit, miss and flush counters per label. A module writing outside Eloquent events must flush the labels itself: see `CACHE_LABELS_DEVELOPER.md`.
 
 ### Record lifecycle traits stack
 
