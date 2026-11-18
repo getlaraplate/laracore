@@ -24,7 +24,7 @@ interface ISearchableModel
     /**
      * @phpstan-return \Illuminate\Database\Eloquent\Builder<\Illuminate\Database\Eloquent\Model&self>
      */
-    public static function makeAllSearchableQuery();
+    public static function makeAllSearchableQuery(); // @pest-ignore-type: Scout declares these without return types
 
     public function ensureIndexExists(): bool;
 
@@ -38,31 +38,31 @@ interface ISearchableModel
     /**
      * @phpstan-return \Laravel\Scout\Engines\Engine
      */
-    public function searchableUsing();
+    public function searchableUsing(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return string
      */
-    public function searchableAs();
+    public function searchableAs(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return bool
      */
-    public function shouldBeSearchable();
+    public function shouldBeSearchable(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return int|string
      */
-    public function getScoutKey();
+    public function getScoutKey(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return string
      */
-    public function getScoutKeyName();
+    public function getScoutKeyName(); // @pest-ignore-type: Scout declares these without return types
 
-    public function searchable();
+    public function searchable(); // @pest-ignore-type: Scout declares these without return types
 
-    public function unsearchable();
+    public function unsearchable(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * Index the given models of this class through the bulk path now.

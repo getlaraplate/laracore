@@ -25,7 +25,7 @@ final class RedirectIfSecondFactorRequired extends RedirectIfTwoFactorAuthentica
     }
 
     #[Override]
-    public function handle($request, $next)
+    public function handle($request, $next): mixed
     {
         if ($this->authentication->satisfiesSecondFactor($request)) {
             return $next($request);

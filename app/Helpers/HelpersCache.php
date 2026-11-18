@@ -21,7 +21,7 @@ final class HelpersCache
     /**
      * Cache-key prefix for the cross-request persistent model discovery layer.
      */
-    private const MODELS_CACHE_PREFIX = 'core.helpers.models.';
+    private const string MODELS_CACHE_PREFIX = 'core.helpers.models.';
 
     /**
      * @var array<string, list<class-string<Model>>>

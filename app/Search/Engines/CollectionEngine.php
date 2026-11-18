@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Modules\Core\Search\Engines;
 
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\CollectionEngine as BaseCollectionEngine;
@@ -26,38 +28,38 @@ final class CollectionEngine extends BaseCollectionEngine
 {
     /**
      * @param  Builder<covariant \Illuminate\Database\Eloquent\Model>  $builder
-     * @return Collection<int, \Illuminate\Database\Eloquent\Model>
+     * @return Collection<int, Model>
      */
     #[Override]
-    protected function searchModels(Builder $builder)
+    protected function searchModels(Builder $builder): Collection
     {
         $query = method_exists($builder->model, 'newScoutQuery')
             ? $builder->model->newScoutQuery($builder)
             : $builder->model->query();
 
-        $query->when($builder->callback !== null, static function ($query) use ($builder): void {
+        $query->when($builder->callback !== null, static function (EloquentBuilder $query) use ($builder): void {
             call_user_func($builder->callback, $query, $builder, $builder->query);
-        })->when($builder->callback === null && $builder->wheres !== [], static function ($query) use ($builder): void {
+        })->when($builder->callback === null && $builder->wheres !== [], static function (EloquentBuilder $query) use ($builder): void {
             foreach ($builder->wheres as $where) {
                 if ($where['field'] !== '__soft_deleted') {
                     $query->where($where['field'], $where['operator'], $where['value']);
                 }
             }
-        })->when($builder->callback === null && $builder->whereIns !== [], static function ($query) use ($builder): void {
+        })->when($builder->callback === null && $builder->whereIns !== [], static function (EloquentBuilder $query) use ($builder): void {
             foreach ($builder->whereIns as $key => $values) {
                 $query->whereIn($key, $values);
             }
-        })->when($builder->callback === null && $builder->whereNotIns !== [], static function ($query) use ($builder): void {
+        })->when($builder->callback === null && $builder->whereNotIns !== [], static function (EloquentBuilder $query) use ($builder): void {
             foreach ($builder->whereNotIns as $key => $values) {
                 $query->whereNotIn($key, $values);
             }
-        })->when($builder->queryCallback !== null, static function ($query) use ($builder): void {
+        })->when($builder->queryCallback !== null, static function (EloquentBuilder $query) use ($builder): void {
             call_user_func($builder->queryCallback, $query);
-        })->when($builder->orders !== [], static function ($query) use ($builder): void {
+        })->when($builder->orders !== [], static function (EloquentBuilder $query) use ($builder): void {
             foreach ($builder->orders as $order) {
                 $query->orderBy($order['column'], $order['direction']);
             }
-        }, static function ($query) use ($builder): void {
+        }, static function (EloquentBuilder $query) use ($builder): void {
             $query->orderBy($builder->model->qualifyColumn($builder->model->getScoutKeyName()), 'desc');
         });
 
@@ -69,7 +71,7 @@ final class CollectionEngine extends BaseCollectionEngine
             return $models;
         }
 
-        return $models->first()->makeSearchableUsing($models)->filter(static function ($model) use ($builder): bool {
+        return $models->first()->makeSearchableUsing($models)->filter(static function (Model $model) use ($builder): bool {
             if (! $model->shouldBeSearchable()) {
                 return false;
             }

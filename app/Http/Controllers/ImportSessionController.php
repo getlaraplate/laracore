@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Http\Controllers;
 
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\Http\Requests\ImportMappingRequest;
@@ -141,7 +142,7 @@ final class ImportSessionController extends Controller
             $handle = fopen('php://output', 'wb');
             fputcsv($handle, ['row_number', 'field', 'messages', 'raw']);
 
-            $import->rowErrors()->orderBy('row_number')->chunk(500, static function ($errors) use ($handle): void {
+            $import->rowErrors()->orderBy('row_number')->chunk(500, static function (Collection $errors) use ($handle): void {
                 foreach ($errors as $error) {
                     foreach ($error->errors as $field => $messages) {
                         fputcsv($handle, [
