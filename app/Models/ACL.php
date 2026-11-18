@@ -8,6 +8,7 @@ use Illuminate\Contracts\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Attributes\Scope;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\Core\Cache\HasCache;
 use Modules\Core\Casts\FiltersGroupCast;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Observers\AclObserver;
@@ -31,6 +32,8 @@ use Override;
 #[ObservedBy([AclObserver::class])]
 final class ACL extends Model
 {
+    use HasCache;
+
     /**
      * @var string
      */
