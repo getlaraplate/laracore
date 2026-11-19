@@ -43,7 +43,7 @@ counts hits, misses and flushes. Callers never branch on the driver.
 
 | Store | Index | Row labels | Behaviour |
 |---|---|---|---|
-| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), a hash with the last flush time of each label | yes | A flush deletes the entries and removes them from the set in bounded chunks, each chunk one atomic script; Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back). Time comes from the Redis server clock. Degraded mode, below. |
+| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one store window after the flush | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it records the flush time of every label, then deletes the entries and removes them from the sets; labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
 | `array` | `ArrayLabelIndex`: in-process twin of the Redis index | yes | Same rules, lives for the process. |
 | `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. |
 | `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below. A failover store without a `stores` list throws. |
@@ -63,6 +63,12 @@ other exception propagates.
 
 Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in different
 hash slots.
+
+**Store window.** `core.cache.label_store_window` (seconds, default 60) bounds the time between the lookup and the
+store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. The flush
+records expire after the window plus one second, so every store they must refuse still finds them, and they take memory
+only for the labels flushed within the last window. Raise the window if a cached computation can take longer than a
+minute; a value that never fits is never cached.
 
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
 TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live.
@@ -101,8 +107,10 @@ TTL, through the store's atomic `add`, so a counter never resets while entries o
   `model:optimistic-lock-remove`, `model:soft-deletes-remove` and `SettingsCleaner`, and the pending modifications a
   record deleted for good closes (`HasApprovals`), flush their whole table with `flushTable()`.
 - **After commit.** When the owning model has an open transaction, `CacheLabelInvalidator` defers the flush to
-  `afterCommit`, so a reader cannot re-cache old rows between the flush and the commit. With no transaction it flushes
-  at once.
+  `afterCommit`, so a reader cannot re-cache old rows between the flush and the commit. The labels of every write of
+  the transaction are collected (`PendingLabelFlushes`, per connection) and flushed together, once, deduplicated: a
+  transaction of twenty updates costs one flush. Labels of a write rolled back with a savepoint stay collected and are
+  flushed with the transaction (an extra miss, never a stale read). With no transaction it flushes at once.
 
 ## Writing outside Eloquent events
 
@@ -168,8 +176,8 @@ Notes:
 - `labels` are known before the query. `row_tables` names tables whose row labels the entry may carry; on a version
   counter store they become table labels. The `row_labels` argument of `store()` carries the rows known only after the
   query; stores without row labels ignore it.
-- `store()` returns false and stores nothing when a label of the entry was flushed after the lookup started; do not
-  retry it.
+- `store()` returns false and stores nothing when a label of the entry was flushed after the lookup started, or, on
+  Redis, when the lookup started more than the store window ago; do not retry it.
 - The key you pass is not the key stored on a version counter store: use `$lookup->key` for `forget()`:
   `$index->forget($lookup)`.
 - Set `complete: false` in `CacheDependencies` when you cannot name everything the value depends on; such a value must
@@ -182,12 +190,14 @@ Notes:
 - `cache:prune-labels`: removes expired entries and memberships from the label sets. It is scheduled hourly with
   `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL.
 - `cache:label-stats`: a table of hits, misses (counted per first table label of the entry) and flushes per label,
-  read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Labels that
-  grow with the data are counted in buckets: every row label of a table as `row:{table}:*`, every user label as
-  `user:*`, so the counters stay as many as the tables and the fixed labels. Each counted label costs an `add` and an
-  `increment` on the stats store; the label list is written only the first time a label is seen, under a lock of the
-  stats store. Stats are best effort: a failing stats store is reported once per process and never fails the read or
-  write being measured, and nothing is counted while the Redis index is degraded.
+  read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Flushes count
+  flush calls: a transaction flushes once after its commit, whatever the number of its writes. Labels that grow with
+  the data are counted in buckets: every row label of a table as `row:{table}:*`, every user label as `user:*`, so the
+  counters stay as many as the tables and the fixed labels. On a Redis stats store the counters of one lookup or flush
+  cost one script; on other stores each counted label costs an `add` and an `increment`. The label list is written
+  only the first time a label is seen, under a lock of the stats store. Stats are best effort: a failing stats store
+  is reported once per process and never fails the read or write being measured, and nothing is counted while the
+  Redis index is degraded.
 - The cron list is warmed by `cache:warm` under the table label of the cron table through the same index.
 
 ## Opting a model into the response cache
@@ -212,5 +222,7 @@ until its TTL. The same goes for global scopes and appended accessors that read 
   `stored`.
 - ACL filters that name relations are not labelled (see "Opting a model into the response cache").
 - Redis Cluster is not supported.
-- Each write flushes per model event; a write-heavy Redis deployment pays a few round trips per write. Collecting the
-  labels of a transaction into one flush is a follow-up.
+- On Redis a flush costs one round trip for the index and one for the stats, for one write outside a transaction as
+  for a whole transaction (measured by `RedisLabelWritePathTest`; it was 7 for one update and 140 for a transaction of
+  twenty). Writes outside a transaction still flush one by one: wrap a burst of writes in a transaction to pay once.
+- A value whose computation takes longer than the store window is never stored on Redis (see "Store window").
