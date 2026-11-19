@@ -25,6 +25,7 @@ use Modules\Core\Tests\Stubs\ClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\DeleteCancellingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\DeleteRefusingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\HardDeletingClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\MutatorCountingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\OrderedClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\ReparentingDeleteClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\SoftDeletingClosureTreeStubModel;
@@ -784,4 +785,21 @@ it('keeps the links of children a deleting listener moved up to the grandparent'
     expect($rows)->toBe(closureTreeRows())
         ->and($moved->fresh()->parent_id)->toBe($root->id)
         ->and($grandchild->fresh()->ancestors->modelKeys())->toBe([$moved->id, $root->id]);
+});
+
+it('hydrates the nodes of a closure relation without going through the model mutators', function (): void {
+    $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $middle = ClosureTreeStubModel::query()->create(['parent_id' => $root->getKey()]);
+    $leaf_a = ClosureTreeStubModel::query()->create(['parent_id' => $middle->getKey()]);
+    $leaf_b = ClosureTreeStubModel::query()->create(['parent_id' => $middle->getKey()]);
+
+    MutatorCountingClosureTreeStubModel::$mutatedKeys = [];
+    $nodes = MutatorCountingClosureTreeStubModel::query()->whereKey([$leaf_a->getKey(), $leaf_b->getKey()])->orderBy('id')->get();
+    MutatorCountingClosureTreeStubModel::$mutatedKeys = [];
+    $nodes->load('ancestors');
+
+    expect(MutatorCountingClosureTreeStubModel::$mutatedKeys)->not->toContain('depth')
+        ->and($nodes[0]->ancestors->pluck('depth')->all())->toBe([-1, -2])
+        ->and($nodes[1]->ancestors->pluck('depth')->all())->toBe([-1, -2])
+        ->and($nodes[0]->ancestors->first()->isDirty('depth'))->toBeFalse();
 });

@@ -380,8 +380,8 @@ abstract class ClosureRelation extends BelongsToMany
             };
 
             $this->startingNodes[$model] = $starting_node;
-            $model->setAttribute('depth', $depth);
-            $model->syncOriginalAttribute('depth');
+            // Raw, not setAttribute(): a model's mutators may do work per node (Taxonomy's dynamic-field lookup lazy loads relations).
+            $model->setRawAttributes([...$model->getAttributes(), 'depth' => $depth], true);
         }
     }
 
