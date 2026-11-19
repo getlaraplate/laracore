@@ -26,6 +26,16 @@ final class RedisLabelIndexFactory
      */
     public static function make(): RedisLabelIndex
     {
+        return new RedisLabelIndex(self::store());
+    }
+
+    /**
+     * A Redis store on the `cache` connection under a prefix of its own, removed by {@see cleanup()}.
+     *
+     * @throws SkippedWithMessageException when no Redis answers on the `cache` connection.
+     */
+    public static function store(): RedisStore
+    {
         try {
             Redis::connection('cache')->ping();
         } catch (Throwable $throwable) {
@@ -35,7 +45,7 @@ final class RedisLabelIndexFactory
         $prefix = 'labeltest:' . bin2hex(random_bytes(6)) . ':';
         self::$prefixes[] = $prefix;
 
-        return new RedisLabelIndex(new RedisStore(app('redis'), $prefix, 'cache'));
+        return new RedisStore(app('redis'), $prefix, 'cache');
     }
 
     public static function cleanup(): void

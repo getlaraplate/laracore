@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\RedisLabelIndex;
 use Modules\Core\Tests\Stubs\Cache\RedisLabelIndexFactory;
 
 afterEach(fn () => RedisLabelIndexFactory::cleanup());
@@ -75,4 +76,54 @@ it('forgets a single entry', function (): void {
 
 it('reports row label support', function (): void {
     expect(RedisLabelIndexFactory::make()->supportsRowLabels())->toBeTrue();
+})->group('redis');
+
+it('refuses a store whose lookup started more than the store window ago', function (): void {
+    $index = new RedisLabelIndex(RedisLabelIndexFactory::store(), 1);
+    $dependencies = new CacheDependencies(['table:core_users']);
+    $late = $index->lookup('late', $dependencies);
+
+    usleep(1_200_000);
+
+    expect($index->store($late, 'v', 60))->toBeFalse()
+        ->and($index->lookup('late', $dependencies)->hit)->toBeFalse()
+        ->and($index->store($index->lookup('late', $dependencies), 'v', 60))->toBeTrue();
+})->group('redis');
+
+it('keeps a flush record for the store window only', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    new RedisLabelIndex($store, 5)->flush('table:core_users');
+
+    $ttl = (int) $store->connection()->pttl($store->getPrefix() . 'labelflush:table:core_users');
+
+    // One second of margin over the window, so a record outlives every store the window lets through.
+    expect($ttl)->toBeGreaterThan(5_000)->toBeLessThanOrEqual(6_000);
+})->group('redis');
+
+it('flushes several labels holding more members than one script deletes', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    $index = new RedisLabelIndex($store);
+    $labels = ['table:core_users', 'table:core_roles', 'row:core_users:5'];
+    $prefix = $store->getPrefix();
+    $expires_at = (string) ((time() + 600) * 1_000_000);
+    // A member is the real key name, client prefix included, as the store script writes it.
+    $client_prefix = (string) $store->connection()->client()->getOption(Redis::OPT_PREFIX);
+
+    $store->connection()->pipeline(static function ($pipe) use ($labels, $prefix, $expires_at, $client_prefix): void {
+        foreach ($labels as $position => $label) {
+            for ($i = 0; $i < 1500; $i++) {
+                $pipe->set($prefix . "k{$position}_{$i}", 'v');
+                $pipe->zadd($prefix . 'label:' . $label, $expires_at, $client_prefix . $prefix . "k{$position}_{$i}");
+            }
+        }
+    });
+
+    $index->flush(...$labels);
+
+    $connection = $store->connection();
+
+    foreach ($labels as $position => $label) {
+        expect($connection->exists($prefix . 'label:' . $label))->toBe(0)
+            ->and($connection->exists($prefix . "k{$position}_0", $prefix . "k{$position}_1499"))->toBe(0);
+    }
 })->group('redis');

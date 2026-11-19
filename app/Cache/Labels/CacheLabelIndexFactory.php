@@ -28,7 +28,7 @@ final class CacheLabelIndexFactory
         $store = $cache instanceof BaseRepository ? $cache->getStore() : null;
 
         return match (true) {
-            $store instanceof RedisStore => new FailoverLabelIndex(new RedisLabelIndex($store)),
+            $store instanceof RedisStore => new FailoverLabelIndex(new RedisLabelIndex($store, self::storeWindow())),
             $store instanceof ArrayStore => new ArrayLabelIndex(),
             $store instanceof NullStore => new NullLabelIndex(),
             $store instanceof FailoverStore => self::guarded(self::forStore(Cache::store(self::primaryStoreName($cache)))),
@@ -44,6 +44,16 @@ final class CacheLabelIndexFactory
         $store = $cache instanceof BaseRepository ? $cache->getStore() : null;
 
         return $store instanceof FailoverStore ? Cache::store() : $cache;
+    }
+
+    /**
+     * Seconds a value may take to compute between its lookup and its store on Redis, see `core.cache.label_store_window`.
+     */
+    private static function storeWindow(): int
+    {
+        $window = config('core.cache.label_store_window', 60);
+
+        return is_numeric($window) ? max(1, (int) $window) : 60;
     }
 
     private static function guarded(ICacheLabelIndex $index): ICacheLabelIndex
