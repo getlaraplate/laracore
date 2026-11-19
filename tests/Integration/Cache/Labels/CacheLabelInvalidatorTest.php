@@ -87,6 +87,69 @@ it('waits for the commit and drops the flush on rollback', function (): void {
     expect($this->index->flushes)->toBe([]);
 });
 
+it('flushes the labels of a whole transaction once after the commit, deduplicated', function (): void {
+    $roles = [makeLabelRole(), makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $roles[0]->getConnection();
+
+    $connection->transaction(function () use ($roles): void {
+        foreach ($roles as $role) {
+            $role->update(['name' => 'batched_' . uniqid()]);
+            $role->update(['name' => 'batched_again_' . uniqid()]);
+        }
+
+        expect($this->index->flushes)->toBe([]);
+    });
+
+    $table = $roles[0]->getTable();
+    $expected = [CacheLabel::table($table), ...array_map(static fn (Role $role): string => CacheLabel::row($table, $role->getKey()), $roles)];
+
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushes[0])->toEqualCanonicalizing($expected);
+});
+
+it('still flushes the writes of a transaction when a savepoint inside it rolls back', function (): void {
+    [$in_savepoint, $outside] = [makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $outside->getConnection();
+
+    $connection->transaction(function () use ($connection, $in_savepoint, $outside): void {
+        // The first write of the transaction registers its callback inside the savepoint that is rolled back.
+        try {
+            $connection->transaction(function () use ($in_savepoint): void {
+                $in_savepoint->update(['name' => 'savepoint_' . uniqid()]);
+
+                throw new RuntimeException('rollback the savepoint');
+            });
+        } catch (RuntimeException) {
+        }
+
+        $outside->update(['name' => 'outside_' . uniqid()]);
+    });
+
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushedLabels())->toContain(CacheLabel::row($outside->getTable(), $outside->getKey()));
+});
+
+it('flushes the writes of a committed savepoint with the transaction', function (): void {
+    [$in_savepoint, $outside] = [makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $outside->getConnection();
+
+    $connection->transaction(function () use ($connection, $in_savepoint, $outside): void {
+        $connection->transaction(static fn () => $in_savepoint->update(['name' => 'savepoint_' . uniqid()]));
+        $outside->update(['name' => 'outside_' . uniqid()]);
+
+        expect($this->index->flushes)->toBe([]);
+    });
+
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushedLabels())->toContain(
+            CacheLabel::row($in_savepoint->getTable(), $in_savepoint->getKey()),
+            CacheLabel::row($outside->getTable(), $outside->getKey()),
+        );
+});
+
 it('flushes pivot, parent and related tables on every pivot mutation', function (): void {
     $role = makeLabelRole();
     $permission = Permission::query()->create(['name' => 'label.perm.' . uniqid(), 'guard_name' => 'web']);

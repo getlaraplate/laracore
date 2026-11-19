@@ -15,11 +15,12 @@ use Spatie\Permission\Contracts\Role as RoleContract;
 
 /**
  * Turns a write into label flushes. When an owning model is given the flush waits for the commit of
- * the transaction that model's connection has open, and runs at once when there is none.
+ * the transaction that model's connection has open, and runs at once when there is none. The labels of every write of
+ * one transaction are collected and flushed together, once, after the commit ({@see PendingLabelFlushes}).
  */
 final readonly class CacheLabelInvalidator
 {
-    public function __construct(private ICacheLabelIndex $index) {}
+    public function __construct(private ICacheLabelIndex $index, private PendingLabelFlushes $pending) {}
 
     /**
      * Flushes everything that depends on the table: which of its rows exist (`table:{table}`) and the content of any of
@@ -112,23 +113,15 @@ final readonly class CacheLabelInvalidator
             return;
         }
 
-        $flush = fn () => $this->index->flush(...$labels);
+        $connection = $owner?->getConnection();
 
-        if ($owner === null) {
-            $flush();
-
-            return;
-        }
-
-        $connection = $owner->getConnection();
-
-        if ($connection->transactionLevel() === 0) {
-            $flush();
+        if ($connection === null || $connection->transactionLevel() === 0) {
+            $this->index->flush(...array_values(array_unique($labels)));
 
             return;
         }
 
-        $connection->afterCommit($flush);
+        $this->pending->add($connection, $this->index, array_values($labels));
     }
 
     /**

@@ -50,15 +50,16 @@ use InvalidArgumentException;
 use Laravel\Fortify\Features;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Scout\EngineManager;
+use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\ApplicationContent\ApplicationContentRetrievalProviderRegistry;
 use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProviderRegistryInterface;
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
-use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
 use Modules\Core\Cache\Labels\MeasuredLabelIndex;
+use Modules\Core\Cache\Labels\PendingLabelFlushes;
 use Modules\Core\Console\PruneCacheLabelsCommand;
 use Modules\Core\Console\PruneMediaDraftsCommand;
 use Modules\Core\Console\WarmCacheCommand;
@@ -809,6 +810,8 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
     private function registerCacheLabelIndex(): void
     {
+        $this->app->singleton(PendingLabelFlushes::class);
+
         $this->app->singleton(ICacheLabelIndex::class, static function (): ICacheLabelIndex {
             $cache = Cache::store();
 
