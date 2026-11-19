@@ -221,8 +221,9 @@ filter and the original keyword query:
 "Hits" is `AdvancedSearchResult::total`, not the page, so every page of a search picks the same window. Each interval
 reaches the engine as two column filters, `>= from` and `< the day after to` (a date-time on the last day is inside),
 AND-ed with the request filters, which stay untouched. They go through the same advanced-filters path for every engine
-(a `range` clause on Elasticsearch, a query callback on the database engine); Typesense takes the same path but the
-date filter was not tested on it. On the dated attempts the date words are taken out of the keyword query
+(a `range` clause on Elasticsearch, a query callback on the database engine, a range on the `int64` timestamp of the
+date on Typesense, see `MODULE.md`, "Search abstractions and engines"); on Typesense it was checked on the filter string
+the engine writes, not on a live cluster. On the dated attempts the date words are taken out of the keyword query
 (`DateExpressionResolver::withoutDateExpressions()`), otherwise "reports of 2024" would require the term "2024" in the
 text; when nothing else would be left the full keyword query is kept. The final run with no filter keeps the date
 words. The vector branch always embeds the full question.
