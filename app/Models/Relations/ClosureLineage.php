@@ -6,6 +6,8 @@ namespace Modules\Core\Models\Relations;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
+use Override;
 
 /**
  * The ancestors or the descendants of a node through its closure table, the node itself included or not, down to
@@ -58,5 +60,44 @@ final class ClosureLineage extends ClosureRelation
         }
 
         $this->query->orderBy($depth);
+    }
+
+    /**
+     * @param  array<int, TDeclaringModel>  $models
+     */
+    #[Override]
+    public function addEagerConstraints(array $models): void
+    {
+        parent::addEagerConstraints($models);
+
+        $this->reachFromClosureRows($this->getKeys($models, $this->parentKey));
+    }
+
+    /**
+     * Restate the starting nodes on the key of the nodes, as the keys their closure rows reach. The result is the
+     * same; the planner gets a way in by key. Without it, a planner that prices a long list of starting keys above
+     * a low-cardinality index of the model table (SQLite on `is_deleted`) walks every node, runs the global scopes'
+     * subqueries on each, and only then probes the closure rows. One starting node needs no help.
+     *
+     * @param  array<int, mixed>  $keys
+     */
+    private function reachFromClosureRows(array $keys): void
+    {
+        if ($keys === []) {
+            return;
+        }
+
+        $closure_table = $this->table;
+        $reach = $closure_table . '_reach';
+        $where_in = $this->whereInMethod($this->parent, $this->parentKey);
+        $from = $reach . '.' . $this->foreignPivotKey;
+        $to = $reach . '.' . $this->relatedPivotKey;
+
+        $this->query->whereIn(
+            $this->getQualifiedRelatedKeyName(),
+            static function (QueryBuilder $reached) use ($closure_table, $reach, $from, $to, $keys, $where_in): void {
+                $reached->select($to)->from($closure_table . ' as ' . $reach)->{$where_in}($from, $keys);
+            },
+        );
     }
 }
