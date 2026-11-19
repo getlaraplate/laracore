@@ -647,24 +647,7 @@ class CrudService
         );
 
         // 2. Constrain by primary key first (from validated/input/route so record-not-found can 404)
-        $key = $this->getModelPrimaryKeyName($model);
-
-        if (is_array($key)) {
-            $key_value = array_map(
-                fn (string $k): mixed => $this->resolveKeyFromRequest($requestData->request, $k),
-                $key,
-            );
-            throw_if(
-                array_any($key_value, static fn (mixed $value): bool => $value === null || $value === ''),
-                ModelNotFoundException::class,
-                'Primary key is required for detail.',
-            );
-            $query = $model->newQuery()->where(array_combine($key, $key_value));
-        } else {
-            $key_value = $this->resolveKeyFromRequest($requestData->request, $key);
-            throw_if($key_value === null || $key_value === '', ModelNotFoundException::class, 'Primary key is required for detail.');
-            $query = $model->newQuery()->where([$key => $key_value]);
-        }
+        $query = $this->queryOfRequestedKey($model, $requestData->request, 'detail');
 
         // 3. Build query and apply ACL filters
         $this->authorizeRequestedRelations($requestData);
@@ -752,9 +735,10 @@ class CrudService
             'User not allowed to access this resource',
         );
 
-        // 2. Build query and apply ACL filters
+        // 2. Constrain by the key the request names, then apply ACL filters: without the key the query reads every
+        // row of the table, and `sole()` fails on several of them or answers the one row the ACL leaves visible.
+        $query = $this->queryOfRequestedKey($model, $requestData->request, 'history');
         $this->authorizeRequestedRelations($requestData);
-        $query = $model->newQuery();
         $this->auth->applyAclFiltersToQuery($query, $permission_name);
         $this->query_builder->prepareAuthorizedQuery($query, $requestData, $this->relationAuthorizer());
 
@@ -4114,6 +4098,28 @@ class CrudService
     {
         /** @var string|array<int, string> $key */
         return $model->getKeyName();
+    }
+
+    /**
+     * A query of the main model constrained to the record the request names by its primary key, read from the
+     * validated data, the input or the route. A missing key part fails as not found, so the caller answers 404.
+     *
+     * @param  string  $operation  The operation named in the not-found message.
+     * @return Builder<Model>
+     */
+    private function queryOfRequestedKey(Model $model, Request $request, string $operation): Builder
+    {
+        $key = $this->getModelPrimaryKeyName($model);
+        $key_names = is_array($key) ? $key : [$key];
+        $key_values = array_map(fn (string $k): mixed => $this->resolveKeyFromRequest($request, $k), $key_names);
+
+        throw_if(
+            array_any($key_values, static fn (mixed $value): bool => $value === null || $value === ''),
+            ModelNotFoundException::class,
+            sprintf('Primary key is required for %s.', $operation),
+        );
+
+        return $model->newQuery()->where(array_combine($key_names, $key_values));
     }
 
     private function resolveKeyFromRequest(Request $request, string $key): mixed
