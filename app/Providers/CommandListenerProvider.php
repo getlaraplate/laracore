@@ -6,11 +6,12 @@ namespace Modules\Core\Providers;
 
 use Illuminate\Database\Events\MigrationsEnded;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\ServiceProvider;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Helpers\HelpersCache;
 use Modules\Core\Inspector\ModelMetadataRegistry;
 use Modules\Core\Inspector\SchemaInspector;
@@ -47,14 +48,10 @@ final class CommandListenerProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Clear tag cache and in-memory SchemaInspector cache after migrations
+        // Clear the inspector label and the in-memory SchemaInspector cache after migrations
         Event::listen(MigrationsEnded::class, static function (): void {
             info('Cleaning Inspected entities and helpers cache');
-            $cache = Cache::store();
-
-            if ($cache->supportsTags() && method_exists($cache, 'getCacheTags')) {
-                Cache::tags($cache->getCacheTags('inspector'))->flush();
-            }
+            resolve(ICacheLabelIndex::class)->flush(CacheLabel::inspector());
 
             SchemaInspector::getInstance()->clearAll();
             ModelMetadataRegistry::getInstance()->clearAll();

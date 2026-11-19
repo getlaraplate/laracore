@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\File;
+use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Console\SwaggerGenerateCommand;
+use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
 use Mtrajano\LaravelSwagger\LaravelSwaggerException;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
@@ -265,4 +268,18 @@ it('skips modules that do not match the module filter option', function (): void
     } finally {
         File::deleteDirectory($temp['base']);
     }
+});
+
+it('flushes the docs label when the generation ends', function (): void {
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+    $lookup = $index->lookup('docs.merged.v1', new CacheDependencies(['docs']));
+    $index->store($lookup, ['openapi' => '3.0.0'], 60);
+
+    $command = swaggerCommandWithOutput(app(SwaggerGenerateCommand::class));
+    $exit = $command->run(new ArrayInput(['--module' => 'NoSuchModule']), new BufferedOutput());
+
+    expect($exit)->toBe(0)
+        ->and($index->flushes)->toContain(['docs'])
+        ->and($index->lookup('docs.merged.v1', new CacheDependencies(['docs']))->hit)->toBeFalse();
 });

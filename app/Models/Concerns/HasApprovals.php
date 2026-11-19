@@ -16,6 +16,7 @@ use InvalidArgumentException;
 use Modules\Core\Approvals\Operation;
 use Modules\Core\Approvals\PendingDeletionLock;
 use Modules\Core\Approvals\PendingDeletionStrategy;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Casts\CrudExecutor;
 use Modules\Core\Models\Approval;
 use Modules\Core\Models\Modification;
@@ -106,7 +107,10 @@ trait HasApprovals
         // deletion itself included when it was approved. A move to the bin changes nothing.
         static::deleted(static function (Model $item): void {
             if (! $item->exists) {
-                $item->modifications()->activeOnly()->toBase()->update(['active' => false]);
+                $modifications = $item->modifications();
+                $modifications->activeOnly()->toBase()->update(['active' => false]);
+                // A mass update fires no model event: flush the modifications table after its commit.
+                app(CacheLabelInvalidator::class)->flushTable($modifications->getRelated()->getTable(), $item);
             }
         });
 

@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Modules\Core\Events\ModificationPreProcessingCompleted;
 use Modules\Core\Events\ModificationRequiresModeration;
+use Modules\Core\Listeners\FlushCacheLabelsOnModelWrite;
 use Modules\Core\Listeners\RemoveOriginOfDeletedRecord;
 use Modules\Core\Locking\LockedModelSubscriber;
 use Modules\Core\Models\CronJob;
@@ -79,6 +80,14 @@ final class EventServiceProvider extends ServiceProvider
         Event::subscribe(LockedModelSubscriber::class);
 
         Event::listen('eloquent.deleted: *', [RemoveOriginOfDeletedRecord::class, 'handle']);
+
+        Event::listen([
+            'eloquent.created: *',
+            'eloquent.updated: *',
+            'eloquent.deleted: *',
+            'eloquent.restored: *',
+            'eloquent.forceDeleted: *',
+        ], FlushCacheLabelsOnModelWrite::class . '@handle');
 
         // Only an instance that touched something has state to keep in step with the transactions.
         Event::listen(TransactionCommitted::class, function (TransactionCommitted $event): void {

@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Str;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Command;
@@ -114,7 +115,11 @@ final class ModelSoftDeletesRemoveCommand extends Command
     {
         $key_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table);
 
-        Setting::query()->where('name', $key_name)->forceDelete();
+        $setting = new Setting;
+        $setting->newQuery()->where('name', $key_name)->forceDelete();
+
+        // A mass delete fires no model event: flush the settings table after its commit.
+        app(CacheLabelInvalidator::class)->flushTable($setting->getTable(), $setting);
     }
 
     private function resolveModelClass(string $model): string

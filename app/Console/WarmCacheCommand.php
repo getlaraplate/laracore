@@ -7,7 +7,11 @@ namespace Modules\Core\Console;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -127,17 +131,15 @@ final class WarmCacheCommand extends Command
         }
 
         $cache_key = new CronJob()->getTable();
-        $crons = CronJob::query()->active()->select(['command', 'schedule'])->get()->toArray();
+        $crons = resolve(LoadActiveCronJobsAction::class)();
 
-        /** @var \Illuminate\Cache\Repository $cache */
-        $cache = Cache::store();
-
-        if ($cache->supportsTags() && method_exists($cache, 'getCacheTags')) {
-            $cache_tags = $cache->getCacheTags();
-            Cache::tags($cache_tags)->put($cache_key, $crons);
-        } else {
-            Cache::put($cache_key, $crons);
+        if ($crons === []) {
+            return 0;
         }
+
+        $index = resolve(ICacheLabelIndex::class);
+        $lookup = $index->lookup($cache_key, new CacheDependencies([CacheLabel::table($cache_key)]));
+        $index->store($lookup, $crons, (int) config('cache.duration.long'));
 
         return 1;
     }

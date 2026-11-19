@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\CronJob;
 use Modules\Core\Models\Setting;
 use Modules\Core\Providers\EventServiceProvider;
+use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
 
 beforeEach(function (): void {
     $this->provider = new EventServiceProvider(app());
@@ -35,20 +37,16 @@ it('after boot CronJob saved triggers cache forget', function (): void {
     expect(true)->toBeTrue();
 });
 
-it('Setting save flushes cache tags via HasCache', function (): void {
+it('Setting save flushes the label of its table', function (): void {
     $setting = Setting::factory()->persistedWithoutApprovalCapture()->create();
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
 
-    $cache = Cache::store();
+    // A save that changes nothing fires no update and flushes nothing: there is nothing to invalidate.
+    $setting->description = 'changed ' . uniqid();
+    $setting->save();
 
-    if ($cache->supportsTags() && method_exists($cache, 'getCacheTags')) {
-        $cache->tags($cache->getCacheTags($setting->getTable()))->put('_test_', true);
-
-        $setting->save();
-
-        expect($cache->tags($cache->getCacheTags($setting->getTable()))->get('_test_'))->toBeNull();
-    } else {
-        expect(fn () => $setting->save())->not->toThrow(Throwable::class);
-    }
+    expect($index->flushedLabels())->toContain(CacheLabel::table($setting->getTable()));
 });
 
 it('configureEmailVerification can be invoked safely', function (): void {

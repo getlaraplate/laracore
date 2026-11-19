@@ -14,6 +14,7 @@ use Modules\Core\Database\Factories\PermissionFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Override;
 use Spatie\Permission\Models\Permission as ModelsPermission;
 
@@ -25,6 +26,7 @@ final class Permission extends ModelsPermission
         getRules as private getRulesTrait;
     }
     use HasVersions;
+    use ReturnsVersionedRelations;
 
     /**
      * @var string

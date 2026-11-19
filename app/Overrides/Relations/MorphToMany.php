@@ -19,5 +19,16 @@ use Illuminate\Database\Eloquent\Relations\MorphToMany as BaseMorphToMany;
  */
 class MorphToMany extends BaseMorphToMany
 {
-    use OpensRevisionOnMutation;
+    use FlushesCacheLabelsOnMutation, OpensRevisionOnMutation {
+        FlushesCacheLabelsOnMutation::attach insteadof OpensRevisionOnMutation;
+        OpensRevisionOnMutation::attach as attachWithinRevision;
+        FlushesCacheLabelsOnMutation::detach insteadof OpensRevisionOnMutation;
+        OpensRevisionOnMutation::detach as detachWithinRevision;
+        FlushesCacheLabelsOnMutation::sync insteadof OpensRevisionOnMutation;
+        OpensRevisionOnMutation::sync as syncWithinRevision;
+        FlushesCacheLabelsOnMutation::toggle insteadof OpensRevisionOnMutation;
+        OpensRevisionOnMutation::toggle as toggleWithinRevision;
+        FlushesCacheLabelsOnMutation::updateExistingPivot insteadof OpensRevisionOnMutation;
+        OpensRevisionOnMutation::updateExistingPivot as updateExistingPivotWithinRevision;
+    }
 }

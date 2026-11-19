@@ -4,22 +4,21 @@ declare(strict_types=1);
 
 namespace Modules\Core\Services;
 
-use FilesystemIterator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use LogicException;
 use Modules\Core\Authorization\ResolvingAuthorization;
 use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\CacheLookup;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\WhereClause;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\ACL;
 use Modules\Core\Models\Permission;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
-use ReflectionClass;
 
 /**
  * Service for resolving effective ACLs for users based on their roles and permissions.
@@ -63,12 +62,23 @@ final class AclResolverService
     public function getEffectiveAcls(User $user, Permission $permission): Collection
     {
         $connection_name = $this->assertSharedConnection($user, $permission);
-        $cache_key = $this->buildCacheKey($connection_name, $user->id, $permission->id);
+        $index = self::index();
+        $lookup = self::lookup($index, $connection_name, $user->getKey(), $permission->getKey());
+
+        if ($lookup->hit && $lookup->value instanceof Collection) {
+            return $lookup->value;
+        }
 
         // Reading the ACL rows is part of working out what the user may read: the per-row select check of the
         // ACL model must not ask the very question being answered, or a role that holds a permission narrowed by
         // an ACL (the guest of the api, the publisher) could not resolve its own narrowing.
-        return Cache::remember($cache_key, self::CACHE_TTL, fn (): Collection => ResolvingAuthorization::resolve(fn (): Collection => $this->resolveAcls($user, $permission)));
+        /** @var Collection<int, ACL> $acls */
+        $acls = ResolvingAuthorization::resolve(fn (): Collection => $this->resolveAcls($user, $permission));
+
+        // Stores nothing while a failover index is degraded, or when a label was flushed during the resolution.
+        $index->store($lookup, $acls, self::CACHE_TTL);
+
+        return $acls;
     }
 
     /**
@@ -155,8 +165,10 @@ final class AclResolverService
             ->select('id')
             ->get();
 
+        $index = self::index();
+
         foreach ($permissions as $permission) {
-            Cache::forget($this->buildCacheKey($user->getConnection()->getName(), $user->id, $permission->id));
+            $index->forget(self::lookup($index, $user->getConnection()->getName(), $user->getKey(), $permission->getKey()));
         }
     }
 
@@ -164,8 +176,8 @@ final class AclResolverService
      * Clear cached ACLs for a specific permission using targeted key-based invalidation.
      *
      * When the number of affected users exceeds the configured threshold
-     * (config('core.acl.clear_threshold', 500)), falls back to flushing all
-     * keys with the 'acl:' prefix to avoid excessive individual deletes.
+     * (config('core.acl.clear_threshold', 500)), falls back to flushing every
+     * cached resolution (the `acl` label) to avoid excessive individual deletes.
      */
     public function clearCacheForPermission(Permission $permission): void
     {
@@ -175,36 +187,62 @@ final class AclResolverService
         $user_ids = $this->getUserIdsForPermission($permission);
 
         if ($threshold < $user_ids->count()) {
-            $this->flushAclPrefixedKeys();
+            $this->flushCache();
 
             return;
         }
 
+        $index = self::index();
+
         foreach ($user_ids as $user_id) {
-            Cache::forget($this->buildCacheKey($permission->getConnection()->getName(), $user_id, $permission->id));
+            $index->forget(self::lookup($index, $permission->getConnection()->getName(), $user_id, $permission->getKey()));
         }
     }
 
     /**
-     * Flush every cached ACL resolution across all users and permissions.
+     * Flush every cached ACL resolution across all users and permissions: every one carries the `acl` label.
      *
-     * Driver-agnostic and independent of per-user key reconstruction, so it stays
-     * correct when an ACL write must invalidate entries whose exact keys are not known
-     * (e.g. role-scoped ACLs affecting many users). ACL writes are administrative and
-     * rare, so flushing the whole `acl:` namespace is an acceptable trade-off for
-     * guaranteed consistency.
+     * Needed when an ACL write must invalidate entries whose exact keys are not known (e.g. role-scoped ACLs
+     * affecting many users). The flush is immediate; {@see \Modules\Core\Observers\AclObserver} flushes the same
+     * label after the transaction of the ACL write commits.
      */
     public function flushCache(): void
     {
-        $this->flushAclPrefixedKeys();
+        self::index()->flush(CacheLabel::acl());
     }
 
     /**
      * Build the ACL cache key for a specific user and permission.
      */
-    private function buildCacheKey(string $connection_name, int|string $user_id, int|string $perm_id): string
+    private static function buildCacheKey(string $connection_name, mixed $user_id, mixed $perm_id): string
     {
-        return CacheManager::key('acl', 'connection', $connection_name, 'user', (string) $user_id, 'perm', (string) $perm_id);
+        return CacheManager::key('acl', 'connection', $connection_name, 'user', self::keyString($user_id), 'perm', self::keyString($perm_id));
+    }
+
+    /**
+     * Resolved from the container on each call rather than injected: the service is also built with `new`, and it
+     * must store into the same index the label flushes reach.
+     */
+    private static function index(): ICacheLabelIndex
+    {
+        return resolve(ICacheLabelIndex::class);
+    }
+
+    /**
+     * The lookup of a resolution. It depends on the ACL rows (`acl`, also flushed when a role gains or loses a
+     * permission) and on the roles and direct permissions of the user (`user:{id}`).
+     */
+    private static function lookup(ICacheLabelIndex $index, string $connection_name, mixed $user_id, mixed $perm_id): CacheLookup
+    {
+        return $index->lookup(
+            self::buildCacheKey($connection_name, $user_id, $perm_id),
+            new CacheDependencies([CacheLabel::acl(), CacheLabel::user(self::keyString($user_id))]),
+        );
+    }
+
+    private static function keyString(mixed $key): string
+    {
+        return is_int($key) || is_string($key) ? (string) $key : '0';
     }
 
     /**
@@ -239,86 +277,6 @@ final class AclResolverService
         }
 
         return $direct_ids->merge($via_role_ids)->unique()->values();
-    }
-
-    /**
-     * Flush all cache entries whose key starts with the 'acl:' namespace prefix.
-     *
-     * Compatible with database, file, and array cache drivers (no tag dependency).
-     */
-    private function flushAclPrefixedKeys(): void
-    {
-        $store = Cache::getStore();
-
-        // Array driver: filter in-memory storage
-        if ($store instanceof \Illuminate\Cache\ArrayStore) {
-            $reflection = new ReflectionClass($store);
-            $storage_prop = $reflection->getProperty('storage');
-
-            /** @var array<string, mixed> $storage */
-            $storage = $storage_prop->getValue($store);
-
-            $acl_prefix = CacheManager::key('acl');
-
-            foreach (array_keys($storage) as $key) {
-                if (str_starts_with($key, $acl_prefix)) {
-                    $store->forget($key);
-                }
-            }
-
-            return;
-        }
-
-        // Database driver: DELETE WHERE key LIKE 'acl:%'
-        if ($store instanceof \Illuminate\Cache\DatabaseStore) {
-            $acl_prefix = CacheManager::key('acl');
-            $cache_table = (string) config('cache.stores.database.table', 'cache');
-            $store->getConnection()->table($cache_table)
-                ->where('key', 'like', $store->getPrefix() . $acl_prefix . '%')
-                ->delete();
-
-            return;
-        }
-
-        // File driver: scan directory and delete matching files
-        if ($store instanceof \Illuminate\Cache\FileStore) {
-            $acl_prefix = CacheManager::key('acl');
-            $directory = $store->getDirectory();
-
-            if (is_dir($directory)) {
-                $iterator = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-                );
-
-                foreach ($iterator as $file) {
-                    if (! $file->isFile()) {
-                        continue;
-                    }
-
-                    $contents = @file_get_contents($file->getPathname());
-
-                    if ($contents === false) {
-                        continue;
-                    }
-
-                    // The file store serializes the value; the key is not in the file content.
-                    // We use the hashed filename to match — skip this approach and use forget().
-                    // Instead, read the key from the store's path hashing.
-                    // Since we cannot reverse the hash, we flush all ACL keys by iterating
-                    // known user/permission combinations is not feasible here.
-                    // Fall back to a full flush of the file cache as a safe degradation.
-                }
-
-                // Safe fallback for file driver: flush entire cache
-                // (file driver does not support prefix-based deletion without tag support)
-                Cache::flush();
-            }
-
-            return;
-        }
-
-        // Unknown driver: safe fallback
-        Cache::flush();
     }
 
     /**

@@ -6,8 +6,12 @@ namespace Modules\Core\Inspector;
 
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheDependencies;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\CacheLookup;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Inspector\Entities\Column;
 use Modules\Core\Inspector\Entities\ForeignKey;
 use Modules\Core\Inspector\Entities\Index;
@@ -25,17 +29,11 @@ final class Inspect
      */
     public static function table(string $name, ?string $schema = null): ?Table
     {
-        $key_name = self::keyName($name, $schema);
-        $cache = Cache::store();
+        $index = self::labelIndex();
+        $lookup = self::lookup($index, $name, $schema);
 
-        $use_tags = self::supportsTaggedCache($cache);
-
-        $inspected_data = $use_tags
-            ? Cache::tags($cache->getCacheTags(['inspector', $schema ?? 'default']))->get($key_name)
-            : Cache::get(self::cacheKeyWithoutTags($key_name));
-
-        if ($inspected_data instanceof Table) {
-            return $inspected_data;
+        if ($lookup->hit && $lookup->value instanceof Table) {
+            return $lookup->value;
         }
 
         $connection = Schema::connection($schema);
@@ -60,27 +58,15 @@ final class Inspect
             $schema,
         );
 
-        if ($use_tags) {
-            Cache::tags($cache->getCacheTags(['inspector', $schema ?? 'default']))->forever($key_name, $inspected_data);
-        } else {
-            Cache::forever(self::cacheKeyWithoutTags($key_name), $inspected_data);
-        }
+        $index->store($lookup, $inspected_data, (int) config('cache.duration.long'));
 
         return $inspected_data;
     }
 
     public static function forget(string $name, ?string $schema = null): void
     {
-        $key_name = self::keyName($name, $schema);
-        $cache = Cache::store();
-
-        if (self::supportsTaggedCache($cache)) {
-            Cache::tags($cache->getCacheTags(['inspector', $schema ?? 'default']))->forget($key_name);
-
-            return;
-        }
-
-        Cache::forget(self::cacheKeyWithoutTags($key_name));
+        $index = self::labelIndex();
+        $index->forget(self::lookup($index, $name, $schema));
     }
 
     /**
@@ -164,17 +150,20 @@ final class Inspect
         return $foreigns->first(fn (ForeignKey $foreign): bool => $foreign->name === $name);
     }
 
-    private static function supportsTaggedCache(mixed $cache): bool
+    private static function labelIndex(): ICacheLabelIndex
     {
-        return is_object($cache)
-            && method_exists($cache, 'supportsTags')
-            && $cache->supportsTags()
-            && method_exists($cache, 'getCacheTags');
+        return resolve(ICacheLabelIndex::class);
     }
 
-    private static function cacheKeyWithoutTags(string $key_name): string
+    /**
+     * The lookup of an inspected table. It carries the `inspector` label, flushed when a migration ends.
+     */
+    private static function lookup(ICacheLabelIndex $index, string $name, ?string $schema): CacheLookup
     {
-        return 'inspector:' . $key_name;
+        return $index->lookup(
+            CacheManager::key('inspector', self::keyName($name, $schema)),
+            new CacheDependencies([CacheLabel::inspector()]),
+        );
     }
 
     /**

@@ -858,6 +858,38 @@ class CrudService
         );
     }
 
+    /**
+     * The permission checks a read runs before it queries, for a response served from the cache: the select
+     * permission on the entity, the right to see pending changes for a history read, and the permission on every
+     * relation the request names. A lost permission refuses a cached response even when no invalidation reached it.
+     *
+     * @throws AuthorizationException when the caller may no longer read what the request asks for
+     * @throws InvalidArgumentException when a name of the request is not a relation
+     */
+    public function authorizeCachedRead(CrudRequestData $requestData): void
+    {
+        $model = $requestData->model;
+
+        $this->auth->ensurePermission(
+            $requestData->request,
+            $model->getTable(),
+            'select',
+            $model->getConnectionName(),
+        );
+
+        if ($requestData instanceof HistoryRequestData) {
+            throw_unless(
+                $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model),
+                AuthorizationException::class,
+                'User not allowed to access this resource',
+            );
+        }
+
+        if ($requestData instanceof SelectRequestData) {
+            $this->authorizeRequestedRelations($requestData);
+        }
+    }
+
     public function insert(ModifyRequestData $requestData): CrudResult
     {
         $model = $requestData->model;
