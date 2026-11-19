@@ -114,7 +114,10 @@ The lock is a UI-level lock of the settings form, not a domain invariant: the CR
 and approved pending modifications are not blocked by it. A module that needs a real guard enforces it in
 its own service (the AI model switch refuses to start while a switch runs). The AI module registers one
 confirmation, for `features.embeddings.model` (`Modules/AI/docs/rag/MODULE.md`, *Embedding model and
-model switch*).
+model switch*). Core registers one for every `versioning.strategy.{table}` setting
+(`Versioning\VersioningSettingConfirmation`): it warns when the value moves to off and does nothing in
+`confirmed()`, because the purge it announces is queued by `SettingObserver` on any save, not only a
+confirmed one (`MODULE.md`, *Switching versioning off and on*).
 
 ## Settings in queue workers
 

@@ -86,7 +86,7 @@ $post->revertToVersion($version->id);
 1. Add the `HasVersions` trait to the model.
 2. Choose the strategy. Either declare `protected $versionStrategy = VersionStrategy::DIFF;` on the model, or set
    the `versioning.strategy.{table}` setting (group `versioning`), which is read through a per-request map and a
-   persistent cache. No value, or `false`, means the model is not versioned. Some models are never versioned
+   persistent cache. No value, `false` or an empty string means the model is not versioned. Some models are never versioned
    (`NeverVersionedModels`).
 3. Limit what is recorded with `$versionable` (when not empty, only these attributes) or `$dontVersionable`
    (attributes never recorded; the default is `created_at`, `updated_at` and `last_login_at`). The optimistic
@@ -95,6 +95,13 @@ $post->revertToVersion($version->id);
 
 `VersionStrategy` is `Modules\Core\Enums\VersionStrategy`: `DIFF` stores only what changed, `SNAPSHOT` stores the
 whole image on every change.
+
+## Turn versioning off for a table
+
+Setting `versioning.strategy.{table}` to `false` deletes the history of the table, by a queued job, except the
+snapshots of records deleted for good. Switched back on, each record starts a new history at its next save. The
+settings page asks for a confirmation first; the API does not. Details in `MODULE.md`, *Switching versioning off
+and on*.
 
 ## Read the history over HTTP
 
