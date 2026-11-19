@@ -2,6 +2,69 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.81.0] - 2026-11-19
+
+### 🚀 Features
+
+- *(cache)* Label index contract with in-memory and version-counter indexes
+- *(cache)* Redis membership label index
+- *(cache)* Label index selection, failover degradation, prune and stats commands
+- *(crud)* Resolve cache labels of a CRUD read
+- *(cache)* Flush labels on model events and pivot writes after commit
+- *(crud)* Look up the response cache before computing a read
+- *(cache)* Flush user, role and ACL labels on permission changes
+
+### 🐛 Bug Fixes
+
+- *(crud)* History reads the record its key names
+- *(cache)* Order label flushes independently of the test clock
+- *(cache)* Bounded Redis prune and flush, redis test group
+- *(cache)* Shared outage marker, narrow outage exceptions, cheaper stats
+- *(crud)* History labels without rowLabels, default eager loads, role keys parameter
+- *(crud)* Label default withCount relations
+- *(cache)* Flush immediately outside a transaction, keep legacy tag hooks
+- *(cache)* Start a missing version counter on stores that do not increment one
+- *(cache)* Flush grant scope labels on every pivot write, and inherited roles on ACL writes
+- *(cache)* Close the final review findings on the label index
+- *(cache)* Flush the tables Core writes without model events
+- *(cache)* Keep row precision on CRUD API writes
+- *(cache)* Flush the modifiable record on approval writes
+- *(search)* Filter dates and nulls on Typesense
+
+### 🚜 Refactor
+
+- *(crud)* Split requested relation paths into display and membership
+- *(cache)* Move remaining tag users to labels
+- *(cache)* Share one active cron loader between warm and scheduler
+- *(cache)* Scope the pending label set to the request, typed script replies
+
+### 📚 Documentation
+
+- *(cache)* Membership labels and the response cache
+- *(cache)* Document recovery, degraded redis, stats buckets and limits
+- *(cache)* One flush per transaction, the store window and the write path cost
+- *(crud)* SearchHitsQuery describes XS5 before its parameters
+
+### ⚡ Performance
+
+- *(cache)* Flush the labels of a transaction once after its commit
+- *(cache)* Flush Redis labels in one script, keep flush records for the store window
+- *(cache)* Count label stats in one script on a Redis stats store
+
+### 🎨 Styling
+
+- *(core)* Declare the types pest type-coverage was missing
+
+### 🧪 Testing
+
+- *(core)* The media search answers on the generic search route, by POST and GET
+- *(search)* Check the header the Elasticsearch client sends, not the handler stack's text
+- *(cache)* Prove label flushes of clearByEntity, invalidateCache and morph pivots
+- *(crud)* Response cache invalidation by entity on both index kinds
+- *(crud)* Row-level invalidation of embedded records
+- *(crud)* Add tests for modify route to ensure it rejects multiple keys
+- *(core)* Purge check on batch seeder without a Redis server
+
 ## [1.80.0] - 2026-11-18
 
 ### 🚀 Features
@@ -1249,10 +1312,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 - *(core)* Add materialized graph edge store
 - *(core)* Add orchestrated scout search
 
-### 🐛 Bug Fixes
-
-- *(core)* Encode array attributes before json validation rules
-
 ### 🚜 Refactor
 
 - *(core)* Update command descriptions, improve model checks, and enhance table widget functionality
@@ -1265,6 +1324,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ### ◀️ Revert
 
 - *(core)* Defer materialized graph edge store
+
+## [1.58.8] - 2026-07-10
+
+### 🐛 Bug Fixes
+
+- *(core)* Encode array attributes before json validation rules
 
 ## [1.58.7] - 2026-07-10
 
