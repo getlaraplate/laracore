@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Helpers\BatchSeeder;
@@ -108,12 +109,15 @@ it('bootstrapChildProcess purges the redis cache connection, not only default', 
     $redis = app('redis');
     $cache_connection = (string) config('cache.stores.redis.connection', 'cache');
 
-    // Warm both connections so they appear in the manager's local cache.
-    $redis->connection('default');
-    $redis->connection($cache_connection);
-
+    // Put both connections in the manager's local cache without opening a socket:
+    // purge() only forgets the cached instance, so stand-ins prove the same thing
+    // and the test never reaches a Redis server.
     $connections_prop = (new ReflectionObject($redis))->getProperty('connections');
     $connections_prop->setAccessible(true);
+    $connections_prop->setValue($redis, [
+        'default' => Mockery::mock(Connection::class),
+        $cache_connection => Mockery::mock(Connection::class),
+    ]);
 
     expect($connections_prop->getValue($redis))->toHaveKeys(['default', $cache_connection]);
 
