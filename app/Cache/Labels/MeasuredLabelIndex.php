@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Cache\Labels;
 
+use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository as BaseRepository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
@@ -14,10 +15,12 @@ use Throwable;
 /**
  * Counts hits, misses (per first table label) and flushes on any cache driver.
  *
- * Flushes are counted per label, except labels that grow with the data: every row label of a table counts under
- * `row:{table}:*` and every user label under `user:*`, so the counters and the label list stay as many as the tables
- * and the fixed labels. Cost per counted label: one add and one increment on the stats store; the label list is
- * written only the first time a label is seen, under a lock of the stats store when it has locks.
+ * Flushes are counted per flush call (a transaction flushes once, after its commit) and per label, except labels that
+ * grow with the data: every row label of a table counts under `row:{table}:*` and every user label under `user:*`, so
+ * the counters and the label list stay as many as the tables and the fixed labels. Cost: on a Redis stats store one
+ * script per lookup or flush, whatever the number of labels; on other stores one add and one increment per counted
+ * label. The label list is written only the first time a label is seen, under a lock of the stats store when it has
+ * locks.
  *
  * Stats are best effort: a failure of the stats store is reported once and stops the counting of this instance, and
  * nothing is counted while a guarded index is degraded. It never fails the read or the write it measures.
@@ -30,6 +33,21 @@ final class MeasuredLabelIndex implements ICacheLabelIndex
 
     private const int TTL = 86400 * 30;
 
+    /**
+     * Increments counters, creating a missing one with an expiry. KEYS: the counters. ARGV: ttl in seconds.
+     * Returns the 1-based positions of the counters this call created.
+     */
+    private const string LUA_COUNT = <<<'LUA'
+local created = {}
+for i = 1, #KEYS do
+    if redis.call('INCR', KEYS[i]) == 1 then
+        redis.call('EXPIRE', KEYS[i], ARGV[1])
+        created[#created + 1] = i
+    end
+end
+return created
+LUA;
+
     private bool $stats_failed = false;
 
     public function __construct(private readonly ICacheLabelIndex $inner, private readonly Repository $stats) {}
@@ -41,7 +59,7 @@ final class MeasuredLabelIndex implements ICacheLabelIndex
 
         foreach ($dependencies->labels as $label) {
             if (str_starts_with($label, 'table:')) {
-                $this->count($lookup->hit ? 'hits' : 'misses', $label);
+                $this->count($lookup->hit ? 'hits' : 'misses', [$label]);
 
                 break;
             }
@@ -67,9 +85,7 @@ final class MeasuredLabelIndex implements ICacheLabelIndex
     {
         $this->inner->flush(...$labels);
 
-        foreach (array_unique(array_map(self::bucketOf(...), $labels)) as $bucket) {
-            $this->count('flushes', $bucket);
-        }
+        $this->count('flushes', array_values(array_unique(array_map(self::bucketOf(...), $labels))));
     }
 
     #[Override]
@@ -117,24 +133,59 @@ final class MeasuredLabelIndex implements ICacheLabelIndex
         };
     }
 
-    private function count(string $metric, string $label): void
+    /**
+     * @param  list<string>  $labels
+     */
+    private function count(string $metric, array $labels): void
     {
-        if ($this->stats_failed || ($this->inner instanceof FailoverLabelIndex && $this->inner->isDegraded())) {
+        if ($labels === [] || $this->stats_failed || ($this->inner instanceof FailoverLabelIndex && $this->inner->isDegraded())) {
             return;
         }
 
         try {
-            $key = self::PREFIX . $metric . ':' . $label;
-            $first_time = $this->stats->add($key, 0, self::TTL);
-            $this->stats->increment($key);
-
-            if ($first_time) {
+            foreach ($this->increment($metric, $labels) as $label) {
                 $this->register($label);
             }
         } catch (Throwable $throwable) {
             $this->stats_failed = true;
             report($throwable);
         }
+    }
+
+    /**
+     * Increments the counter of the metric for each label. Returns the labels whose counter did not exist yet.
+     *
+     * @param  list<string>  $labels
+     * @return list<string>
+     */
+    private function increment(string $metric, array $labels): array
+    {
+        $store = $this->stats instanceof BaseRepository ? $this->stats->getStore() : null;
+
+        if ($store instanceof RedisStore) {
+            $created = $store->connection()->eval(
+                self::LUA_COUNT,
+                count($labels),
+                ...array_map(static fn (string $label): string => $store->getPrefix() . self::PREFIX . $metric . ':' . $label, $labels),
+                ...[(string) self::TTL],
+            );
+
+            return array_values(array_map(static fn (mixed $position): string => $labels[(int) $position - 1], (array) $created));
+        }
+
+        $created = [];
+
+        foreach ($labels as $label) {
+            $key = self::PREFIX . $metric . ':' . $label;
+
+            if ($this->stats->add($key, 0, self::TTL)) {
+                $created[] = $label;
+            }
+
+            $this->stats->increment($key);
+        }
+
+        return $created;
     }
 
     /**
