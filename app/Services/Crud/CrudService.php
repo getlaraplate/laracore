@@ -3351,11 +3351,11 @@ class CrudService
      * matched on the extender's host key column, and the ACL is the extender's, applied whole here, including the
      * conditions its translation to the host index left out (XS10).
      *
-     * @param  array<int, mixed>  $ids
-     * @param  FiltersGroup|null  $requestFilters  The filters of the request, without the ACL filters merged in
      * The hits of a host list opened with `with_extended` reload with the extended rows of the readable aliases,
      * each passing the ACL of its own entity on top of the host's (XS5).
      *
+     * @param  array<int, mixed>  $ids
+     * @param  FiltersGroup|null  $requestFilters  The filters of the request, without the ACL filters merged in
      * @param  string|null  $hitKeyColumn  The column the hit keys are matched on; the primary key when null
      * @param  ReadableExtenders|null  $readable  The extenders a host list opened with `with_extended` includes
      * @return Builder<Model>
