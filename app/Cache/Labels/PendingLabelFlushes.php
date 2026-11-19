@@ -14,9 +14,11 @@ use Modules\Core\Contracts\ICacheLabelIndex;
  * the commit flushes every label collected on that connection, deduplicated, and the others find nothing left. A
  * callback per write keeps Laravel's savepoint semantics: the callbacks of a rolled back savepoint are dropped with
  * it, while any callback that survives flushes the whole set. Labels of a rolled back write stay collected until the
- * next commit on the connection flushes them: an extra flush costs a miss, never a stale read.
+ * next commit on the connection flushes them or the request or job ends: an extra flush costs a miss, never a stale
+ * read.
  *
- * Bound as a singleton: the set must outlive the invalidator instances that fill it.
+ * Bound as a scoped singleton: the set must outlive the invalidator instances that fill it, and a pending callback
+ * keeps the instance it was registered on.
  */
 final class PendingLabelFlushes
 {

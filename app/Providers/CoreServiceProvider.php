@@ -810,7 +810,8 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
     private function registerCacheLabelIndex(): void
     {
-        $this->app->singleton(PendingLabelFlushes::class);
+        // Scoped: labels left by a rolled back write do not outlive the request or job that collected them.
+        $this->app->scoped(PendingLabelFlushes::class, static fn (): PendingLabelFlushes => new PendingLabelFlushes());
 
         $this->app->singleton(ICacheLabelIndex::class, static function (): ICacheLabelIndex {
             $cache = Cache::store();

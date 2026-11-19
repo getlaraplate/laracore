@@ -191,7 +191,7 @@ LUA;
                 );
 
                 $record = false;
-                $batch = array_values(array_map(static fn (mixed $position): string => $batch[(int) $position - 1], (array) $unfinished));
+                $batch = array_values(array_map(static fn (int $position): string => $batch[$position - 1], array_filter((array) $unfinished, is_int(...))));
             }
         }
     }

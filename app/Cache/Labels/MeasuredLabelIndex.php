@@ -170,7 +170,7 @@ LUA;
                 ...[(string) self::TTL],
             );
 
-            return array_values(array_map(static fn (mixed $position): string => $labels[(int) $position - 1], (array) $created));
+            return array_values(array_map(static fn (int $position): string => $labels[$position - 1], array_filter((array) $created, is_int(...))));
         }
 
         $created = [];
