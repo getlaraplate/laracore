@@ -132,8 +132,9 @@ the surviving children of those nodes would keep links to ancestors that no long
 agnostic of the modules that own the hierarchies. A module registers one `OwnerCascade` per owner at boot (owner
 class, owner table, hierarchy table, a closure giving the hierarchy's maintainer, and a closure narrowing a query
 on the hierarchy table to the rows the owner's delete takes along); Core registers the taxonomy ones in
-`CoreServiceProvider`, CMS the comment ones in `CMSServiceProvider`. The owner models carry
-`#[ObservedBy(HierarchyOwnerObserver::class)]`: in `deleting` the observer only reads, when the row really goes,
+`CoreServiceProvider`, CMS the comment ones in `CMSServiceProvider`. The owners observed by `HierarchyOwnerObserver` are
+User, Entity, Preset, Presettable and Template in Core (the `#[ObservedBy]` attribute), and CMS observes Content in its
+provider with `Content::observe(HierarchyOwnerObserver::class)`: in `deleting` the observer only reads, when the row really goes,
 the children each cascade leaves without a parent; in `deleted`, once the row is gone, it moves them to the roots.
 A delete that a later listener cancels, or that fails, writes nothing to any closure. A new owner of a hierarchy
 (a model whose hard delete reaches its rows by a foreign key) must be registered and observed the same way.
