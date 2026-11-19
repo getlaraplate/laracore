@@ -72,7 +72,10 @@ final class Repository extends BaseRepository
     // }
 
     /**
-     * Clear cache by the specified entity.
+     * Flush everything cached for the whole table of each entity that uses the cache: which of its rows exist and the
+     * content of every row, so a detail or a response embedding any row is reached too. It is the explicit "forget this
+     * entity" call, for a write that fires no model event or whose rows are unknown. A write through Eloquent models
+     * needs no call: the model events flush the table and the row they touched, which keeps the other rows cached.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>  $entity
      */

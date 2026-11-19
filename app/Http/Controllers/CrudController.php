@@ -222,9 +222,6 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->insert($requestData);
 
-            // Invalidate cache after insert
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
             return $this->handleServiceCall(fn () => throw $ex, $request);
@@ -238,9 +235,6 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->update($requestData);
 
-            // Invalidate cache after update
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
             return $this->handleServiceCall(fn () => throw $ex, $request);
@@ -253,9 +247,6 @@ class CrudController extends Controller
 
         try {
             $result = $this->crudService->delete($requestData);
-
-            // Invalidate cache after delete
-            Cache::clearByEntity($requestData->model);
 
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
@@ -277,9 +268,6 @@ class CrudController extends Controller
 
         try {
             $result = $this->crudService->doActivateOperation($requestData, $operation);
-
-            // Invalidate cache after activate/inactivate
-            Cache::clearByEntity($requestData->model);
 
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
@@ -304,9 +292,6 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->approve($requestData);
 
-            // Invalidate cache after approve
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
             return $this->handleServiceCall(fn () => throw $ex, $request);
@@ -319,9 +304,6 @@ class CrudController extends Controller
 
         try {
             $result = $this->crudService->disapprove($requestData);
-
-            // Invalidate cache after disapprove
-            Cache::clearByEntity($requestData->model);
 
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
@@ -408,9 +390,6 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->lock($requestData);
 
-            // Invalidate cache after lock
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
             return $this->handleServiceCall(fn () => throw $ex, $request);
@@ -423,9 +402,6 @@ class CrudController extends Controller
 
         try {
             $result = $this->crudService->unlock($requestData);
-
-            // Invalidate cache after unlock
-            Cache::clearByEntity($requestData->model);
 
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
@@ -469,6 +445,7 @@ class CrudController extends Controller
                 return $result;
             }
 
+            // The handler runs arbitrary code, so what it wrote is unknown: flush the whole table, not a row.
             Cache::clearByEntity($model);
 
             return $this->buildResponse(new CrudResult(data: $result), $request);

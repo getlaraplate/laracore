@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Auth\User;
 use Illuminate\Support\Facades\Auth;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Contracts\ILockableModel;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Locking\Exceptions\CannotUnlockException;
@@ -412,7 +413,8 @@ trait HasLocks
      * bumping it on acquisition would destroy the very signal the lock is measured by.
      *
      * A model that does not exist yet has nothing to update, so the values are only staged on the
-     * instance and the caller's own insert persists them.
+     * instance and the caller's own insert persists them. One that exists has its table and row labels
+     * flushed, since the query writes without a model event.
      *
      * @param  array<string,mixed>  $values
      */
@@ -423,6 +425,9 @@ trait HasLocks
                 ->whereKey($this->getKey())
                 ->toBase()
                 ->update($values);
+
+            // The write fires no model event, so the row label is flushed here: a cached detail shows the lock.
+            app(CacheLabelInvalidator::class)->flushRecord($this);
         }
 
         foreach ($values as $column => $value) {

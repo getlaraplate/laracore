@@ -258,3 +258,63 @@ it('misses the roles list with its permissions once a permission is attached to 
 
     crudInvalidationAssertMiss(crudInvalidationRead($spy, new Role(), $url), false);
 })->with(['array', 'file']);
+
+it('keeps the detail of another row cached when a row is updated through the CRUD API', function (string $kind): void {
+    $spy = crudInvalidationBind($kind);
+    $written = crudInvalidationNewSetting();
+    $other = crudInvalidationNewSetting();
+    $this->actingAs(crudInvalidationSuperadmin());
+    $list = crudInvalidationSettingsUrl();
+    $detail_of = static fn (Setting $setting): string => route('core.crud.detail', ['module' => 'core', 'entity' => 'settings']) . '?' . http_build_query(['id' => $setting->getKey()]);
+
+    foreach ([$list, $detail_of($written), $detail_of($other)] as $url) {
+        crudInvalidationRead($spy, new Setting(), $url);
+        crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $url));
+    }
+
+    $this->patchJson(
+        route('core.crud.replace', ['module' => 'core', 'entity' => 'settings']),
+        ['id' => $written->getKey(), 'description' => 'changed ' . uniqid()],
+    )->assertOk();
+
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $list));
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $detail_of($written)));
+
+    if ($kind === 'array') {
+        crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail_of($other)));
+    }
+})->with(['array', 'file']);
+
+it('flushes the row and the table of a locked record, and not the content of every row of the table', function (): void {
+    $spy = crudInvalidationBind('array');
+    $this->actingAs(crudInvalidationSuperadmin());
+    $target = User::factory()->create();
+    $spy->flushes = [];
+
+    $this->patchJson(route('core.crud.lock', ['module' => 'core', 'entity' => 'users']), ['id' => $target->getKey()])->assertOk();
+
+    $flushed = array_merge(...$spy->flushes);
+
+    expect($flushed)->toContain(CacheLabel::row($target->getTable(), $target->getKey()))
+        ->and($flushed)->toContain(CacheLabel::table($target->getTable()))
+        ->and($flushed)->not->toContain(CacheLabel::rows($target->getTable()));
+});
+
+it('flushes the whole table after a custom action, whose writes are unknown', function (): void {
+    $spy = crudInvalidationBind('array');
+    $this->actingAs(crudInvalidationSuperadmin());
+    $target = crudInvalidationNewSetting();
+    app(Modules\Core\Services\Crud\DomainActionRegistry::class)->register(
+        Setting::class,
+        'noop',
+        static fn (Setting $record, array $payload): array => ['id' => $record->getKey()],
+    );
+    $spy->flushes = [];
+
+    $this->postJson(route('core.crud.domain-action', ['action' => 'noop', 'module' => 'core', 'entity' => 'settings']), ['id' => $target->getKey()])->assertOk();
+
+    $flushed = array_merge(...$spy->flushes);
+
+    expect($flushed)->toContain(CacheLabel::table($target->getTable()))
+        ->and($flushed)->toContain(CacheLabel::rows($target->getTable()));
+});

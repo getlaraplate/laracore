@@ -771,6 +771,11 @@ a response holding rows of a table also carries `rows:{table}`, which a whole-ta
 - Pivot writes (`attach`, `detach`, `sync`, `toggle`, `updateExistingPivot`) flush the pivot and both side tables, once
   per call: a `sync` of many keys flushes once.
 - An ACL write and a change of the role hierarchy flush the scope labels they change, see `ACL_SYSTEM.md` ("Caching").
+- The CRUD write endpoints (insert, update, delete, activate, inactivate, approve, disapprove, lock, unlock) call no
+  flush of their own: they write through model instances, so the model events above flush the table and the row they
+  touched and the cached details of the other rows stay. The lock writes its columns with a query that fires no event,
+  so `HasLocks` flushes the row and table labels itself. A module action (`domainAction`) runs arbitrary code and
+  flushes the whole table of the entity afterwards, as does the `clearModelCache` operation.
 - `Cache::clearByEntity()` flushes the whole table of a `HasCache` entity (its table label and `rows:{table}`, so
   details are reached too), `Cache::clearByUser()` and `Cache::clearByGroup()` the `user:{id}` and `role:{id}` labels
   (a flush of a label deletes every entry carrying it).

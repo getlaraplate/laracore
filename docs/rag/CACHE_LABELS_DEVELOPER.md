@@ -86,7 +86,13 @@ TTL, through the store's atomic `add`, so a counter never resets while entries o
 - **Role hierarchy.** `RoleObserver` flushes `acl` and the role labels of the role and of every role below it (roles in
   the bin included) when a role's `parent_id` changes, and when a role is moved to the bin, restored or deleted for
   good; the labels of a deleted role are read before the deletion.
-- **Commands and helpers.** `Cache::clearByEntity()`, `clearByUser()`, `clearByGroup()`, `HasCache::invalidateCache()`,
+- **CRUD API writes.** `CrudController` flushes nothing after insert, update, delete, activate, inactivate, approve,
+  disapprove, lock and unlock: those write through model instances, so the model events flush `table:` and `row:` and
+  the details of other rows stay cached. `HasLocks::writeLockColumns()` writes with a query, so it flushes the row and
+  table labels itself. `domainAction` and `clearModelCache` call `Cache::clearByEntity()`, a full table flush, because
+  what a handler wrote is unknown.
+- **Commands and helpers.** `Cache::clearByEntity()` (the whole table: `table:` and `rows:`, for writes whose rows are
+  unknown; not needed after a write through models), `clearByUser()`, `clearByGroup()`, `HasCache::invalidateCache()`,
   `AclResolverService::clearCacheFor*()` and `flushCache()`, `translations:check`, the schema commands.
 - **Core mass writes.** The settings rows written by `model:locked-remove`, `model:optimistic-lock-add`,
   `model:optimistic-lock-remove`, `model:soft-deletes-remove` and `SettingsCleaner`, and the pending modifications a
