@@ -724,7 +724,7 @@ The Core Module utilizes several packages to enhance its functionality. Below is
     -   [laravel/fortify](https://github.com/laravel/fortify): Authentication scaffolding.
     -   Model versioning is part of Core (`HasVersions`, `Version`), derived from overtrue/laravel-versionable, which is no longer a dependency (see Third-party code).
     -   [spatie/laravel-permission](https://github.com/spatie/laravel-permission): Roles and permissions.
-    -   [staudenmeir/laravel-adjacency-list](https://github.com/staudenmeir/laravel-adjacency-list): Hierarchical data handling.
+    -   Hierarchies (roles, taxonomies, comments) use Core's own closure tables (`HasClosureTable`, `MigrateUtils::closureTable()`, `ClosureTableMaintainer`), which replaced staudenmeir/laravel-adjacency-list; see [docs/rag/HIERARCHIES_DEVELOPER.md](docs/rag/HIERARCHIES_DEVELOPER.md).
     -   [spatie/eloquent-sortable](https://github.com/spatie/eloquent-sortable): Ordering helpers for Eloquent.
 
 -   **UI / Admin:**
@@ -824,7 +824,7 @@ The Core Module includes built-in features such as:
 -   Social login integration with multiple providers
 -   Spatial data support for geographical applications
 -   Composite primary keys support
--   Adjacency list pattern for hierarchical data structures
+-   Closure-table hierarchies (roles, taxonomies, comments) with set-based maintenance
 -   Vector search capabilities with AI-powered embeddings
 -   Typesense search engine integration
 

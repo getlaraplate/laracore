@@ -790,14 +790,15 @@ class Article extends Model
 
 Access via `/api/v1/history/{module}/{entity}`.
 
-### HasRecursiveRelationships (Tree)
+### HasClosureTable (Tree)
 
-Models using `HasRecursiveRelationships` support hierarchical queries:
+Models using `HasClosureTable` (a `parent_id` column plus a `{table}_closure` table, see
+[HIERARCHIES_DEVELOPER](rag/HIERARCHIES_DEVELOPER.md)) support hierarchical queries:
 
 ```php
 class Category extends Model
 {
-    use HasRecursiveRelationships;
+    use HasClosureTable;
 }
 ```
 
