@@ -318,3 +318,89 @@ it('flushes the whole table after a custom action, whose writes are unknown', fu
     expect($flushed)->toContain(CacheLabel::table($target->getTable()))
         ->and($flushed)->toContain(CacheLabel::rows($target->getTable()));
 });
+
+/**
+ * A pending request on the record, as a capture writes it.
+ */
+function crudInvalidationPendingRequest(Model $record, Modules\Core\Approvals\Operation $operation, array $modifications = []): Modules\Core\Models\Modification
+{
+    return Modules\Core\Models\Modification::query()->create([
+        'modifiable_type' => $record::class,
+        'modifiable_id' => $record->getKey(),
+        'modifier_id' => User::factory()->create()->getKey(),
+        'modifier_type' => User::class,
+        'active' => true,
+        'operation' => $operation,
+        'approvers_required' => 1,
+        'disapprovers_required' => 1,
+        'md5' => md5(uniqid('pending', true)),
+        'modifications' => $modifications,
+    ]);
+}
+
+it('misses a cached preview detail once a request is captured, decided or withdrawn', function (Closure $close): void {
+    $spy = crudInvalidationBind('array');
+    $setting = crudInvalidationNewSetting();
+    $other = crudInvalidationNewSetting();
+    $this->actingAs(crudInvalidationSuperadmin());
+    $detail_of = static fn (Setting $record): string => route('core.crud.detail', ['module' => 'core', 'entity' => 'settings']) . '?' . http_build_query(['id' => $record->getKey(), 'preview' => 'true']);
+
+    crudInvalidationRead($spy, new Setting(), $detail_of($setting));
+    crudInvalidationRead($spy, new Setting(), $detail_of($other));
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail_of($setting)));
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail_of($other)));
+
+    $request = crudInvalidationPendingRequest($setting, Modules\Core\Approvals\Operation::Update, ['description' => ['original' => 'a', 'modified' => 'b']]);
+
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $detail_of($setting)));
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail_of($other)));
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail_of($setting)));
+
+    $close($request);
+
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $detail_of($setting)));
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail_of($other)));
+})->with([
+    'disapproved' => [static function (Modules\Core\Models\Modification $request): void {
+        $request->active = false;
+        $request->save();
+    }],
+    'withdrawn' => [static function (Modules\Core\Models\Modification $request): void {
+        $request->delete();
+    }],
+]);
+
+it('flushes the record of a model that hides its pending deletion when the request is captured, decided or withdrawn', function (Closure $close): void {
+    $spy = crudInvalidationBind('array');
+    Illuminate\Support\Facades\Schema::create('approvals_soft_stub', function (Illuminate\Database\Schema\Blueprint $table): void {
+        $table->id();
+        $table->string('name')->nullable();
+        $table->timestamps();
+        $table->softDeletes();
+        $table->boolean('is_deleted')->storedAs('deleted_at IS NOT NULL');
+    });
+    $record = Modules\Core\Tests\Stubs\Approvals\HiddenWhilePendingDeletionModel::query()->create(['name' => 'kept']);
+    $table = $record->getTable();
+    $expected = [CacheLabel::table($table), CacheLabel::row($table, $record->getKey())];
+    $spy->flushes = [];
+
+    $request = crudInvalidationPendingRequest($record, Modules\Core\Approvals\Operation::Delete);
+
+    expect(array_merge(...$spy->flushes))->toContain(...$expected);
+
+    $spy->flushes = [];
+    $close($request);
+
+    $flushed = array_merge(...$spy->flushes);
+    Illuminate\Support\Facades\Schema::dropIfExists('approvals_soft_stub');
+
+    expect($flushed)->toContain(...$expected);
+})->with([
+    'disapproved' => [static function (Modules\Core\Models\Modification $request): void {
+        $request->active = false;
+        $request->save();
+    }],
+    'withdrawn' => [static function (Modules\Core\Models\Modification $request): void {
+        $request->delete();
+    }],
+]);

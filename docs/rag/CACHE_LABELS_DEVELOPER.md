@@ -88,7 +88,10 @@ TTL, through the store's atomic `add`, so a counter never resets while entries o
   good; the labels of a deleted role are read before the deletion.
 - **CRUD API writes.** `CrudController` flushes nothing after insert, update, delete, activate, inactivate, approve,
   disapprove, lock and unlock: those write through model instances, so the model events flush `table:` and `row:` and
-  the details of other rows stay cached. `HasLocks::writeLockColumns()` writes with a query, so it flushes the row and
+  the details of other rows stay cached. Writes that change no record row (a capture answering 202, a disapproval, a
+  withdrawal) are covered by `FlushCacheLabelsOnModelWrite`: a created, updated or deleted `Modification` flushes
+  `table:` and `row:` of its modifiable record, since previews and `PendingDeletionStrategy::Hide` make reads depend
+  on pending requests. `HasLocks::writeLockColumns()` writes with a query, so it flushes the row and
   table labels itself. `domainAction` and `clearModelCache` call `Cache::clearByEntity()`, a full table flush, because
   what a handler wrote is unknown.
 - **Commands and helpers.** `Cache::clearByEntity()` (the whole table: `table:` and `rows:`, for writes whose rows are
