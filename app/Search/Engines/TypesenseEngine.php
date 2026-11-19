@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Search\Engines;
 
+use DateTimeInterface;
 use Exception;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
@@ -20,11 +21,11 @@ use Modules\Core\Search\Exceptions\MissingSearchSchemaException;
 use Modules\Core\Search\Exceptions\SearchCollectionResolutionException;
 use Modules\Core\Search\Jobs\ReindexSearchJob;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
-use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
 use Modules\Core\Search\Traits\Searchable;
 use Override;
+use Throwable;
 use Typesense\Collection as TypesenseCollection;
 use Typesense\Exceptions\TypesenseClientError;
 
@@ -45,11 +46,33 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
     public const string NULL_PLACEHOLDER = 'typesensenullvalue';
 
     /**
+     * The value a null top-level date is indexed with, and the value an equality on a null date filters on. Typesense
+     * filters ranges on numbers only, so a top-level date is an `int64` of seconds since the epoch
+     * ({@see \Modules\Core\Search\Translators\TypesenseTranslator}) and cannot hold the string placeholder. A range
+     * on a date never matches it ({@see self::comparison()}), as a missing date matches no range on the other engines.
+     */
+    public const int NULL_TIMESTAMP = -4611686018427387904;
+
+    /**
      * The top-level string fields of the model being indexed by {@see self::update()}.
      *
      * @var list<string>
      */
     private array $null_placeholder_fields = [];
+
+    /**
+     * The top-level date fields of the model being indexed by {@see self::update()}.
+     *
+     * @var list<string>
+     */
+    private array $date_fields = [];
+
+    /**
+     * The top-level date fields of each model class searched, read once from its mapping.
+     *
+     * @var array<class-string, list<string>>
+     */
+    private array $date_fields_by_class = [];
 
     //    public array $config;
 
@@ -167,49 +190,26 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
     {
         $first = $models->first();
         $this->null_placeholder_fields = $first instanceof Model ? $this->stringFields($first) : [];
+        $this->date_fields = $first instanceof Model ? $this->dateFields($first) : [];
 
         try {
             parent::update($models);
         } finally {
             $this->null_placeholder_fields = [];
+            $this->date_fields = [];
         }
     }
 
     /**
+     * A filter of the engine, with no model: a date is recognised by its value only. The searches of a model use
+     * {@see self::filterString()} with the model's date fields.
+     *
      * @param  array<string, mixed>  $filters
      */
     #[Override]
     public function buildSearchFilters(array $filters): string
     {
-        if (isset($filters['operator'], $filters['filters'])) {
-            return $this->buildAdvancedSearchFilter($filters);
-        }
-
-        $filter_strings = [];
-
-        foreach ($filters as $field => $value) {
-            if (is_array($value)) {
-                if (count($value) === 2 && is_numeric($value[0]) && is_numeric($value[1])) {
-                    $filter_strings[] = sprintf('%s:>=%s && %s:<=%s', $field, $value[0], $field, $value[1]);
-                } else {
-                    $formatted_values = array_map(
-                        static function (mixed $val): string {
-                            if (is_string($val)) {
-                                return sprintf('"%s"', $val);
-                            }
-
-                            return is_scalar($val) ? (string) $val : '';
-                        },
-                        $value,
-                    );
-                    $filter_strings[] = sprintf('%s:[%s]', $field, implode(',', $formatted_values));
-                }
-            } else {
-                $filter_strings[] = sprintf('%s:=%s', $field, $this->formatTypesenseFilterValue($value));
-            }
-        }
-
-        return implode(' && ', $filter_strings);
+        return $this->filterString($filters, []);
     }
 
     #[Override]
@@ -236,7 +236,7 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
             return $parameters;
         }
 
-        $advanced_filter = $this->buildSearchFilters($advanced_filters);
+        $advanced_filter = $this->filterString($advanced_filters, $this->dateFields($builder->model));
 
         if ($advanced_filter === '') {
             return $parameters;
@@ -538,14 +538,53 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
     }
 
     /**
-     * @param  array<string, mixed>  $filter
+     * Scout's filter of the wheres, written by {@see self::wheresFilter()}: Scout's own takes no null (its
+     * `parseFilterValue()` refuses one) and knows no date, so the default exclusion of extended rows
+     * (`<type column> IS NULL`) and every date condition failed there.
+     *
+     * @param  Builder<covariant Model>  $builder
      */
-    private function buildAdvancedSearchFilter(array $filter): string
+    #[Override]
+    protected function filters(Builder $builder): string
+    {
+        return $this->wheresFilter($builder);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters  An advanced filter tree, or a `field => value` map
+     * @param  list<string>  $date_fields
+     */
+    private function filterString(array $filters, array $date_fields): string
+    {
+        if (isset($filters['operator'], $filters['filters'])) {
+            return $this->buildAdvancedSearchFilter($filters, $date_fields);
+        }
+
+        $filter_strings = [];
+
+        foreach ($filters as $field => $value) {
+            $field = (string) $field;
+
+            $filter_strings[] = match (true) {
+                is_array($value) && count($value) === 2 && is_numeric($value[0] ?? null) && is_numeric($value[1] ?? null) => $this->comparison($field, 'between', $value, $date_fields),
+                is_array($value) => $this->comparison($field, 'in', $value, $date_fields),
+                default => $this->comparison($field, '=', $value, $date_fields),
+            };
+        }
+
+        return implode(' && ', array_filter($filter_strings));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filter
+     * @param  list<string>  $date_fields
+     */
+    private function buildAdvancedSearchFilter(array $filter, array $date_fields): string
     {
         if (isset($filter['filters']) && is_array($filter['filters'])) {
             $joiner = ($filter['operator'] ?? 'and') === 'or' ? ' || ' : ' && ';
             $parts = array_values(array_filter(array_map(
-                fn (mixed $item): string => is_array($item) ? $this->buildAdvancedSearchFilter($item) : '',
+                fn (mixed $item): string => is_array($item) ? $this->buildAdvancedSearchFilter($item, $date_fields) : '',
                 $filter['filters'],
             )));
             $joined = implode($joiner, $parts);
@@ -553,27 +592,73 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
             return ($filter['operator'] ?? 'and') === 'or' ? sprintf('(%s)', $joined) : $joined;
         }
 
-        $field = (string) ($filter['field'] ?? '');
-        $operator = (string) ($filter['operator'] ?? '=');
-        $value = $filter['value'] ?? null;
+        return $this->comparison((string) ($filter['field'] ?? ''), (string) ($filter['operator'] ?? '='), $filter['value'] ?? null, $date_fields);
+    }
 
-        return match ($operator) {
-            '=' => sprintf('%s:=%s', $field, $this->formatTypesenseFilterValue($value)),
-            'in' => sprintf('%s:[%s]', $field, implode(',', array_map(fn (mixed $item): string => $this->formatTypesenseFilterValue($item), is_array($value) ? $value : [$value]))),
-            '!=' => sprintf('%s:!=%s', $field, is_array($value) ? '[' . implode(',', array_map(fn (mixed $item): string => $this->formatTypesenseFilterValue($item), $value)) . ']' : $this->formatTypesenseFilterValue($value)),
-            '>' => sprintf('%s:>%s', $field, $this->formatTypesenseFilterValue($value)),
-            '>=' => sprintf('%s:>=%s', $field, $this->formatTypesenseFilterValue($value)),
-            '<' => sprintf('%s:<%s', $field, $this->formatTypesenseFilterValue($value)),
-            '<=' => sprintf('%s:<=%s', $field, $this->formatTypesenseFilterValue($value)),
-            'between' => sprintf(
-                '%s:>=%s && %s:<=%s',
-                $field,
-                $this->formatTypesenseFilterValue(is_array($value) ? array_values($value)[0] ?? null : null),
-                $field,
-                $this->formatTypesenseFilterValue(is_array($value) ? array_values($value)[1] ?? null : null),
-            ),
+    /**
+     * The wheres, whereIns and whereNotIns of a builder as one filter, the fields of `$skip` left out.
+     *
+     * @param  Builder<covariant Model>  $builder
+     * @param  list<string>  $skip
+     */
+    private function wheresFilter(Builder $builder, array $skip = []): string
+    {
+        $date_fields = $this->dateFields($builder->model);
+        $parts = [];
+
+        foreach ($builder->wheres as $key => $where) {
+            // Scout 11 appends ['field', 'operator', 'value']; a Scout 10 entry is `field => value`.
+            [$field, $operator, $value] = is_array($where) && array_key_exists('field', $where)
+                ? [(string) $where['field'], (string) ($where['operator'] ?? '='), $where['value'] ?? null]
+                : [(string) $key, '=', $where];
+
+            if (! in_array($field, $skip, true)) {
+                $parts[] = $this->comparison($field, $operator, $value, $date_fields);
+            }
+        }
+
+        foreach ($builder->whereIns as $field => $values) {
+            if (! in_array($field, $skip, true)) {
+                $parts[] = $this->comparison((string) $field, 'in', $values, $date_fields);
+            }
+        }
+
+        foreach ($builder->whereNotIns as $field => $values) {
+            if (! in_array($field, $skip, true)) {
+                $parts[] = $this->comparison((string) $field, '!=', array_values((array) $values), $date_fields);
+            }
+        }
+
+        return implode(' && ', array_filter($parts));
+    }
+
+    /**
+     * One condition in `filter_by` syntax. On a date field (`$date_fields`) the value is a timestamp, a null is
+     * {@see self::NULL_TIMESTAMP}, and a range also excludes that value, so a null date matches no range.
+     *
+     * @param  list<string>  $date_fields
+     */
+    private function comparison(string $field, string $operator, mixed $value, array $date_fields): string
+    {
+        $is_date = in_array($field, $date_fields, true);
+        $format = fn (mixed $item): string => $this->formatTypesenseFilterValue($item, $is_date);
+        $list = static fn (array $items): string => '[' . implode(',', array_map($format, array_values($items))) . ']';
+        $bounds = is_array($value) ? array_values($value) : [$value, $value];
+
+        $condition = match ($operator) {
+            '=' => is_array($value) ? sprintf('%s:%s', $field, $list($value)) : sprintf('%s:=%s', $field, $format($value)),
+            'in' => sprintf('%s:%s', $field, $list(is_array($value) ? $value : [$value])),
+            '!=' => sprintf('%s:!=%s', $field, is_array($value) ? $list($value) : $format($value)),
+            '>', '>=', '<', '<=' => sprintf('%s:%s%s', $field, $operator, $format($value)),
+            'between' => sprintf('%s:>=%s && %s:<=%s', $field, $format($bounds[0] ?? null), $field, $format($bounds[1] ?? null)),
             default => '',
         };
+
+        if ($condition !== '' && $is_date && in_array($operator, ['>', '>=', '<', '<=', 'between'], true)) {
+            return sprintf('(%s && %s:!=%d)', $condition, $field, self::NULL_TIMESTAMP);
+        }
+
+        return $condition;
     }
 
     /**
@@ -595,6 +680,10 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
                 if (array_key_exists($field, $document) && $document[$field] === null) {
                     $documents[$index][$field] = self::NULL_PLACEHOLDER;
                 }
+            }
+
+            foreach ($this->date_fields as $field) {
+                $documents[$index][$field] = self::timestamp($document[$field] ?? null) ?? self::NULL_TIMESTAMP;
             }
         }
 
@@ -619,10 +708,66 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
         return $fields;
     }
 
-    private function formatTypesenseFilterValue(mixed $value): string
+    /**
+     * The top-level fields the model's mapping types as `int64`: the dates
+     * ({@see \Modules\Core\Search\Translators\TypesenseTranslator}), read once per class.
+     *
+     * @return list<string>
+     */
+    private function dateFields(Model $model): array
     {
+        if (isset($this->date_fields_by_class[$model::class])) {
+            return $this->date_fields_by_class[$model::class];
+        }
+
+        $fields = [];
+
+        try {
+            $mapping = $this->getSearchMapping($model);
+        } catch (Throwable) {
+            $mapping = [];
+        }
+
+        foreach ($mapping['fields'] ?? [] as $field) {
+            if (is_array($field) && ($field['type'] ?? null) === 'int64' && is_string($field['name'] ?? null) && ! str_contains($field['name'], '.')) {
+                $fields[] = $field['name'];
+            }
+        }
+
+        return $this->date_fields_by_class[$model::class] = $fields;
+    }
+
+    /**
+     * Seconds since the epoch of a date value: a date, a number, or a string a date can be read from. Null when the
+     * value is null or no date.
+     */
+    private static function timestamp(mixed $value): ?int
+    {
+        return match (true) {
+            $value instanceof DateTimeInterface => $value->getTimestamp(),
+            is_int($value) => $value,
+            is_float($value), is_string($value) && is_numeric($value) => (int) $value,
+            is_string($value) && $value !== '' => rescue(static fn (): int => Date::parse($value)->getTimestamp(), null, false),
+            default => null,
+        };
+    }
+
+    private function formatTypesenseFilterValue(mixed $value, bool $is_date = false): string
+    {
+        if ($is_date) {
+            return (string) (self::timestamp($value) ?? self::NULL_TIMESTAMP);
+        }
+
+        if ($value instanceof DateTimeInterface) {
+            return (string) $value->getTimestamp();
+        }
+
         if ($value === null) {
             return sprintf('"%s"', self::NULL_PLACEHOLDER);
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
         }
 
         if (is_string($value)) {
@@ -711,51 +856,18 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
         }
     }
 
-    private function buildFilter(string $field_name, mixed $value): string
-    {
-        if (is_array($value)) {
-            $formatted_values = array_map(
-                static function (mixed $val): string {
-                    if (is_string($val)) {
-                        return sprintf('"%s"', $val);
-                    }
-
-                    return is_scalar($val) ? (string) $val : '';
-                },
-                $value,
-            );
-
-            return sprintf('%s:[%s]', $field_name, implode(',', $formatted_values));
-        }
-
-        return sprintf('%s:=%s', $field_name, $this->formatTypesenseFilterValue($value));
-    }
-
     /**
      * @param  Builder<covariant Model>  $builder
      */
     private function buildFiltersFromBuilder(Builder $builder): string
     {
-        $filters = [];
-
-        foreach (ScoutWheres::map($builder) as $field => $value) {
-            if ($field === 'vector' || $field === 'embedding' || $field === $this->resolveVectorField($builder->model)) {
-                continue; // Skip vector fields
-            }
-
-            $filters[] = $this->buildFilter($field, $value);
-        }
-
+        $filters = [$this->wheresFilter($builder, ['vector', 'embedding', $this->resolveVectorField($builder->model)])];
         $advanced_filters = $builder->options['advanced_filters'] ?? null;
 
         if (is_array($advanced_filters)) {
-            $advanced_filter = $this->buildSearchFilters($advanced_filters);
-
-            if ($advanced_filter !== '') {
-                $filters[] = $advanced_filter;
-            }
+            $filters[] = $this->filterString($advanced_filters, $this->dateFields($builder->model));
         }
 
-        return implode(' && ', $filters);
+        return implode(' && ', array_filter($filters));
     }
 }
