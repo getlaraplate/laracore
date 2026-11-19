@@ -147,7 +147,30 @@ the pivot is a grant of roles or permissions, so the scope labels are flushed to
 
 ## Caching a value of your own
 
-Resolve the index from the container (it is a singleton) and follow lookup, compute, store:
+Use `Modules\Core\Cache\Labels\LabelledCache` (resolve it from the container; it wraps the index singleton). It does
+the lookup, the compute and the store in one call:
+
+```php
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
+
+$report = resolve(LabelledCache::class)->remember(
+    'my-module:report:' . $id,
+    [CacheLabel::table('cms_contents')],   // or a CacheDependencies
+    300,                                   // ttl in seconds, required: a value is never kept forever
+    fn (): array => $this->compute(),
+    is_array(...),                         // optional: a hit it rejects is computed again, a value it rejects is not stored
+);
+```
+
+- `refresh()` takes the same arguments and computes and stores whatever the cache holds, for warmers.
+- `forget($key, $dependencies)` drops one value; pass the dependencies it was remembered with, since a version counter
+  store embeds their versions in the stored key.
+- It stores nothing while a failover index is degraded, when a label was flushed while the value was computed, and
+  when the dependencies are incomplete.
+
+A value that carries row labels known only after the query (the CRUD response cache) uses the index directly, lookup,
+compute, store:
 
 ```php
 use Modules\Core\Cache\Labels\CacheDependencies;
@@ -167,7 +190,6 @@ if ($lookup->hit) {
 
 $value = $this->compute();
 
-// The ttl is in seconds and required; a value is never kept forever.
 $index->store($lookup, $value, 300, [CacheLabel::row('core_users', $author->getKey())]);
 ```
 

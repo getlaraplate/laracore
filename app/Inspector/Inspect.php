@@ -8,10 +8,8 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Cache\CacheManager;
-use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
-use Modules\Core\Cache\Labels\CacheLookup;
-use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Inspector\Entities\Column;
 use Modules\Core\Inspector\Entities\ForeignKey;
 use Modules\Core\Inspector\Entities\Index;
@@ -29,44 +27,18 @@ final class Inspect
      */
     public static function table(string $name, ?string $schema = null): ?Table
     {
-        $index = self::labelIndex();
-        $lookup = self::lookup($index, $name, $schema);
-
-        if ($lookup->hit && $lookup->value instanceof Table) {
-            return $lookup->value;
-        }
-
-        $connection = Schema::connection($schema);
-        $tables = $connection->getTables();
-        $table = Arr::first($tables, fn (array $table): bool => $table['name'] === $name);
-
-        if (! is_array($table)) {
-            return null;
-        }
-
-        $database_name = $connection->getConnection()->getDatabaseName();
-        $columns = self::parseColumns($connection->getColumns($table['name']));
-        $indexes = self::parseIndexes($connection->getIndexes($table['name']));
-        $foreignKeys = self::parseForeignKeys($connection->getForeignKeys($table['name']), $database_name, $schema);
-
-        $inspected_data = new Table(
-            $table['name'],
-            $columns,
-            $indexes,
-            $foreignKeys,
-            $database_name,
-            $schema,
+        return self::cache()->remember(
+            self::cacheKey($name, $schema),
+            self::cacheLabels(),
+            (int) config('cache.duration.long'),
+            static fn (): ?Table => self::inspect($name, $schema),
+            static fn (mixed $table): bool => $table instanceof Table,
         );
-
-        $index->store($lookup, $inspected_data, (int) config('cache.duration.long'));
-
-        return $inspected_data;
     }
 
     public static function forget(string $name, ?string $schema = null): void
     {
-        $index = self::labelIndex();
-        $index->forget(self::lookup($index, $name, $schema));
+        self::cache()->forget(self::cacheKey($name, $schema), self::cacheLabels());
     }
 
     /**
@@ -150,20 +122,52 @@ final class Inspect
         return $foreigns->first(fn (ForeignKey $foreign): bool => $foreign->name === $name);
     }
 
-    private static function labelIndex(): ICacheLabelIndex
+    /**
+     * Reads the table from the database, null when the connection has no such table.
+     */
+    private static function inspect(string $name, ?string $schema): ?Table
     {
-        return resolve(ICacheLabelIndex::class);
+        $connection = Schema::connection($schema);
+        $tables = $connection->getTables();
+        $table = Arr::first($tables, fn (array $table): bool => $table['name'] === $name);
+
+        if (! is_array($table)) {
+            return null;
+        }
+
+        $database_name = $connection->getConnection()->getDatabaseName();
+        $columns = self::parseColumns($connection->getColumns($table['name']));
+        $indexes = self::parseIndexes($connection->getIndexes($table['name']));
+        $foreignKeys = self::parseForeignKeys($connection->getForeignKeys($table['name']), $database_name, $schema);
+
+        return new Table(
+            $table['name'],
+            $columns,
+            $indexes,
+            $foreignKeys,
+            $database_name,
+            $schema,
+        );
+    }
+
+    private static function cache(): LabelledCache
+    {
+        return resolve(LabelledCache::class);
+    }
+
+    private static function cacheKey(string $name, ?string $schema): string
+    {
+        return CacheManager::key('inspector', self::keyName($name, $schema));
     }
 
     /**
-     * The lookup of an inspected table. It carries the `inspector` label, flushed when a migration ends.
+     * An inspected table carries the `inspector` label, flushed when a migration ends.
+     *
+     * @return list<string>
      */
-    private static function lookup(ICacheLabelIndex $index, string $name, ?string $schema): CacheLookup
+    private static function cacheLabels(): array
     {
-        return $index->lookup(
-            CacheManager::key('inspector', self::keyName($name, $schema)),
-            new CacheDependencies([CacheLabel::inspector()]),
-        );
+        return [CacheLabel::inspector()];
     }
 
     /**

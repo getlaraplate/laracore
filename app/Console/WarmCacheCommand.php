@@ -9,9 +9,8 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\Cache\CacheManager;
-use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
-use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -131,17 +130,16 @@ final class WarmCacheCommand extends Command
         }
 
         $cache_key = new CronJob()->getTable();
-        $crons = resolve(LoadActiveCronJobsAction::class)();
 
-        if ($crons === []) {
-            return 0;
-        }
+        $crons = resolve(LabelledCache::class)->refresh(
+            $cache_key,
+            [CacheLabel::table($cache_key)],
+            (int) config('cache.duration.long'),
+            static fn (): array => resolve(LoadActiveCronJobsAction::class)(),
+            static fn (mixed $crons): bool => $crons !== [],
+        );
 
-        $index = resolve(ICacheLabelIndex::class);
-        $lookup = $index->lookup($cache_key, new CacheDependencies([CacheLabel::table($cache_key)]));
-        $index->store($lookup, $crons, (int) config('cache.duration.long'));
-
-        return 1;
+        return $crons === [] ? 0 : 1;
     }
 
     /**
