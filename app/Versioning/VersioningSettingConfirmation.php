@@ -7,6 +7,7 @@ namespace Modules\Core\Versioning;
 use Modules\Core\Contracts\ISettingChangeConfirmation;
 use Modules\Core\Data\SettingChangeWarning;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
+use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Setting;
 use Override;
 
@@ -35,11 +36,12 @@ final readonly class VersioningSettingConfirmation implements ISettingChangeConf
     }
 
     /**
-     * Whether a value of the setting switches versioning off, as `HasVersions::getVersionStrategy()` reads it.
+     * Whether a value of the setting switches versioning off, as `HasVersions::getVersionStrategy()` reads it
+     * ({@see VersionStrategy::fromSetting()}). A value that is no strategy is not "off": it fails where it is read.
      */
     public static function isOff(mixed $value): bool
     {
-        return $value === false;
+        return in_array($value, [false, null, ''], true);
     }
 
     #[Override]

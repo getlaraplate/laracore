@@ -501,9 +501,7 @@ trait HasVersions
 
         $raw = app(PerModelSettingResolver::class)->value($settings_name, false);
 
-        $strategy = $raw === false
-            ? false
-            : ($raw instanceof VersionStrategy ? $raw : VersionStrategy::from(is_scalar($raw) ? (string) $raw : ''));
+        $strategy = VersionStrategy::fromSetting($raw);
 
         // Store in L1 for subsequent calls within the same request
         self::$version_strategy_cache[$model_class] = $strategy;
