@@ -19,6 +19,7 @@ use Filament\Schemas\Schema;
 use JsonException;
 use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Filament\Utils\HasForm;
+use Modules\Core\Filament\Utils\JsonChoiceStateCast;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\SettingChangeConfirmations;
 
@@ -221,7 +222,7 @@ final class SettingForm
             return Select::make('value')
                 ->required()
                 ->options(self::jsonChoiceOptions($record->choices))
-                ->formatStateUsing(static fn (mixed $state): mixed => is_bool($state) ? self::encodeJson($state) : $state)
+                ->stateCast(new JsonChoiceStateCast)
                 ->dehydrateStateUsing(static fn (mixed $state): mixed => match ($state) {
                     'true' => true,
                     'false' => false,
@@ -264,7 +265,8 @@ final class SettingForm
     /**
      * The choices of a JSON setting, a boolean keyed `true` or `false` so it is a value of its own: cast to a string,
      * `false` is the empty key, which a required select refuses (`versioning.strategy.*` offers `false` to switch
-     * versioning off). The select turns the key back into the boolean it stands for.
+     * versioning off). `JsonChoiceStateCast` shows a stored boolean as its key, and the select turns the key back into
+     * the boolean it stands for.
      *
      * @return array<string, string>
      */
