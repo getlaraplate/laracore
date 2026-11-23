@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Modules\Core\Services;
 
+use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Entity;
@@ -279,16 +283,15 @@ final class DynamicContentsService
     }
 
     /**
-     * Remember a value via Cache::memo() for `cache.duration.long`, guaranteeing an Eloquent Collection.
+     * Remember a list through the label index for `cache.duration.long`, guaranteeing an Eloquent Collection.
      *
-     * The keys embed the metadata generation, so the lists of an old generation are never read again: the ttl lets
-     * them expire instead of accumulating. The generation counter itself is kept for good, like the version counters
-     * of the label index: a counter that expired could restart from a value whose keys still live.
+     * The entry carries {@see CacheLabel::dynamicContents()}, flushed when the metadata generation moves, and on a
+     * guarded index the `stored` label the recovery purge flushes, so a bump lost during an outage is made good. The
+     * keys still embed the generation, which keeps processes that missed a flush on a key of their own. No
+     * Cache::memo() layer: this scoped service already keeps each list in memory for the request.
      *
-     * Persistent drivers (Redis serializers, failover, fork reconnect) can rehydrate
-     * Eloquent collections as plain arrays. Laravel's remember treats any
-     * non-null value as a hit, so a cached array would bypass the loader and violate
-     * our return type — reload from the database when that happens.
+     * Persistent drivers (Redis serializers, failover, fork reconnect) can rehydrate Eloquent collections as plain
+     * arrays: such a hit is reloaded from the database and stored over.
      *
      * @template TModel of \Illuminate\Database\Eloquent\Model
      *
@@ -297,17 +300,14 @@ final class DynamicContentsService
      */
     private function rememberCollection(string $cache_key, callable $loader): Collection
     {
-        $ttl = (int) config('cache.duration.long');
-        $cached = Cache::memo()->remember($cache_key, $ttl, $loader);
-
-        if ($cached instanceof Collection) {
-            return $cached;
-        }
-
-        $fresh = $loader();
-        Cache::memo()->put($cache_key, $fresh, $ttl);
-
-        return $fresh;
+        /** @var Collection<int, TModel> */
+        return resolve(LabelledCache::class)->remember(
+            $cache_key,
+            [CacheLabel::dynamicContents()],
+            (int) config('cache.duration.long'),
+            Closure::fromCallable($loader),
+            static fn (mixed $list): bool => $list instanceof Collection,
+        );
     }
 
     /**
@@ -364,6 +364,7 @@ final class DynamicContentsService
         // Use the non-memo store only. Cache::memo()->forget() also deletes from the
         // underlying repository, which would wipe the generation we just wrote.
         Cache::forever(self::METADATA_GENERATION_KEY, $this->metadataGeneration() + 1);
+        resolve(ICacheLabelIndex::class)->flush(CacheLabel::dynamicContents());
     }
 
     private function typedMemoKey(string $cache_key, string $type_cache_key): string

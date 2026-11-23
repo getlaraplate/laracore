@@ -11,8 +11,8 @@ use Modules\Core\Services\DynamicContentsService;
  * Invalidates the persistent dynamic-content metadata cache when the models that
  * describe it change.
  *
- * {@see DynamicContentsService} caches entities, presets and presettables through
- * {@see \Illuminate\Support\Facades\Cache::memo()} for `cache.duration.long`. Those lists are
+ * {@see DynamicContentsService} caches entities, presets and presettables through the
+ * label index for `cache.duration.long`, under the `dynamic_contents` label. Those lists are
  * interdependent (presets are filtered by their entity, presettables join both
  * presets and entities), so any write to an Entity, Preset or the preset↔field
  * pivot must flush every metadata bucket. Presets and entities change rarely, so

@@ -30,6 +30,7 @@ Label strings are built only by `Modules\Core\Cache\Labels\CacheLabel`; never wr
 | `translations` | `CacheLabel::translations()` | the translations payload | `translations:check` |
 | `inspector` | `CacheLabel::inspector()` | schema inspector results | the schema commands (`CommandListenerProvider`) |
 | `geocoding` | `CacheLabel::geocoding()` | geocoding answers | nothing by default: they expire by TTL, flush the label by hand to drop them |
+| `dynamic_contents` | `CacheLabel::dynamicContents()` | the entity, preset and presettable lists of `DynamicContentsService` | a bump of their metadata generation (`DynamicContentMetadataObserver`, the `clear*Cache()` methods) |
 | `models` | `CacheLabel::models()` | model class discovery (`HelpersCache`, the `models()` helper) | the end of a migration (`CommandListenerProvider`), `permission:refresh`, `HelpersCache::clearModels()` |
 
 The settings caches (the groups and the name index of `PerModelSettingResolver`, the site configs) carry
@@ -60,7 +61,7 @@ counts hits, misses and flushes. Callers never branch on the driver.
 resolution is cached, and every flush is dropped instead of failing the write that issued it: an outage degrades to "no
 cache, writes succeed". Every entry stored through the guard carries the `stored` label, so the first successful call
 after an outage flushes `stored` before doing anything else, which reaches every kind of entry (CRUD responses, ACL
-resolutions, settings, the anonymous user, model discovery, cron list, docs, translations, inspector, geocoding) whose
+resolutions, settings, the anonymous user, model discovery, dynamic content lists, cron list, docs, translations, inspector, geocoding) whose
 flushes may have been lost. The outage
 is remembered in a marker on the host-local `file` store, holding the time of the last failed call: a later request or
 worker on the same host also flushes, and each process tries Redis at most once a second, so a request does not pay
@@ -89,8 +90,8 @@ have refused. Lowering it is safe.
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
 TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live. Core caches
 nothing with `Cache::forever` outside the index except such counters: the outage marker of `FailoverLabelIndex` and
-the metadata generation of `DynamicContentsService`, whose entity, preset and presettable lists are kept through
-`Cache::memo()` for `cache.duration.long` under keys that embed the generation.
+the metadata generation of `DynamicContentsService`, whose entity, preset and presettable lists are kept in the index
+under the `dynamic_contents` label for `cache.duration.long`, under keys that embed the generation.
 
 ## What triggers flushes
 

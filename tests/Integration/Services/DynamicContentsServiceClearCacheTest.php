@@ -66,9 +66,11 @@ it('metadataGeneration recovers when the generation key holds a Collection', fun
         ->and(Cache::get($generation_key))->toBe(0);
 });
 
-it('rememberCollection reloads when the persistent cache returns a plain array', function (): void {
+it('rememberCollection reloads when the label index returns a plain array', function (): void {
     $cache_key = 'core.dynamic_contents.test:array-rehydrate';
-    Cache::forever($cache_key, ['not' => 'a-collection']);
+    $index = resolve(Modules\Core\Contracts\ICacheLabelIndex::class);
+    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::dynamicContents()]);
+    $index->store($index->lookup($cache_key, $dependencies), ['not' => 'a-collection'], 60);
 
     $service = DynamicContentsService::getInstance();
     $method = new ReflectionMethod(DynamicContentsService::class, 'rememberCollection');
@@ -79,4 +81,16 @@ it('rememberCollection reloads when the persistent cache returns a plain array',
 
     expect($result)->toBe($fresh)
         ->and($result)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
+});
+
+it('rememberCollection keeps the reloaded collection in the label index over the plain array', function (): void {
+    $cache_key = 'core.dynamic_contents.test:array-overwrite';
+    $index = resolve(Modules\Core\Contracts\ICacheLabelIndex::class);
+    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::dynamicContents()]);
+    $index->store($index->lookup($cache_key, $dependencies), ['not' => 'a-collection'], 60);
+
+    $method = new ReflectionMethod(DynamicContentsService::class, 'rememberCollection');
+    $method->invoke(DynamicContentsService::getInstance(), $cache_key, static fn (): Illuminate\Database\Eloquent\Collection => new Illuminate\Database\Eloquent\Collection());
+
+    expect($index->lookup($cache_key, $dependencies)->value)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
 });

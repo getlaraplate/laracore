@@ -72,7 +72,27 @@ it('fetches App entity types as App entity models', function (): void {
         ->and($entities->first()->id)->toBe($entity->id);
 });
 
-it('keeps the lists of a metadata generation for a finite time, the generation counter for good', function (): void {
+it('caches the lists through the label index under the dynamic contents label, for the long duration', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+
+    $service = DynamicContentsService::getInstance();
+    $service->fetchAvailableEntities(EntityType::Pages);
+    $service->fetchAvailablePresets(EntityType::Pages);
+    $service->fetchAvailablePresettables(EntityType::Pages);
+
+    $stores = array_values(array_filter(
+        $index->stores,
+        static fn (array $store): bool => $store['lookup']->dependencies->labels === [Modules\Core\Cache\Labels\CacheLabel::dynamicContents()],
+    ));
+
+    expect($stores)->toHaveCount(3)
+        ->and(array_unique(array_column($stores, 'ttl')))->toBe([(int) config('cache.duration.long')]);
+});
+
+it('flushes the dynamic contents label when the metadata generation moves, and keeps the generation for good', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
     $written = [];
     Illuminate\Support\Facades\Event::listen(
         Illuminate\Cache\Events\KeyWritten::class,
@@ -83,14 +103,11 @@ it('keeps the lists of a metadata generation for a finite time, the generation c
 
     $service = DynamicContentsService::getInstance();
     $service->fetchAvailableEntities(EntityType::Pages);
-    $service->fetchAvailablePresets(EntityType::Pages);
-    $service->fetchAvailablePresettables(EntityType::Pages);
     $service->clearAllCaches();
 
     $generation = array_key_exists('core.dynamic_contents.generation', $written) ? $written['core.dynamic_contents.generation'] : 'missing';
-    unset($written['core.dynamic_contents.generation']);
 
-    expect($generation)->toBeNull()
-        ->and($written)->toHaveCount(3)
-        ->and(array_unique(array_values($written)))->toBe([(int) config('cache.duration.long')]);
+    expect($index->flushes)->toContain([Modules\Core\Cache\Labels\CacheLabel::dynamicContents()])
+        ->and($generation)->toBeNull()
+        ->and(DynamicContentsService::getInstance()->fetchAvailableEntities(EntityType::Pages))->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
 });
