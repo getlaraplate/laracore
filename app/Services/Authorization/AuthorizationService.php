@@ -10,10 +10,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 use Laravel\Sanctum\Contracts\HasAbilities;
 use Laravel\Sanctum\PersonalAccessToken;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Casts\ActionEnum;
 use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FiltersGroup;
@@ -396,11 +397,20 @@ final class AuthorizationService
         // Keyed by the configured name: a stale user must not survive a rename of the guest account.
         // Loaded as the configured user class: the roles of the account are stored under the morph type of
         // that class, so a parent class would load the account with no role at all.
-        $anonymous = Cache::rememberForever('anonymous_user.' . $guest_name, function () use ($guest_name): ?Model {
-            $id = $this->anonymousUserId($guest_name);
+        // Labelled with the users table: any write to the guest account, or to which account bears its name, flushes
+        // it. The model is cached with no relation loaded, so its roles and permissions are read fresh.
+        $user_class = user_class();
+        $anonymous = resolve(LabelledCache::class)->remember(
+            'anonymous_user.' . $guest_name,
+            [CacheLabel::table(new $user_class()->getTable())],
+            (int) config('cache.duration.long'),
+            function () use ($guest_name, $user_class): ?Model {
+                $id = $this->anonymousUserId($guest_name);
 
-            return $id === null ? null : user_class()::query()->whereKey($id)->first();
-        });
+                return $id === null ? null : $user_class::query()->whereKey($id)->first();
+            },
+            static fn (mixed $user): bool => $user instanceof Model,
+        );
 
         if (! $anonymous instanceof User) {
             return null;

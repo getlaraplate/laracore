@@ -41,7 +41,7 @@ final class FieldObserver
      */
     public function created(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
@@ -49,7 +49,7 @@ final class FieldObserver
      */
     public function updated(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
@@ -57,7 +57,7 @@ final class FieldObserver
      */
     public function deleted(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
@@ -65,16 +65,16 @@ final class FieldObserver
      */
     public function restored(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
      * A field's structure feeds the cached preset and presettable metadata, so any
-     * write must invalidate the persistent {@see DynamicContentsService} caches.
+     * write must invalidate the persistent {@see DynamicContentsService} caches, after the commit of the write.
      */
-    private function flushDynamicContentsMetadata(): void
+    private function flushDynamicContentsMetadata(Field $model): void
     {
-        DynamicContentsService::getInstance()->clearAllCaches();
+        DynamicContentsService::getInstance()->clearAllCaches($model);
     }
 
     /**

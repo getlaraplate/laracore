@@ -9,11 +9,10 @@ use Exception;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Modules\Core\Cache\CacheManager;
-use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Contracts\Geocoding\GeocodingResult;
 use Modules\Core\Contracts\Geocoding\IGeocodingService;
-use Modules\Core\Contracts\ICacheLabelIndex;
 use Override;
 
 abstract class AbstractGeocodingService implements IGeocodingService
@@ -132,23 +131,13 @@ abstract class AbstractGeocodingService implements IGeocodingService
     protected function rememberGeocodingThroughCache(string $cache_key, int $ttl_seconds, Closure $resolver): mixed
     {
         try {
-            $index = resolve(ICacheLabelIndex::class);
-            $lookup = $index->lookup(
+            return resolve(LabelledCache::class)->remember(
                 CacheManager::key('geocoding', $cache_key),
-                new CacheDependencies([CacheLabel::geocoding()]),
+                [CacheLabel::geocoding()],
+                $ttl_seconds,
+                $resolver,
+                static fn (mixed $value): bool => $value !== null,
             );
-
-            if ($lookup->hit && $lookup->value !== null) {
-                return $lookup->value;
-            }
-
-            $value = $resolver();
-
-            if ($value !== null) {
-                $index->store($lookup, $value, $ttl_seconds);
-            }
-
-            return $value;
         } catch (Exception $exception) {
             Log::error('Geocoding cache error: ' . $exception->getMessage());
 

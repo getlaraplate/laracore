@@ -9,6 +9,7 @@ use Illuminate\Cache\Repository as BaseRepository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use Throwable;
 
@@ -22,10 +23,11 @@ use Throwable;
  * label. The label list is written only the first time a label is seen, under a lock of the stats store when it has
  * locks.
  *
- * Stats are best effort: a failure of the stats store is reported once and stops the counting of this instance, and
+ * Stats are best effort: a failure of the stats store is reported and pauses the counting of this instance for a
+ * minute, after which it tries again (a long-lived Octane or queue worker resumes counting once the store is back), and
  * nothing is counted while a guarded index is degraded. It never fails the read or the write it measures.
  */
-final class MeasuredLabelIndex implements ICacheLabelIndex
+final class MeasuredLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
 {
     private const string PREFIX = 'labelstats:';
 
@@ -48,7 +50,15 @@ end
 return created
 LUA;
 
-    private bool $stats_failed = false;
+    /**
+     * How long counting pauses after a failure of the stats store.
+     */
+    private const int COOLDOWN_MICROS = 60_000_000;
+
+    /**
+     * Microseconds of the last failure of the stats store; null while it serves.
+     */
+    private ?int $stats_failed_at = null;
 
     public function __construct(private readonly ICacheLabelIndex $inner, private readonly Repository $stats) {}
 
@@ -92,6 +102,15 @@ LUA;
     public function pruneStale(): int
     {
         return $this->inner->pruneStale();
+    }
+
+    /**
+     * Counts nothing: resolving a key is not a read.
+     */
+    #[Override]
+    public function resolveKey(string $key, CacheDependencies $dependencies): ?string
+    {
+        return $this->inner instanceof IResolvesCacheLabelKeys ? $this->inner->resolveKey($key, $dependencies) : null;
     }
 
     #[Override]
@@ -138,7 +157,7 @@ LUA;
      */
     private function count(string $metric, array $labels): void
     {
-        if ($labels === [] || $this->stats_failed || ($this->inner instanceof FailoverLabelIndex && $this->inner->isDegraded())) {
+        if ($labels === [] || $this->coolingDown() || ($this->inner instanceof FailoverLabelIndex && $this->inner->isDegraded())) {
             return;
         }
 
@@ -147,9 +166,24 @@ LUA;
                 $this->register($label);
             }
         } catch (Throwable $throwable) {
-            $this->stats_failed = true;
+            $this->stats_failed_at = Clock::micros();
             report($throwable);
         }
+    }
+
+    private function coolingDown(): bool
+    {
+        if ($this->stats_failed_at === null) {
+            return false;
+        }
+
+        if (Clock::micros() - $this->stats_failed_at < self::COOLDOWN_MICROS) {
+            return true;
+        }
+
+        $this->stats_failed_at = null;
+
+        return false;
     }
 
     /**

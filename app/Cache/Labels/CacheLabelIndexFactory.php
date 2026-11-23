@@ -6,6 +6,7 @@ namespace Modules\Core\Cache\Labels;
 
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\FailoverStore;
+use Illuminate\Cache\MemcachedStore;
 use Illuminate\Cache\NullStore;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository as BaseRepository;
@@ -21,7 +22,8 @@ final class CacheLabelIndexFactory
 {
     /**
      * A Redis index is always guarded by {@see FailoverLabelIndex}, alone or as the first store of a failover cache: a
-     * Redis outage degrades to "nothing cached, writes succeed" instead of failing every write that flushes.
+     * Redis outage degrades to "nothing cached, writes succeed" instead of failing every write that flushes. So is the
+     * version counter index of a memcached store, whose refused flush throws.
      */
     public static function forStore(Repository $cache): ICacheLabelIndex
     {
@@ -29,6 +31,7 @@ final class CacheLabelIndexFactory
 
         return match (true) {
             $store instanceof RedisStore => new FailoverLabelIndex(new RedisLabelIndex($store, self::storeWindow())),
+            $store instanceof MemcachedStore => new FailoverLabelIndex(new VersionCounterLabelIndex($cache)),
             $store instanceof ArrayStore => new ArrayLabelIndex(),
             $store instanceof NullStore => new NullLabelIndex(),
             $store instanceof FailoverStore => self::guarded(self::forStore(Cache::store(self::primaryStoreName($cache)))),

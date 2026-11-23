@@ -5,9 +5,14 @@ declare(strict_types=1);
 namespace Modules\Core\Cache\Labels;
 
 use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Contracts\Database\LostConnectionDetector as LostConnectionDetectorContract;
+use Illuminate\Database\LostConnectionDetector;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
+use PDOException;
 use Predis\PredisException;
 use RedisException;
 use Throwable;
@@ -19,13 +24,20 @@ use Throwable;
  * {@see CacheLabel::stored()}, whatever it holds (CRUD responses, ACL resolutions, settings, documentation, ...).
  *
  * The outage is recorded in a marker on the host-local `file` cache store, holding the time of the last failed call,
- * so a later request, Octane worker or queue worker on the same host still flushes after recovery, and the primary is
- * tried at most once a second per host while it is down: a request never pays one connection timeout per call.
+ * so a later request, Octane worker or queue worker on the same host still flushes after recovery. While the primary
+ * is down, each process tries it at most once a second: an instance reads the shared marker at most once a second and
+ * leaves the primary alone for a second after the failure it records, so a request never pays one connection timeout
+ * per call. The pacing is per process, not per host: processes that read the marker before another one's failure try
+ * the primary on their own, at most once a second each.
  * Residual: a host that never saw a failure may serve stale entries until some host flushes the label (Redis is
- * shared, so one flush clears all). Only connection failures count as an outage; any other exception is a bug and
- * propagates.
+ * shared, so one flush clears all). Only connection failures count as an outage: a Redis or Predis exception, an error
+ * reply the primary reports ({@see LabelIndexUnavailableException}, such as a flush refused under `-OOM`), and a
+ * database exception Laravel's lost connection detector recognises (a failover cache whose first store is `database`);
+ * any other exception is a bug and propagates. A memcached primary throws nothing when its server is down (it answers
+ * misses and failed writes): it degrades on the first flush its counters refuse
+ * ({@see VersionCounterLabelIndex::flush()}), not on reads, see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
  */
-final class FailoverLabelIndex implements ICacheLabelIndex
+final class FailoverLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
 {
     public const string MARKER_KEY = 'cache-labels:degraded';
 
@@ -86,6 +98,22 @@ final class FailoverLabelIndex implements ICacheLabelIndex
         return $this->guard(fn (): int => $this->primary->pruneStale(), static fn (): int => 0);
     }
 
+    /**
+     * The key of the primary, with the `stored` label every entry carries here; null while the primary is down or when
+     * it cannot tell the key without a lookup.
+     */
+    #[Override]
+    public function resolveKey(string $key, CacheDependencies $dependencies): ?string
+    {
+        if (! $this->primary instanceof IResolvesCacheLabelKeys) {
+            return null;
+        }
+
+        $dependencies = $dependencies->withLabels(CacheLabel::stored());
+
+        return $this->guard(fn (): ?string => $this->primary->resolveKey($key, $dependencies), static fn (): null => null);
+    }
+
     #[Override]
     public function supportsRowLabels(): bool
     {
@@ -110,7 +138,21 @@ final class FailoverLabelIndex implements ICacheLabelIndex
     private static function isOutage(Throwable $throwable): bool
     {
         return $throwable instanceof RedisException
-            || (class_exists(PredisException::class) && $throwable instanceof PredisException);
+            || $throwable instanceof LabelIndexUnavailableException
+            || (class_exists(PredisException::class) && $throwable instanceof PredisException)
+            || (($throwable instanceof QueryException || $throwable instanceof PDOException) && self::lostConnection($throwable));
+    }
+
+    /**
+     * Whether a database error is a refused, lost or timed out connection, as Laravel decides it when it reconnects.
+     */
+    private static function lostConnection(Throwable $throwable): bool
+    {
+        $detector = app()->bound(LostConnectionDetectorContract::class)
+            ? app(LostConnectionDetectorContract::class)
+            : new LostConnectionDetector();
+
+        return $detector->causedByLostConnection($throwable);
     }
 
     /**

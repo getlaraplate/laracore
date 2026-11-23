@@ -61,7 +61,7 @@ it('flushes table and row labels on restore and force delete', function (): void
     }
 });
 
-it('waits for the commit and drops the flush on rollback', function (): void {
+it('waits for the commit, and flushes after a rollback too', function (): void {
     $role = makeLabelRole();
     $this->index->flushes = [];
     $connection = $role->getConnection();
@@ -84,7 +84,124 @@ it('waits for the commit and drops the flush on rollback', function (): void {
     } catch (RuntimeException) {
     }
 
-    expect($this->index->flushes)->toBe([]);
+    // A read inside the rolled back transaction may have cached the rows it removed.
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushedLabels())->toContain(CacheLabel::row($role->getTable(), $role->getKey()));
+});
+
+it('flushes a value cached from uncommitted rows when the transaction rolls back', function (): void {
+    $index = new Modules\Core\Cache\Labels\ArrayLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+    $role = makeLabelRole();
+    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([CacheLabel::table($role->getTable())]);
+
+    try {
+        $role->getConnection()->transaction(function () use ($index, $role, $dependencies): void {
+            $role->update(['name' => 'uncommitted_' . uniqid()]);
+            $index->store($index->lookup('roles', $dependencies), 'built from uncommitted rows', 60);
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    expect($index->lookup('roles', $dependencies)->hit)->toBeFalse();
+});
+
+it('flushes a rolled back transaction and a committed one that follows it, each at its end', function (): void {
+    [$rolled_back, $committed] = [makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $committed->getConnection();
+
+    try {
+        $connection->transaction(function () use ($rolled_back): void {
+            $rolled_back->update(['name' => 'rolled_back_' . uniqid()]);
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    $connection->transaction(static fn () => $committed->update(['name' => 'committed_' . uniqid()]));
+
+    expect($this->index->flushes)->toHaveCount(2)
+        ->and($this->index->flushes[0])->toContain(CacheLabel::row($rolled_back->getTable(), $rolled_back->getKey()))
+        ->and($this->index->flushes[1])->toContain(CacheLabel::row($committed->getTable(), $committed->getKey()));
+});
+
+it('waits for the commit of its own connection when Laravel runs its callback at the commit of another one', function (): void {
+    config(['database.connections.labels_second' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
+    $second = Illuminate\Support\Facades\DB::connection('labels_second');
+    [$before, $inside] = [makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $before->getConnection();
+
+    $connection->transaction(function () use ($second, $before, $inside): void {
+        $before->update(['name' => 'before_' . uniqid()]);
+
+        // The innermost open transaction is the other connection's: Laravel attaches this write's callback to it.
+        $second->transaction(static fn () => $inside->update(['name' => 'inside_' . uniqid()]));
+
+        expect($this->index->flushes)->toBe([]);
+    });
+
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushedLabels())->toContain(
+            CacheLabel::row($before->getTable(), $before->getKey()),
+            CacheLabel::row($inside->getTable(), $inside->getKey()),
+        );
+});
+
+it('keeps the labels of a write on the outer connection when the inner connection rolls back in full', function (): void {
+    // Two connections of their own: on the RefreshDatabase connection the inner rollback would be a savepoint rollback.
+    config([
+        'database.connections.labels_outer' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+        'database.connections.labels_inner' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+    ]);
+    $outer = Illuminate\Support\Facades\DB::connection('labels_outer');
+    $inner = Illuminate\Support\Facades\DB::connection('labels_inner');
+    $owner = new Role();
+    $owner->setConnection('labels_outer');
+    $label = CacheLabel::table('outer_audit_rows');
+
+    $outer->transaction(function () use ($inner, $owner, $label): void {
+        try {
+            // A write on the outer connection while the inner one's transaction is innermost.
+            $inner->transaction(static function () use ($owner, $label): void {
+                resolve(CacheLabelInvalidator::class)->flushLabels($owner, $label);
+
+                throw new RuntimeException('rollback the inner connection');
+            });
+        } catch (RuntimeException) {
+        }
+
+        expect($this->index->flushedLabels())->not->toContain($label);
+    });
+
+    expect($this->index->flushedLabels())->toContain($label);
+});
+
+it('flushes at once, through the index, a write with no transaction open', function (): void {
+    config(['database.connections.labels_untransacted' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
+    $owner = new Role();
+    $owner->setConnection('labels_untransacted');
+
+    expect($owner->getConnection()->transactionLevel())->toBe(0);
+
+    resolve(CacheLabelInvalidator::class)->flushLabels($owner, CacheLabel::acl(), CacheLabel::acl(), CacheLabel::user(5));
+    resolve(CacheLabelInvalidator::class)->flushLabels(null, CacheLabel::docs());
+
+    expect($this->index->flushes)->toBe([[CacheLabel::acl(), CacheLabel::user(5)], [CacheLabel::docs()]]);
+});
+
+it('forgets the labels collected in a request or job when its scope ends', function (): void {
+    $first = resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class);
+
+    expect(resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class))->toBe($first);
+
+    app()->forgetScopedInstances();
+
+    expect(resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class))->not->toBe($first);
 });
 
 it('flushes the labels of a whole transaction once after the commit, deduplicated', function (): void {

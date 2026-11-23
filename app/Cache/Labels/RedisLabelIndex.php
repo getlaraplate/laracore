@@ -8,6 +8,7 @@ use Illuminate\Cache\RedisStore;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use Redis;
 
@@ -27,11 +28,17 @@ use Redis;
  * Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in
  * different hash slots.
  */
-final readonly class RedisLabelIndex implements ICacheLabelIndex
+final readonly class RedisLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
 {
     private const string LABEL_KEY = 'label:';
 
     private const string FLUSHED_KEY = 'labelflush:';
+
+    /**
+     * The single hash of flush times the index wrote before v1.81.0, with no expiry. Nothing reads it any more:
+     * {@see pruneStale()} deletes it.
+     */
+    private const string LEGACY_FLUSHED_HASH = 'labelflush';
 
     /**
      * Page size for every PHP-driven loop, so no single Redis command or script does unbounded work.
@@ -78,22 +85,18 @@ return 1
 LUA;
 
     /**
-     * Flushes labels in one call when they hold few members: records the flush time of every label (on the first
-     * call only) before deleting anything, then deletes members and removes them from their sets, label after label,
-     * up to a budget of members per call, atomically, so a member added by a store that lands between two calls
-     * keeps its membership for the next flush.
+     * Flushes labels in one call when they hold few members: deletes members and removes them from their sets, label
+     * after label, up to a budget of members per call, then records the flush time of every label (on the first call
+     * only), atomically, so a member added by a store that lands between two calls keeps its membership for the next
+     * flush. The deletes come first: under `maxmemory` with `noeviction` Redis refuses a script whose first write is a
+     * `SET`, while deletes are allowed and let the script write on; inside one atomic script the order does not change
+     * what a racing store sees.
      * KEYS: the n label sets, then their n flush records. ARGV: budget, 1 to record the flush time, record ttl (ms).
      * Returns the 1-based positions of the labels that may still hold members.
      */
     private const string LUA_FLUSH = <<<'LUA'
 local labels = #KEYS / 2
 local budget = tonumber(ARGV[1])
-if ARGV[2] == '1' then
-    local now = micros()
-    for i = 1, labels do
-        redis.call('SET', KEYS[labels + i], now, 'PX', ARGV[3])
-    end
-end
 local unfinished = {}
 for i = 1, labels do
     if budget > 0 then
@@ -108,6 +111,12 @@ for i = 1, labels do
         end
     else
         unfinished[#unfinished + 1] = i
+    end
+end
+if ARGV[2] == '1' then
+    local now = micros()
+    for i = 1, labels do
+        redis.call('SET', KEYS[labels + i], now, 'PX', ARGV[3])
     end
 end
 return unfinished
@@ -190,8 +199,14 @@ LUA;
                     ...[(string) self::CHUNK, $record ? '1' : '0', $record_ttl],
                 );
 
+                // phpredis answers an error reply (an `-OOM`, a script error) with false where Predis throws: the
+                // flush did not happen, so it must not pass for done.
+                if (! is_array($unfinished)) {
+                    throw LabelIndexUnavailableException::errorReply('flush', $unfinished, $this->lastError($connection));
+                }
+
                 $record = false;
-                $batch = array_values(array_map(static fn (int $position): string => $batch[$position - 1], array_filter((array) $unfinished, is_int(...))));
+                $batch = array_values(array_map(static fn (int $position): string => $batch[$position - 1], array_filter($unfinished, is_int(...))));
             }
         }
     }
@@ -201,6 +216,10 @@ LUA;
     {
         $connection = $this->store->connection();
         $now = $this->serverMicros($connection);
+
+        // Left by the index before v1.81.0, which kept every flush time in one hash without expiry.
+        $connection->del($this->store->getPrefix() . self::LEGACY_FLUSHED_HASH);
+
         $client_prefix = $this->connectionPrefix($connection);
         $prefix = $this->store->getPrefix();
         $seen = [];
@@ -230,9 +249,32 @@ LUA;
     }
 
     #[Override]
+    public function resolveKey(string $key, CacheDependencies $dependencies): string
+    {
+        return $key;
+    }
+
+    #[Override]
     public function supportsRowLabels(): bool
     {
         return true;
+    }
+
+    /**
+     * The error message phpredis kept for the last failed command, empty when there is none or the client is Predis.
+     */
+    private function lastError(Connection $connection): string
+    {
+        $client = $connection->client();
+
+        if (! $client instanceof Redis) {
+            return '';
+        }
+
+        $error = $client->getLastError();
+        $client->clearLastError();
+
+        return is_string($error) ? $error : '';
     }
 
     /**

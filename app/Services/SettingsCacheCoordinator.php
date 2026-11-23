@@ -72,11 +72,8 @@ final class SettingsCacheCoordinator
 
     public function flushGroup(string $group_name): void
     {
-        if (app()->bound(PerModelSettingResolver::class)) {
-            app(PerModelSettingResolver::class)->flushGroup($group_name);
-        } else {
-            Cache::forget(PerModelSettingResolver::groupCacheKey($group_name));
-        }
+        // Unbound, the container builds a throwaway resolver, which still forgets the persistent entry.
+        app(PerModelSettingResolver::class)->flushGroup($group_name);
 
         if ($group_name === 'versioning') {
             $this->flushVersioningCaches();
@@ -107,11 +104,7 @@ final class SettingsCacheCoordinator
 
     private function flushNameIndex(): void
     {
-        if (app()->bound(PerModelSettingResolver::class)) {
-            app(PerModelSettingResolver::class)->flushNameIndex();
-        } else {
-            Cache::forget(PerModelSettingResolver::nameIndexCacheKey());
-        }
+        app(PerModelSettingResolver::class)->flushNameIndex();
     }
 
     private function flushVersioningCaches(): void

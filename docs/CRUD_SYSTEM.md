@@ -776,18 +776,20 @@ a response holding rows of a table also carries `rows:{table}`, which a whole-ta
   touched and the cached details of the other rows stay. A write held for approval (HTTP 202), a disapproval and a
   withdrawal change no record row, only a pending request: every create, change or removal of a `Modification` flushes
   the table and the row of its record too (a preview embeds the request, and a model that hides pending deletions
-  drops the record from the lists of whoever cannot approve). The lock writes its columns with a query that fires no event,
+  drops the record from the lists of whoever cannot approve). A pending create has no record yet, so its request
+  flushes no record labels, only those of the modifications table. The lock writes its columns with a query that fires no event,
   so `HasLocks` flushes the row and table labels itself. A module action (`domainAction`) runs arbitrary code and
   flushes the whole table of the entity afterwards, as does the `clearModelCache` operation.
 - `Cache::clearByEntity()` flushes the whole table of a `HasCache` entity (its table label and `rows:{table}`, so
   details are reached too), `Cache::clearByUser()` and `Cache::clearByGroup()` the `user:{id}` and `role:{id}` labels
   (a flush of a label deletes every entry carrying it).
-- Every flush made inside a transaction runs after the commit.
+- Every flush made inside a transaction runs after the commit, or after the rollback when the transaction rolls back
+  (a read inside it may have cached rows the rollback removed). The dynamic content lists are flushed the same way.
 - A write that fires no Eloquent event must flush the labels itself, see `CACHE_LABELS_DEVELOPER.md`.
 
 **Degraded behaviour.** With a `redis` store, alone or as the first store of `failover`, while Redis is down the index
-reads nothing and stores nothing: every read is computed and every write succeeds. Redis is tried again at most once a
-second per host. Invalidations issued meanwhile cannot reach Redis, so after recovery every entry stored through the
+reads nothing and stores nothing: every read is computed and every write succeeds. Each process tries Redis again at
+most once a second (the outage marker is shared by the processes of a host, the retry pacing is per process). Invalidations issued meanwhile cannot reach Redis, so after recovery every entry stored through the
 index (label `stored`) is flushed before any entry is read or stored. On `database`, `file`, `memcached` and similar stores, version counters replace row labels
 and a record change flushes the whole table label (over-invalidation, never staleness). With the `null` store nothing
 is cached.

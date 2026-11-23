@@ -12,6 +12,7 @@ use Modules\Core\Cache\CacheManager;
 use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLookup;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\WhereClause;
 use Modules\Core\Contracts\ICacheLabelIndex;
@@ -62,23 +63,19 @@ final class AclResolverService
     public function getEffectiveAcls(User $user, Permission $permission): Collection
     {
         $connection_name = $this->assertSharedConnection($user, $permission);
-        $index = self::index();
-        $lookup = self::lookup($index, $connection_name, $user->getKey(), $permission->getKey());
-
-        if ($lookup->hit && $lookup->value instanceof Collection) {
-            return $lookup->value;
-        }
-
-        // Reading the ACL rows is part of working out what the user may read: the per-row select check of the
-        // ACL model must not ask the very question being answered, or a role that holds a permission narrowed by
-        // an ACL (the guest of the api, the publisher) could not resolve its own narrowing.
-        /** @var Collection<int, ACL> $acls */
-        $acls = ResolvingAuthorization::resolve(fn (): Collection => $this->resolveAcls($user, $permission));
 
         // Stores nothing while a failover index is degraded, or when a label was flushed during the resolution.
-        $index->store($lookup, $acls, self::CACHE_TTL);
-
-        return $acls;
+        /** @var Collection<int, ACL> */
+        return resolve(LabelledCache::class)->remember(
+            self::buildCacheKey($connection_name, $user->getKey(), $permission->getKey()),
+            self::dependencies($user->getKey()),
+            self::CACHE_TTL,
+            // Reading the ACL rows is part of working out what the user may read: the per-row select check of the
+            // ACL model must not ask the very question being answered, or a role that holds a permission narrowed by
+            // an ACL (the guest of the api, the publisher) could not resolve its own narrowing.
+            fn (): Collection => ResolvingAuthorization::resolve(fn (): Collection => $this->resolveAcls($user, $permission)),
+            static fn (mixed $acls): bool => $acls instanceof Collection,
+        );
     }
 
     /**
@@ -229,15 +226,20 @@ final class AclResolverService
     }
 
     /**
-     * The lookup of a resolution. It depends on the ACL rows (`acl`, also flushed when a role gains or loses a
-     * permission) and on the roles and direct permissions of the user (`user:{id}`).
+     * The lookup of a resolution, to forget it.
      */
     private static function lookup(ICacheLabelIndex $index, string $connection_name, mixed $user_id, mixed $perm_id): CacheLookup
     {
-        return $index->lookup(
-            self::buildCacheKey($connection_name, $user_id, $perm_id),
-            new CacheDependencies([CacheLabel::acl(), CacheLabel::user(self::keyString($user_id))]),
-        );
+        return $index->lookup(self::buildCacheKey($connection_name, $user_id, $perm_id), self::dependencies($user_id));
+    }
+
+    /**
+     * A resolution depends on the ACL rows (`acl`, also flushed when a role gains or loses a permission) and on the
+     * roles and direct permissions of the user (`user:{id}`).
+     */
+    private static function dependencies(mixed $user_id): CacheDependencies
+    {
+        return new CacheDependencies([CacheLabel::acl(), CacheLabel::user(self::keyString($user_id))]);
     }
 
     private static function keyString(mixed $key): string

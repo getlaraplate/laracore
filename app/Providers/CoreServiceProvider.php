@@ -55,9 +55,9 @@ use Modules\Core\ApplicationContent\ApplicationContentRetrievalProviderRegistry;
 use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProviderRegistryInterface;
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
-use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Cache\Labels\MeasuredLabelIndex;
 use Modules\Core\Cache\Labels\PendingLabelFlushes;
 use Modules\Core\Console\PruneCacheLabelsCommand;
@@ -388,21 +388,16 @@ final class CoreServiceProvider extends ModuleServiceProvider
             $schedule->command(ModelLockSweepCommand::class)->everyFiveMinutes()->onOneServer();
             $schedule->command(PruneCacheLabelsCommand::class)->hourly()->onOneServer();
 
-            $crons = [];
             $cache_key = new ReflectionClass(CronJob::class)->newInstanceWithoutConstructor()->getTable();
 
-            $index = $this->app->make(ICacheLabelIndex::class);
-            $lookup = $index->lookup($cache_key, new CacheDependencies([CacheLabel::table($cache_key)]));
-
-            if ($lookup->hit) {
-                $crons = $this->normalizeCronJobs($lookup->value);
-            } else {
-                $crons = $this->loadCronJobsFromDatabase();
-
-                if ($crons !== []) {
-                    $index->store($lookup, $crons, (int) config('cache.duration.long'));
-                }
-            }
+            // An empty list is not stored: the next schedule run reads the table again.
+            $crons = $this->normalizeCronJobs($this->app->make(LabelledCache::class)->remember(
+                $cache_key,
+                [CacheLabel::table($cache_key)],
+                (int) config('cache.duration.long'),
+                fn (): array => $this->loadCronJobsFromDatabase(),
+                static fn (mixed $crons): bool => $crons !== [],
+            ));
 
             foreach ($crons as $cron) {
                 try {

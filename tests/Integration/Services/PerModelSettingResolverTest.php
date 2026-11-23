@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
 use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe;
 
 beforeEach(function (): void {
     app(PerModelSettingResolver::class)->flush();
@@ -115,12 +115,12 @@ it('stores each settings group under a group-specific cache key', function (): v
 
     $resolver->flush();
 
-    expect(Cache::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse();
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse();
 
     $group = $resolver->group('translations');
 
     expect($group->has('translation_group_cache_test'))->toBeTrue()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeTrue();
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeTrue();
 });
 
 it('resolves name based reads through the settings name index', function (): void {
@@ -136,10 +136,10 @@ it('resolves name based reads through the settings name index', function (): voi
 
     $resolver->flush();
 
-    expect(Cache::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeFalse()
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeFalse()
         ->and($resolver->string('indexed_setting_test', 'fallback'))->toBe('from-index')
-        ->and(Cache::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeTrue()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('base')))->toBeTrue();
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeTrue()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('base')))->toBeTrue();
 });
 
 it('flushes one group without clearing another loaded group', function (): void {
@@ -165,13 +165,13 @@ it('flushes one group without clearing another loaded group', function (): void 
     $resolver->group('translations');
     $resolver->group('erp');
 
-    expect(Cache::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeTrue()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue();
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeTrue()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue();
 
     $resolver->flushGroup('translations');
 
-    expect(Cache::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue();
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue();
 });
 
 it('reloads a group from the database when the cache payload is not a collection', function (): void {
@@ -189,7 +189,7 @@ it('reloads a group from the database when the cache payload is not a collection
     $resolver = app(PerModelSettingResolver::class);
     $resolver->flush();
 
-    Cache::forever(PerModelSettingResolver::groupCacheKey($group), [
+    SettingsCacheProbe::put(PerModelSettingResolver::groupCacheKey($group), [
         $name => ['name' => $name, 'value' => 'stale-array'],
     ]);
 
@@ -214,11 +214,56 @@ it('rebuilds the name index from the database when the cached payload is not an 
     $resolver = app(PerModelSettingResolver::class);
     $resolver->flush();
 
-    Cache::forever(
+    SettingsCacheProbe::put(
         PerModelSettingResolver::nameIndexCacheKey(),
         new Illuminate\Support\Collection([$name => 'base']),
     );
 
     expect($resolver->string($name, 'missing'))->toBe('from-db')
-        ->and(Cache::get(PerModelSettingResolver::nameIndexCacheKey()))->toBeArray();
+        ->and(SettingsCacheProbe::get(PerModelSettingResolver::nameIndexCacheKey()))->toBeArray();
+});
+
+it('caches the groups and the name index through the label index under the settings table, for the long duration', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $resolver = new PerModelSettingResolver();
+
+    Setting::factory()->persistedWithoutApprovalCapture()->create([
+        'name' => 'labelled_settings_test',
+        'value' => 'v',
+        'type' => SettingTypeEnum::String,
+        'group_name' => 'base',
+        'description' => 'test',
+    ]);
+
+    $resolver->string('labelled_settings_test', 'missing');
+
+    $stored = array_map(static fn (array $store): array => [
+        $store['lookup']->key,
+        $store['lookup']->dependencies->labels,
+        $store['ttl'],
+    ], $index->stores);
+
+    expect($stored)->toBe([
+        [PerModelSettingResolver::nameIndexCacheKey(), ['table:core_settings'], (int) config('cache.duration.long')],
+        [PerModelSettingResolver::groupCacheKey('base'), ['table:core_settings'], (int) config('cache.duration.long')],
+    ]);
+});
+
+it('reloads every group after a settings write that flushes the table label', function (): void {
+    Setting::factory()->persistedWithoutApprovalCapture()->create([
+        'name' => 'labelled_settings_flush_test',
+        'value' => 'before',
+        'type' => SettingTypeEnum::String,
+        'group_name' => 'base',
+        'description' => 'test',
+    ]);
+
+    expect(new PerModelSettingResolver()->string('labelled_settings_flush_test', 'missing'))->toBe('before');
+
+    // A write that fires no model event and no coordinator call: only the label flush reaches the cached group.
+    Setting::query()->where('name', 'labelled_settings_flush_test')->update(['value' => json_encode('after')]);
+    resolve(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable('core_settings');
+
+    expect(new PerModelSettingResolver()->string('labelled_settings_flush_test', 'missing'))->toBe('after');
 });

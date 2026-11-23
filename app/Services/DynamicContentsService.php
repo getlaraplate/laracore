@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Modules\Core\Services;
 
+use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Entity;
@@ -26,7 +31,7 @@ final class DynamicContentsService
      * writes so invalidation works even after {@see self::reset()} drops the
      * in-process key registry (parallel BatchSeeder forks) or when another
      * process never warmed the registry — without this, stale
-     * `rememberForever` preset lists miss new preset ids ("No cached preset [N]").
+     * cached preset lists miss new preset ids ("No cached preset [N]").
      */
     private const string METADATA_GENERATION_KEY = 'core.dynamic_contents.generation';
 
@@ -115,7 +120,7 @@ final class DynamicContentsService
         $cache_key = $this->typedMemoKey($entity_model->getCacheKey(), $type_cache_key);
         $this->registerEntityMemoKey($cache_key);
 
-        $this->entities_cache[$type_cache_key] = $this->rememberForeverCollection(
+        $this->entities_cache[$type_cache_key] = $this->rememberCollection(
             $cache_key,
             fn (): Collection => $entity_class::query()
                 ->withoutGlobalScopes()
@@ -147,7 +152,7 @@ final class DynamicContentsService
         $cache_key = $this->typedMemoKey($preset_model->getCacheKey(), $type_cache_key);
         $this->registerPresetMemoKey($cache_key);
 
-        $this->presets_cache[$type_cache_key] = $this->rememberForeverCollection(
+        $this->presets_cache[$type_cache_key] = $this->rememberCollection(
             $cache_key,
             fn (): Collection => $preset_class::query()
                 ->withoutGlobalScopes()
@@ -187,7 +192,7 @@ final class DynamicContentsService
         $presets_table = CoreTables::Presets->value;
         $entities_table = CoreTables::Entities->value;
 
-        $this->presettables_cache[$type_cache_key] = $this->rememberForeverCollection(
+        $this->presettables_cache[$type_cache_key] = $this->rememberCollection(
             $cache_key,
             fn (): Collection => $presettable_class::query()
                 ->join($presets_table, "{$presettables_table}.preset_id", '=', "{$presets_table}.id")
@@ -205,44 +210,44 @@ final class DynamicContentsService
 
     /**
      * Clear in-memory cache for entities.
-     * Should be called when entities are modified.
+     * Should be called when entities are modified, with the written model as owner (see bumpMetadataGeneration()).
      */
-    public function clearEntitiesCache(): void
+    public function clearEntitiesCache(?Model $owner = null): void
     {
         $this->entities_cache = [];
         $this->forgetRegisteredMemoKeys(self::$registered_entity_memo_keys);
         $this->forgetMemoCacheKey('entities');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
      * Clear in-memory cache for presets.
-     * Should be called when presets are modified.
+     * Should be called when presets are modified, with the written model as owner (see bumpMetadataGeneration()).
      */
-    public function clearPresetsCache(): void
+    public function clearPresetsCache(?Model $owner = null): void
     {
         $this->presets_cache = [];
         $this->forgetRegisteredMemoKeys(self::$registered_preset_memo_keys);
         $this->forgetMemoCacheKey('presets');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
      * Clear in-memory cache for presettables.
-     * Should be called when presettables are modified.
+     * Should be called when presettables are modified, with the written model as owner (see bumpMetadataGeneration()).
      */
-    public function clearPresettablesCache(): void
+    public function clearPresettablesCache(?Model $owner = null): void
     {
         $this->presettables_cache = [];
         $this->forgetRegisteredMemoKeys(self::$registered_presettable_memo_keys);
         $this->forgetMemoCacheKey('presettables');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
-     * Clear all in-memory caches.
+     * Clear all in-memory caches, with the written model as owner when a write causes it (see bumpMetadataGeneration()).
      */
-    public function clearAllCaches(): void
+    public function clearAllCaches(?Model $owner = null): void
     {
         $this->entities_cache = [];
         $this->presets_cache = [];
@@ -253,7 +258,7 @@ final class DynamicContentsService
         $this->forgetMemoCacheKey('entities');
         $this->forgetMemoCacheKey('presets');
         $this->forgetMemoCacheKey('presettables');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
@@ -279,30 +284,31 @@ final class DynamicContentsService
     }
 
     /**
-     * Remember a value forever via Cache::memo(), guaranteeing an Eloquent Collection.
+     * Remember a list through the label index for `cache.duration.long`, guaranteeing an Eloquent Collection.
      *
-     * Persistent drivers (Redis serializers, failover, fork reconnect) can rehydrate
-     * Eloquent collections as plain arrays. Laravel's rememberForever treats any
-     * non-null value as a hit, so a cached array would bypass the loader and violate
-     * our return type — reload from the database when that happens.
+     * The entry carries {@see CacheLabel::dynamicContents()}, flushed when the metadata generation moves, and on a
+     * guarded index the `stored` label the recovery purge flushes, so a bump lost during an outage is made good. The
+     * keys still embed the generation, which keeps processes that missed a flush on a key of their own. No
+     * Cache::memo() layer: this scoped service already keeps each list in memory for the request.
+     *
+     * Persistent drivers (Redis serializers, failover, fork reconnect) can rehydrate Eloquent collections as plain
+     * arrays: such a hit is reloaded from the database and stored over.
      *
      * @template TModel of \Illuminate\Database\Eloquent\Model
      *
      * @param  callable(): Collection<int, TModel>  $loader
      * @return Collection<int, TModel>
      */
-    private function rememberForeverCollection(string $cache_key, callable $loader): Collection
+    private function rememberCollection(string $cache_key, callable $loader): Collection
     {
-        $cached = Cache::memo()->rememberForever($cache_key, $loader);
-
-        if ($cached instanceof Collection) {
-            return $cached;
-        }
-
-        $fresh = $loader();
-        Cache::memo()->forever($cache_key, $fresh);
-
-        return $fresh;
+        /** @var Collection<int, TModel> */
+        return resolve(LabelledCache::class)->remember(
+            $cache_key,
+            [CacheLabel::dynamicContents()],
+            (int) config('cache.duration.long'),
+            Closure::fromCallable($loader),
+            static fn (mixed $list): bool => $list instanceof Collection,
+        );
     }
 
     /**
@@ -354,11 +360,18 @@ final class DynamicContentsService
         return 0;
     }
 
-    private function bumpMetadataGeneration(): void
+    /**
+     * Moves the generation at once, and flushes the label of the lists through the invalidator: with the written model
+     * as owner, after the commit of its transaction, or after its rollback, so a list another request cached from the
+     * rows before the commit, or one built from rows a rollback removed, is not served. Without an owner it flushes at
+     * once.
+     */
+    private function bumpMetadataGeneration(?Model $owner): void
     {
         // Use the non-memo store only. Cache::memo()->forget() also deletes from the
         // underlying repository, which would wipe the generation we just wrote.
         Cache::forever(self::METADATA_GENERATION_KEY, $this->metadataGeneration() + 1);
+        resolve(CacheLabelInvalidator::class)->flushLabels($owner, CacheLabel::dynamicContents());
     }
 
     private function typedMemoKey(string $cache_key, string $type_cache_key): string

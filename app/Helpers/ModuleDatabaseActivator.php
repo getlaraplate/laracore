@@ -74,7 +74,8 @@ final class ModuleDatabaseActivator implements ActivatorInterface
                 return false;
             }
 
-            Cache::put($cache_key, true);
+            // A gate re-verified with hasTable() above, kept for an hour like the module statuses, never for good.
+            Cache::put($cache_key, true, 3600);
 
             return true;
         } catch (Throwable $e) {
@@ -164,7 +165,7 @@ final class ModuleDatabaseActivator implements ActivatorInterface
     {
         $name = $module instanceof Module ? $module->getName() : $module;
 
-        return in_array($name, $this->modulesStatuses, true) === $status;
+        return $status === in_array($name, $this->modulesStatuses, true);
     }
 
     #[Override]

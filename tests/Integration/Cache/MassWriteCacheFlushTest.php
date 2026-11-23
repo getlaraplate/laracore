@@ -5,15 +5,11 @@ declare(strict_types=1);
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Contracts\ICacheLabelIndex;
-use Modules\Core\Locking\Console\LockedRemoveCommand;
-use Modules\Core\Locking\Console\OptimisticLockAddCommand;
-use Modules\Core\Locking\Console\OptimisticLockRemoveCommand;
 use Modules\Core\Models\Modification;
 use Modules\Core\Models\Setting;
 use Modules\Core\Seeding\ModuleState;
 use Modules\Core\Seeding\ModuleStateResolver;
 use Modules\Core\Seeding\SettingsCleaner;
-use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRemoveCommand;
 use Modules\Core\Support\CrudApiExposure;
 use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
 use Modules\Core\Tests\Stubs\Seeding\FixedModuleStateResolver;
@@ -44,25 +40,38 @@ function massWriteSetting(string $name, ?string $module = null, mixed $baseline 
     ]);
 }
 
-it('flushes the settings table after a settings command removes its setting', function (string $command_class, string $prefix): void {
-    $command = app($command_class);
-    $table = 'mass_write_' . uniqid();
-    massWriteSetting(Modules\Core\Services\PerModelSettingResolver::nameFor($prefix, $table));
+/**
+ * Runs a settings command on the stub model, its migration written to a filesystem that keeps nothing.
+ */
+function massWriteRunCommand(string $command): void
+{
+    $files = Mockery::mock(Illuminate\Filesystem\Filesystem::class)->makePartial();
+    $files->shouldReceive('put')->andReturn(1);
+    $files->shouldReceive('makeDirectory')->andReturn(true);
+    app()->instance(Illuminate\Filesystem\Filesystem::class, $files);
+
+    test()->artisan($command, [
+        'model' => 'MassWriteStubModel',
+        '--namespace' => 'Modules\\Core\\Tests\\Stubs\\Console',
+    ])->assertSuccessful();
+}
+
+it('flushes the settings table after a settings command removes its setting', function (string $command, string $prefix): void {
+    massWriteSetting(Modules\Core\Services\PerModelSettingResolver::nameFor($prefix, 'mass_write_stub'));
     $this->index->flushes = [];
 
-    (new ReflectionMethod($command, 'updateSettingsTable'))->invoke($command, ...($command_class === ModelSoftDeletesRemoveCommand::class ? [$table] : [$table, false]));
+    massWriteRunCommand($command);
 
-    expect($this->index->flushedLabels())->toContain(...massWriteWholeTable((new Setting)->getTable()));
+    expect($this->index->flushedLabels())->toContain(...massWriteWholeTable((new Setting)->getTable()))
+        ->and(Setting::query()->where('name', Modules\Core\Services\PerModelSettingResolver::nameFor($prefix, 'mass_write_stub'))->exists())->toBeFalse();
 })->with([
-    'locked remove' => [LockedRemoveCommand::class, Modules\Core\Database\Seeders\CoreDatabaseSeeder::LOCK_NAME_PREFIX],
-    'optimistic lock remove' => [OptimisticLockRemoveCommand::class, Modules\Core\Database\Seeders\CoreDatabaseSeeder::OPTIMISTIC_LOCK_NAME_PREFIX],
-    'soft deletes remove' => [ModelSoftDeletesRemoveCommand::class, Modules\Core\Database\Seeders\CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX],
+    'locked remove' => ['model:locked-remove', Modules\Core\Database\Seeders\CoreDatabaseSeeder::LOCK_NAME_PREFIX],
+    'optimistic lock remove' => ['model:optimistic-lock-remove', Modules\Core\Database\Seeders\CoreDatabaseSeeder::OPTIMISTIC_LOCK_NAME_PREFIX],
+    'soft deletes remove' => ['model:soft-deletes-remove', Modules\Core\Database\Seeders\CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX],
 ]);
 
 it('flushes the settings table after the optimistic lock command inserts its setting', function (): void {
-    $command = app(OptimisticLockAddCommand::class);
-
-    (new ReflectionMethod($command, 'updateSettingsTable'))->invoke($command, 'mass_write_' . uniqid(), true);
+    massWriteRunCommand('model:optimistic-lock-add');
 
     expect($this->index->flushedLabels())->toContain(...massWriteWholeTable((new Setting)->getTable()));
 });

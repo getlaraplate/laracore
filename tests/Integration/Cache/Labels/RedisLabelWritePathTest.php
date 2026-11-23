@@ -90,6 +90,26 @@ it('flushes a transaction of twenty creations in one index and one stats round t
     expect($counts)->toBe(['index' => 1, 'stats' => 1]);
 })->group('redis');
 
+it('flushes an update whose table and row labels hold cached entries in one index round trip', function (): void {
+    $role = $this->roles->first();
+    $table = $role->getTable();
+    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::table($table)]);
+
+    // Entries under the table label and under the row label of the role, well within one script's budget.
+    foreach (range(1, 50) as $i) {
+        $this->index->store($this->index->lookup('list:' . $i, $dependencies), 'list ' . $i, 60);
+    }
+
+    $detail = $this->index->lookup('detail', new Modules\Core\Cache\Labels\CacheDependencies([], row_tables: [$table]));
+    $this->index->store($detail, 'detail', 60, [Modules\Core\Cache\Labels\CacheLabel::row($table, $role->getKey())]);
+
+    $counts = redisRoundTripsOf(static fn () => $role->update(['name' => 'renamed_' . uniqid()]));
+
+    expect($counts['index'])->toBe(1)
+        ->and($this->index->lookup('list:1', $dependencies)->hit)->toBeFalse()
+        ->and($this->index->lookup('detail', new Modules\Core\Cache\Labels\CacheDependencies([], row_tables: [$table]))->hit)->toBeFalse();
+})->group('redis');
+
 it('counts flushes and lookups on a Redis stats store', function (): void {
     $this->index->flush('table:core_users', 'row:core_users:1', 'row:core_users:2');
     $this->index->flush('table:core_users');
