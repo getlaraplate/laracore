@@ -379,22 +379,24 @@ it('flushes the record of a model that hides its pending deletion when the reque
         $table->softDeletes();
         $table->boolean('is_deleted')->storedAs('deleted_at IS NOT NULL');
     });
-    $record = Modules\Core\Tests\Stubs\Approvals\HiddenWhilePendingDeletionModel::query()->create(['name' => 'kept']);
-    $table = $record->getTable();
-    $expected = [CacheLabel::table($table), CacheLabel::row($table, $record->getKey())];
-    $spy->flushes = [];
 
-    $request = crudInvalidationPendingRequest($record, Modules\Core\Approvals\Operation::Delete);
+    try {
+        $record = Modules\Core\Tests\Stubs\Approvals\HiddenWhilePendingDeletionModel::query()->create(['name' => 'kept']);
+        $table = $record->getTable();
+        $expected = [CacheLabel::table($table), CacheLabel::row($table, $record->getKey())];
+        $spy->flushes = [];
 
-    expect(array_merge(...$spy->flushes))->toContain(...$expected);
+        $request = crudInvalidationPendingRequest($record, Modules\Core\Approvals\Operation::Delete);
 
-    $spy->flushes = [];
-    $close($request);
+        expect(array_merge(...$spy->flushes))->toContain(...$expected);
 
-    $flushed = array_merge(...$spy->flushes);
-    Illuminate\Support\Facades\Schema::dropIfExists('approvals_soft_stub');
+        $spy->flushes = [];
+        $close($request);
 
-    expect($flushed)->toContain(...$expected);
+        expect(array_merge(...$spy->flushes))->toContain(...$expected);
+    } finally {
+        Illuminate\Support\Facades\Schema::dropIfExists('approvals_soft_stub');
+    }
 })->with([
     'disapproved' => [static function (Modules\Core\Models\Modification $request): void {
         $request->active = false;
@@ -404,3 +406,34 @@ it('flushes the record of a model that hides its pending deletion when the reque
         $request->delete();
     }],
 ]);
+
+it('misses a cached preview detail once a non-approver captures a change through a real PATCH', function (): void {
+    // Capture is skipped in the console: the PATCH must run as an HTTP request would.
+    Modules\Core\Tests\Support\HttpContext::pretendHttpRequest();
+    $spy = crudInvalidationBind('array');
+    $setting = Setting::factory()->persistedWithoutApprovalCapture()->create(['type' => 'string', 'value' => 'x', 'choices' => null]);
+    $writer = User::factory()->create();
+
+    foreach (['select', 'update'] as $action) {
+        $permission = Modules\Core\Support\PermissionName::forModel(new Setting(), $action);
+        Permission::findOrCreate($permission, 'web');
+        $writer->givePermissionTo($permission);
+    }
+
+    $superadmin = crudInvalidationSuperadmin();
+    $detail = route('core.crud.detail', ['module' => 'core', 'entity' => 'settings']) . '?' . http_build_query(['id' => $setting->getKey(), 'preview' => 'true']);
+    $this->actingAs($superadmin);
+    crudInvalidationRead($spy, new Setting(), $detail);
+    crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $detail));
+
+    // A fresh session for each actor: the session guard logs out a session whose password hash is another user's.
+    $this->flushSession();
+    $this->actingAs($writer)
+        ->patchJson(route('core.crud.replace', ['module' => 'core', 'entity' => 'settings']), ['id' => $setting->getKey(), 'is_public' => true])
+        ->assertStatus(202);
+
+    $this->flushSession();
+    $this->actingAs($superadmin);
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $detail));
+    expect($setting->fresh()->is_public)->toBeFalse();
+});
