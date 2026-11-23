@@ -181,3 +181,34 @@ it('reports only the first failure of an outage', function (): void {
     expect($primary->attempts)->toBe(2);
     Exceptions::assertReportedCount(1);
 });
+
+it('degrades when a database primary loses its connection', function (): void {
+    $primary = new ThrowingLabelIndex();
+    $primary->failure = new Illuminate\Database\QueryException(
+        'mysql',
+        'select * from cache',
+        [],
+        new PDOException('SQLSTATE[HY000] [2002] Connection refused'),
+    );
+    $primary->failing = true;
+    $index = new FailoverLabelIndex($primary, failoverMarkerStore());
+
+    $lookup = $index->lookup('k', new CacheDependencies(['t']));
+    $index->flush('t');
+
+    expect($lookup->hit)->toBeFalse()
+        ->and($index->isDegraded())->toBeTrue();
+});
+
+it('lets a database error that is not a lost connection propagate', function (): void {
+    $primary = new ThrowingLabelIndex();
+    $primary->failure = new Illuminate\Database\QueryException(
+        'mysql',
+        'select * from cache',
+        [],
+        new PDOException('SQLSTATE[42S02]: Base table or view not found: 1146 Table cache does not exist'),
+    );
+    $primary->failing = true;
+
+    new FailoverLabelIndex($primary, failoverMarkerStore())->lookup('k', new CacheDependencies(['t']));
+})->throws(Illuminate\Database\QueryException::class);
