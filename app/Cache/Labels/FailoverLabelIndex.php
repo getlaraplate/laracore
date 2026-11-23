@@ -29,7 +29,8 @@ use Throwable;
  * per call. The pacing is per process, not per host: processes that read the marker before another one's failure try
  * the primary on their own, at most once a second each.
  * Residual: a host that never saw a failure may serve stale entries until some host flushes the label (Redis is
- * shared, so one flush clears all). Only connection failures count as an outage: a Redis or Predis exception, and a
+ * shared, so one flush clears all). Only connection failures count as an outage: a Redis or Predis exception, an error
+ * reply the primary reports ({@see LabelIndexUnavailableException}, such as a flush refused under `-OOM`), and a
  * database exception Laravel's lost connection detector recognises (a failover cache whose first store is `database`);
  * any other exception is a bug and propagates. A memcached primary throws nothing when its server is down (it answers
  * misses and failed writes), so it never degrades: see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
@@ -119,6 +120,7 @@ final class FailoverLabelIndex implements ICacheLabelIndex
     private static function isOutage(Throwable $throwable): bool
     {
         return $throwable instanceof RedisException
+            || $throwable instanceof LabelIndexUnavailableException
             || (class_exists(PredisException::class) && $throwable instanceof PredisException)
             || (($throwable instanceof QueryException || $throwable instanceof PDOException) && self::lostConnection($throwable));
     }

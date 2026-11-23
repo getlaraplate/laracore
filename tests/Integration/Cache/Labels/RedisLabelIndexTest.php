@@ -127,3 +127,49 @@ it('flushes several labels holding more members than one script deletes', functi
             ->and($connection->exists($prefix . "k{$position}_0", $prefix . "k{$position}_1499"))->toBe(0);
     }
 })->group('redis');
+
+it('throws when Redis answers the flush script with an error reply instead of dropping the flush', function (): void {
+    $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
+    // phpredis returns false for an error reply such as -OOM; the client is not a phpredis one here, so no last error.
+    $connection->shouldReceive('command')->once()->with('eval', Mockery::any())->andReturn(false);
+    $connection->shouldReceive('client')->andReturn(new stdClass());
+    $store = Mockery::mock(Illuminate\Cache\RedisStore::class);
+    $store->shouldReceive('connection')->andReturn($connection);
+    $store->shouldReceive('getPrefix')->andReturn('');
+
+    new RedisLabelIndex($store)->flush('table:core_users');
+})->throws(Modules\Core\Cache\Labels\LabelIndexUnavailableException::class);
+
+it('degrades the failover index when the flush script answers with an error reply', function (): void {
+    $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
+    $connection->shouldReceive('command')->once()->with('eval', Mockery::any())->andReturn(false);
+    $connection->shouldReceive('client')->andReturn(new stdClass());
+    $store = Mockery::mock(Illuminate\Cache\RedisStore::class);
+    $store->shouldReceive('connection')->andReturn($connection);
+    $store->shouldReceive('getPrefix')->andReturn('');
+    $index = new Modules\Core\Cache\Labels\FailoverLabelIndex(
+        new RedisLabelIndex($store),
+        new Modules\Core\Cache\Repository(new Illuminate\Cache\ArrayStore()),
+    );
+
+    $index->flush('table:core_users');
+
+    expect($index->isDegraded())->toBeTrue();
+});
+
+it('deletes the members of a flush before it writes the flush records', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    $index = new RedisLabelIndex($store);
+    $dependencies = new CacheDependencies(['table:core_users']);
+    $index->store($index->lookup('k', $dependencies), 'v', 60);
+    $connection = $store->connection();
+    $prefix = $store->getPrefix();
+    $script = new ReflectionClassConstant(RedisLabelIndex::class, 'LUA_MICROS')->getValue() . "\n"
+        . new ReflectionClassConstant(RedisLabelIndex::class, 'LUA_FLUSH')->getValue();
+
+    // An invalid record ttl makes the record SET fail, as an -OOM refusal would: what ran before it stays done.
+    $reply = $connection->eval($script, 2, $prefix . 'label:table:core_users', $prefix . 'labelflush:table:core_users', '1000', '1', '-5');
+
+    expect($reply)->toBeFalse()
+        ->and($index->lookup('k', $dependencies)->hit)->toBeFalse();
+})->group('redis');
