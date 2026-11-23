@@ -22,6 +22,9 @@ use WeakMap;
  * cached a value built from rows the rollback removed. A rolled back savepoint flushes nothing yet: its labels stay
  * collected, and the callbacks are registered again on the transaction still open, which flushes them when it ends.
  *
+ * Laravel attaches a callback to the innermost open transaction whatever its connection, so a callback may run at the
+ * commit of another connection: it then waits again for its own connection's transaction instead of flushing early.
+ *
  * Bound as a scoped singleton: the set must outlive the invalidator instances that fill it, and a pending callback
  * keeps the instance it was registered on. Labels left by a write whose callbacks were all dropped are forgotten
  * with the scope (the request or job).
@@ -78,7 +81,7 @@ final class PendingLabelFlushes
      */
     private function watch(Connection $connection, string $key): void
     {
-        $connection->afterCommit(fn () => $this->flush($key));
+        $connection->afterCommit(fn () => $this->committed($connection, $key));
 
         $manager = app()->bound('db.transactions') ? app('db.transactions') : null;
         $record = $manager instanceof DatabaseTransactionsManager ? $manager->callbackApplicableTransactions()->last() : null;
@@ -92,6 +95,18 @@ final class PendingLabelFlushes
         }
 
         $connection->afterRollBack(fn () => $this->rolledBack($connection, $key));
+    }
+
+    private function committed(Connection $connection, string $key): void
+    {
+        // Run at the commit of another connection's transaction: wait for this connection's own.
+        if (isset($this->pending[$key]) && self::inTransaction($connection)) {
+            $this->watch($connection, $key);
+
+            return;
+        }
+
+        $this->flush($key);
     }
 
     private function rolledBack(Connection $connection, string $key): void

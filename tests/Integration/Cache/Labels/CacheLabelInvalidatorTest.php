@@ -129,6 +129,29 @@ it('flushes a rolled back transaction and a committed one that follows it, each 
         ->and($this->index->flushes[1])->toContain(CacheLabel::row($committed->getTable(), $committed->getKey()));
 });
 
+it('waits for the commit of its own connection when Laravel runs its callback at the commit of another one', function (): void {
+    config(['database.connections.labels_second' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
+    $second = Illuminate\Support\Facades\DB::connection('labels_second');
+    [$before, $inside] = [makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $before->getConnection();
+
+    $connection->transaction(function () use ($second, $before, $inside): void {
+        $before->update(['name' => 'before_' . uniqid()]);
+
+        // The innermost open transaction is the other connection's: Laravel attaches this write's callback to it.
+        $second->transaction(static fn () => $inside->update(['name' => 'inside_' . uniqid()]));
+
+        expect($this->index->flushes)->toBe([]);
+    });
+
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushedLabels())->toContain(
+            CacheLabel::row($before->getTable(), $before->getKey()),
+            CacheLabel::row($inside->getTable(), $inside->getKey()),
+        );
+});
+
 it('flushes the labels of a whole transaction once after the commit, deduplicated', function (): void {
     $roles = [makeLabelRole(), makeLabelRole(), makeLabelRole()];
     $this->index->flushes = [];
