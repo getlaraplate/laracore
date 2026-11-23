@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.82.0] - 2026-11-23
+
+### 🚀 Features
+
+- *(versioning)* Switching a table's versioning off purges its edit history
+
+### 🐛 Bug Fixes
+
+- *(versioning)* An empty versioning setting reads as off
+- *(settings)* A stored false shows as its choice in the JSON setting select
+- *(locking)* The optimistic lock command stores its setting row
+- *(cache)* No value cached forever outside the label index
+- *(cache)* A stats failure pauses counting for a minute, not for the process
+- *(search)* Reindexing no longer flushes the CRUD cache of the model
+- *(cache)* A lost database connection degrades a failover index too
+- *(cache)* A flush Redis answers with an error degrades the index instead of vanishing
+- *(cache)* A rolled back transaction flushes what it collected
+- *(cache)* A deferred flush waits for the commit of its own connection
+- *(cache)* Prune the legacy labelflush hash of the Redis index
+- *(cache)* Dynamic content lists go through the label index
+- *(cache)* Register a deferred flush on its own connection's transaction
+- *(cache)* Flush the dynamic content lists after the commit of the write
+- *(cache)* A flush a memcached store refuses degrades the index
+- *(cache)* No modules table flag kept for good, the CRUD doc names the rollback flush
+
+### 🚜 Refactor
+
+- *(cache)* One remember helper for values cached through the label index
+
+### 📚 Documentation
+
+- *(versioning)* Switching versioning off and on
+- *(cache)* The failover retry pacing is per process, the marker per host
+- *(cache)* The label cache docs follow the follow-up fixes
+- *(cache)* Store window agreement, uncounted refusals, script cost, primary clock
+- *(cache)* The lost connection detector also matches some non-outages
+
+### ⚡ Performance
+
+- *(cache)* LabelledCache::forget() computes the key without reading the value
+
+### 🧪 Testing
+
+- *(versioning)* Switched back on, versioning anchors each record at its first save
+- *(cache)* Label cache tests through public behaviour, with unconditional cleanup
+- *(cache)* The flush outside a transaction, the scope reset, members on Redis
+- *(crud)* A rolled back write misses the cached list once, as M4 flushes it
+
 ## [1.81.0] - 2026-11-19
 
 ### 🚀 Features
