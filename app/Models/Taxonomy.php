@@ -26,6 +26,7 @@ use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\SortableTrait;
 use Modules\Core\Models\Translations\TaxonomyTranslation;
 use Modules\Core\Overrides\Model;
+use Modules\Core\Support\Hierarchy\ClosurePaths;
 use Override;
 use Spatie\EloquentSortable\Sortable;
 
@@ -85,11 +86,78 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     ];
 
     /**
+     * The value of {@see self::getPath()} given by {@see self::assignPaths()} for this load; null builds it from the
+     * ancestors.
+     */
+    private ?string $assignedPath = null;
+
+    /**
      * @return class-string<Entity>
      */
     abstract public static function getEntityModelClass(): string;
 
     abstract protected static function getEntityType(): IDynamicEntityTypable;
+
+    /**
+     * Give each taxonomy the value {@see self::getPath()} builds from its ancestors, for a whole collection at once:
+     * the closure rows of all of them in one query, then their distinct ancestors with their translations once.
+     * Reading `path` on taxonomies one by one loads the ancestors of each; an eager `ancestors` load hydrates one
+     * ancestor per (taxonomy, ancestor) pair. The ancestors are read as the `ancestors` relation reads them: the
+     * model's global scopes apply, and an ancestor they hide gives no segment.
+     *
+     * The value belongs to this load: a taxonomy moved afterwards keeps it until it is loaded again.
+     *
+     * @param  iterable<array-key, mixed>  $taxonomies
+     */
+    public static function assignPaths(iterable $taxonomies): void
+    {
+        /** @var array<class-string<self>, array<string, list<self>>> $nodes */
+        $nodes = [];
+
+        foreach ($taxonomies as $taxonomy) {
+            $key = $taxonomy instanceof self ? $taxonomy->getKey() : null;
+
+            if (is_int($key) || is_string($key)) {
+                $nodes[$taxonomy::class][(string) $key][] = $taxonomy;
+            }
+        }
+
+        foreach ($nodes as $by_key) {
+            $model = reset($by_key)[0];
+            $chains = ClosurePaths::forModel($model)->chainsOf(array_map(strval(...), array_keys($by_key)));
+            $ancestor_keys = [];
+
+            foreach ($chains as $chain) {
+                foreach ($chain as $distance => $ancestor_key) {
+                    if ($distance > 0) {
+                        $ancestor_keys[$ancestor_key] = true;
+                    }
+                }
+            }
+
+            $ancestors = $ancestor_keys === []
+                ? []
+                : $model->newQuery()->whereKey(array_keys($ancestor_keys))->with('translations')->get()
+                    ->keyBy(static fn (self $ancestor): string => (string) $ancestor->getKey())
+                    ->all();
+
+            foreach ($by_key as $key => $same_node) {
+                $chain = $chains[(string) $key] ?? [];
+                krsort($chain);
+                $slugs = [];
+
+                foreach ($chain as $distance => $ancestor_key) {
+                    if ($distance > 0 && isset($ancestors[$ancestor_key])) {
+                        $slugs[] = $ancestors[$ancestor_key]->slug;
+                    }
+                }
+
+                foreach ($same_node as $taxonomy) {
+                    $taxonomy->assignedPath = self::joinChain($slugs, $taxonomy->slug ?? null, '/');
+                }
+            }
+        }
+    }
 
     public function getRules(): array
     {
@@ -160,7 +228,7 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     public function getPath(): string
     {
         // Use slug from translation and build a stable ancestor chain
-        return $this->buildAncestorChain('slug', '/');
+        return $this->assignedPath ?? $this->buildAncestorChain('slug', '/');
     }
 
     public function appendPaths(): self
@@ -274,18 +342,17 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     }
 
     /**
-     * Build a concatenated chain from ancestors plus the current model.
+     * The non-empty values of the ancestors, root first, then the node's own, joined; the node's own value alone
+     * (or an empty string) when no segment is left.
+     *
+     * @param  array<array-key, mixed>  $ancestorValues  Root first
      */
-    private function buildAncestorChain(string $field, string $separator): string
+    private static function joinChain(array $ancestorValues, mixed $current, string $separator): string
     {
-        /** @var Collection<int,mixed> $segments */
-        $segments = $this->ancestors
-            ->pluck($field)
+        /** @var Collection<int, mixed> $segments */
+        $segments = collect($ancestorValues)
             ->filter(static fn (mixed $value): bool => $value !== null && $value !== '')
-            ->reverse()
             ->values();
-
-        $current = $this->{$field} ?? null;
 
         if ($current !== null && $current !== '') {
             $segments->push($current);
@@ -296,5 +363,13 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         }
 
         return $segments->join($separator);
+    }
+
+    /**
+     * Build a concatenated chain from ancestors plus the current model.
+     */
+    private function buildAncestorChain(string $field, string $separator): string
+    {
+        return self::joinChain($this->ancestors->pluck($field)->reverse()->all(), $this->{$field} ?? null, $separator);
     }
 }

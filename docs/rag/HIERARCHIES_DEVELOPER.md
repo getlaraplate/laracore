@@ -78,6 +78,15 @@ changed, for a move under the node itself or one of its descendants.
 `Modules\Core\Support\Hierarchy\ClosurePaths` reads the dotted `path` (`1.2.4`, from the node the walk started at)
 that `CrudService::tree()` returns next to the signed `depth`: one query per 500 nodes on the closure table. The
 path comes from the closure rows, so a node a scope or an ACL hides still stands in the path of the nodes beyond it.
+Its `chainsOf()` gives each node's ancestors by distance from the same rows.
+
+A taxonomy's own `path` accessor (`HasPath`) is a different value: the translated slugs of its ancestors, root
+first, then its own (`Taxonomy::getPath()`), wrapped by `getFullPath()`. Read on taxonomies one by one, it loads the
+ancestors of each. `Taxonomy::assignPaths($taxonomies)` gives the whole collection that value at once: the closure
+rows of all of them in one query, then their distinct ancestors with their translations once, read through the
+model's global scopes as the `ancestors` relation reads them. `getPath()` returns the assigned value when there is
+one and builds it from the ancestors otherwise. The value belongs to that load: a taxonomy moved afterwards keeps it
+until it is loaded again. The search indexing of contents uses it (`Content::makeSearchableUsing()`).
 
 ## What the trait maintains
 

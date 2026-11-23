@@ -98,7 +98,7 @@ final readonly class ClosurePaths
             return;
         }
 
-        $chains = $this->ancestorChains(array_map(strval(...), array_keys($keys)));
+        $chains = $this->chainsOf(array_map(strval(...), array_keys($keys)));
 
         foreach ($walks as $walk) {
             $node = $walk['node'];
@@ -106,6 +106,38 @@ final readonly class ClosurePaths
             $node->setRawAttributes([...$node->getAttributes(), 'path' => implode('.', self::pathOf($walk['from'], $walk['to'], $walk['depth'], $chains))]);
             $node->syncOriginalAttribute('path');
         }
+    }
+
+    /**
+     * Each node's ancestors and itself, by distance: index 0 is the node, 1 its parent, and so on. Read from the
+     * closure rows, so an ancestor a scope hides still has its place. A node without closure rows is left out.
+     *
+     * @param  list<string>  $keys
+     * @return array<string, array<int, string>>
+     */
+    public function chainsOf(array $keys): array
+    {
+        $chains = [];
+
+        foreach (array_chunk($keys, self::KEY_CHUNK_SIZE) as $chunk) {
+            $rows = $this->connection->table($this->closureTable)
+                ->whereIn('descendant_id', $chunk)
+                ->get(['ancestor_id', 'descendant_id', 'depth']);
+
+            foreach ($rows as $row) {
+                $ancestor = self::keyOf($row->ancestor_id ?? null);
+                $descendant = self::keyOf($row->descendant_id ?? null);
+                $distance = $row->depth ?? null;
+
+                if ($ancestor === null || $descendant === null || ! is_numeric($distance)) {
+                    continue;
+                }
+
+                $chains[$descendant][(int) $distance] = $ancestor;
+            }
+        }
+
+        return $chains;
     }
 
     /**
@@ -138,36 +170,5 @@ final readonly class ClosurePaths
     private static function keyOf(mixed $value): ?string
     {
         return is_int($value) || is_string($value) ? (string) $value : null;
-    }
-
-    /**
-     * Each node's ancestors and itself, by distance: index 0 is the node, 1 its parent, and so on.
-     *
-     * @param  list<string>  $keys
-     * @return array<string, array<int, string>>
-     */
-    private function ancestorChains(array $keys): array
-    {
-        $chains = [];
-
-        foreach (array_chunk($keys, self::KEY_CHUNK_SIZE) as $chunk) {
-            $rows = $this->connection->table($this->closureTable)
-                ->whereIn('descendant_id', $chunk)
-                ->get(['ancestor_id', 'descendant_id', 'depth']);
-
-            foreach ($rows as $row) {
-                $ancestor = self::keyOf($row->ancestor_id ?? null);
-                $descendant = self::keyOf($row->descendant_id ?? null);
-                $distance = $row->depth ?? null;
-
-                if ($ancestor === null || $descendant === null || ! is_numeric($distance)) {
-                    continue;
-                }
-
-                $chains[$descendant][(int) $distance] = $ancestor;
-            }
-        }
-
-        return $chains;
     }
 }
