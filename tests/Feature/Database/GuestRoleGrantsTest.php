@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Casts\FilterOperator;
 use Modules\Core\Casts\FiltersGroup;
@@ -127,7 +126,7 @@ it('validates the update of a role name against the roles of its own guard only'
 });
 
 it('resolves the anonymous account as the configured user class, so it holds the guest roles it was seeded with', function (): void {
-    Cache::forget('anonymous_user.' . config('permission.users.guest'));
+    resolve(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable((new (user_class())())->getTable());
     Auth::shouldUse('api');
 
     $anonymous = app(AuthorizationService::class)->resolveAnonymousUser(Request::create('/api/v1/select/core/settings'));
@@ -139,7 +138,7 @@ it('resolves the anonymous account as the configured user class, so it holds the
 });
 
 it('resolves the ACL of the api guest for the anonymous user although the guest may not read ACL rows', function (): void {
-    Cache::forget('anonymous_user.' . config('permission.users.guest'));
+    resolve(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable((new (user_class())())->getTable());
     Auth::shouldUse('api');
 
     $anonymous = app(AuthorizationService::class)->resolveAnonymousUser(Request::create('/api/v1/select/core/settings'));

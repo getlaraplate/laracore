@@ -83,6 +83,14 @@ final class CacheLabel
         return 'geocoding';
     }
 
+    /**
+     * Model class discovery ({@see \Modules\Core\Helpers\HelpersCache}), flushed when migrations end.
+     */
+    public static function models(): string
+    {
+        return 'models';
+    }
+
     public static function isRow(string $label): bool
     {
         return str_starts_with($label, self::ROW_PREFIX);

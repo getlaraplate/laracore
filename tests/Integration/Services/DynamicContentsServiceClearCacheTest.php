@@ -66,12 +66,12 @@ it('metadataGeneration recovers when the generation key holds a Collection', fun
         ->and(Cache::get($generation_key))->toBe(0);
 });
 
-it('rememberForeverCollection reloads when the persistent cache returns a plain array', function (): void {
+it('rememberCollection reloads when the persistent cache returns a plain array', function (): void {
     $cache_key = 'core.dynamic_contents.test:array-rehydrate';
     Cache::forever($cache_key, ['not' => 'a-collection']);
 
     $service = DynamicContentsService::getInstance();
-    $method = new ReflectionMethod(DynamicContentsService::class, 'rememberForeverCollection');
+    $method = new ReflectionMethod(DynamicContentsService::class, 'rememberCollection');
     $method->setAccessible(true);
 
     $fresh = new Illuminate\Database\Eloquent\Collection();

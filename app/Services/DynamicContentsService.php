@@ -26,7 +26,7 @@ final class DynamicContentsService
      * writes so invalidation works even after {@see self::reset()} drops the
      * in-process key registry (parallel BatchSeeder forks) or when another
      * process never warmed the registry — without this, stale
-     * `rememberForever` preset lists miss new preset ids ("No cached preset [N]").
+     * cached preset lists miss new preset ids ("No cached preset [N]").
      */
     private const string METADATA_GENERATION_KEY = 'core.dynamic_contents.generation';
 
@@ -115,7 +115,7 @@ final class DynamicContentsService
         $cache_key = $this->typedMemoKey($entity_model->getCacheKey(), $type_cache_key);
         $this->registerEntityMemoKey($cache_key);
 
-        $this->entities_cache[$type_cache_key] = $this->rememberForeverCollection(
+        $this->entities_cache[$type_cache_key] = $this->rememberCollection(
             $cache_key,
             fn (): Collection => $entity_class::query()
                 ->withoutGlobalScopes()
@@ -147,7 +147,7 @@ final class DynamicContentsService
         $cache_key = $this->typedMemoKey($preset_model->getCacheKey(), $type_cache_key);
         $this->registerPresetMemoKey($cache_key);
 
-        $this->presets_cache[$type_cache_key] = $this->rememberForeverCollection(
+        $this->presets_cache[$type_cache_key] = $this->rememberCollection(
             $cache_key,
             fn (): Collection => $preset_class::query()
                 ->withoutGlobalScopes()
@@ -187,7 +187,7 @@ final class DynamicContentsService
         $presets_table = CoreTables::Presets->value;
         $entities_table = CoreTables::Entities->value;
 
-        $this->presettables_cache[$type_cache_key] = $this->rememberForeverCollection(
+        $this->presettables_cache[$type_cache_key] = $this->rememberCollection(
             $cache_key,
             fn (): Collection => $presettable_class::query()
                 ->join($presets_table, "{$presettables_table}.preset_id", '=', "{$presets_table}.id")
@@ -279,10 +279,14 @@ final class DynamicContentsService
     }
 
     /**
-     * Remember a value forever via Cache::memo(), guaranteeing an Eloquent Collection.
+     * Remember a value via Cache::memo() for `cache.duration.long`, guaranteeing an Eloquent Collection.
+     *
+     * The keys embed the metadata generation, so the lists of an old generation are never read again: the ttl lets
+     * them expire instead of accumulating. The generation counter itself is kept for good, like the version counters
+     * of the label index: a counter that expired could restart from a value whose keys still live.
      *
      * Persistent drivers (Redis serializers, failover, fork reconnect) can rehydrate
-     * Eloquent collections as plain arrays. Laravel's rememberForever treats any
+     * Eloquent collections as plain arrays. Laravel's remember treats any
      * non-null value as a hit, so a cached array would bypass the loader and violate
      * our return type — reload from the database when that happens.
      *
@@ -291,16 +295,17 @@ final class DynamicContentsService
      * @param  callable(): Collection<int, TModel>  $loader
      * @return Collection<int, TModel>
      */
-    private function rememberForeverCollection(string $cache_key, callable $loader): Collection
+    private function rememberCollection(string $cache_key, callable $loader): Collection
     {
-        $cached = Cache::memo()->rememberForever($cache_key, $loader);
+        $ttl = (int) config('cache.duration.long');
+        $cached = Cache::memo()->remember($cache_key, $ttl, $loader);
 
         if ($cached instanceof Collection) {
             return $cached;
         }
 
         $fresh = $loader();
-        Cache::memo()->forever($cache_key, $fresh);
+        Cache::memo()->put($cache_key, $fresh, $ttl);
 
         return $fresh;
     }

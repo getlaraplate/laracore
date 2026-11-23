@@ -71,3 +71,26 @@ it('fetches App entity types as App entity models', function (): void {
         ->and($entities->first())->toBeInstanceOf(Entity::class)
         ->and($entities->first()->id)->toBe($entity->id);
 });
+
+it('keeps the lists of a metadata generation for a finite time, the generation counter for good', function (): void {
+    $written = [];
+    Illuminate\Support\Facades\Event::listen(
+        Illuminate\Cache\Events\KeyWritten::class,
+        static function (Illuminate\Cache\Events\KeyWritten $event) use (&$written): void {
+            $written[$event->key] = $event->seconds;
+        },
+    );
+
+    $service = DynamicContentsService::getInstance();
+    $service->fetchAvailableEntities(EntityType::Pages);
+    $service->fetchAvailablePresets(EntityType::Pages);
+    $service->fetchAvailablePresettables(EntityType::Pages);
+    $service->clearAllCaches();
+
+    $generation = array_key_exists('core.dynamic_contents.generation', $written) ? $written['core.dynamic_contents.generation'] : 'missing';
+    unset($written['core.dynamic_contents.generation']);
+
+    expect($generation)->toBeNull()
+        ->and($written)->toHaveCount(3)
+        ->and(array_unique(array_values($written)))->toBe([(int) config('cache.duration.long')]);
+});

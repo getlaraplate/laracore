@@ -222,7 +222,7 @@ it('uses prefixed grouped settings cache key when resolving version strategy', f
     $expected_key = PerModelSettingResolver::groupCacheKey('versioning');
 
     expect($expected_key)->toStartWith('laraplate:')
-        ->and(Illuminate\Support\Facades\Cache::has($expected_key))->toBeTrue();
+        ->and(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($expected_key))->toBeTrue();
 });
 
 /**
@@ -239,9 +239,9 @@ it('invalidates the versioning group settings cache when a versioning Setting is
 
     $cache_key = PerModelSettingResolver::groupCacheKey('versioning');
 
-    Illuminate\Support\Facades\Cache::forever($cache_key, collect());
+    Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::put($cache_key, collect());
 
-    expect(Illuminate\Support\Facades\Cache::has($cache_key))->toBeTrue();
+    expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeTrue();
 
     $setting = Modules\Core\Models\Setting::factory()
         ->persistedWithoutApprovalCapture()
@@ -251,7 +251,7 @@ it('invalidates the versioning group settings cache when a versioning Setting is
     $setting->setForcedApprovalUpdate(true);
     $setting->save();
 
-    expect(Illuminate\Support\Facades\Cache::has($cache_key))->toBeFalse();
+    expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeFalse();
 });
 
 it('invalidates the versioning group settings cache when a versioning Setting is deleted', function (): void {
@@ -268,13 +268,13 @@ it('invalidates the versioning group settings cache when a versioning Setting is
     $setting->setForcedApprovalUpdate(true);
     $setting->save();
 
-    Illuminate\Support\Facades\Cache::forever($cache_key, collect());
+    Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::put($cache_key, collect());
 
-    expect(Illuminate\Support\Facades\Cache::has($cache_key))->toBeTrue();
+    expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeTrue();
 
     $setting->forceDelete();
 
-    expect(Illuminate\Support\Facades\Cache::has($cache_key))->toBeFalse();
+    expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeFalse();
 });
 
 it('invalidates the affected group settings cache when any Setting is saved', function (): void {
@@ -283,9 +283,9 @@ it('invalidates the affected group settings cache when any Setting is saved', fu
 
     $cache_key = PerModelSettingResolver::groupCacheKey('base');
 
-    Illuminate\Support\Facades\Cache::forever($cache_key, collect());
+    Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::put($cache_key, collect());
 
-    expect(Illuminate\Support\Facades\Cache::has($cache_key))->toBeTrue();
+    expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeTrue();
 
     $setting = Modules\Core\Models\Setting::factory()
         ->persistedWithoutApprovalCapture()
@@ -295,7 +295,7 @@ it('invalidates the affected group settings cache when any Setting is saved', fu
     $setting->setForcedApprovalUpdate(true);
     $setting->save();
 
-    expect(Illuminate\Support\Facades\Cache::has($cache_key))->toBeFalse();
+    expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeFalse();
 });
 
 /**
