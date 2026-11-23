@@ -680,7 +680,7 @@ When building new module features, reuse these primitives instead of re-implemen
 
 - `model:lock-refresh`
 - `model:lock-sweep {--limit=1000}`
-- `module:locked-add {model} {--namespace=}` / `model:locked-remove {model} {--namespace=}`
+- `model:locked-add {model} {--namespace=}` / `model:locked-remove {model} {--namespace=}`
 - `model:optimistic-lock-add {model} {--namespace=}` / `model:optimistic-lock-remove {model} {--namespace=}`
 
 ### Soft delete lifecycle

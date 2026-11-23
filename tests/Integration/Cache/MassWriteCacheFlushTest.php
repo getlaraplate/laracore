@@ -70,10 +70,13 @@ it('flushes the settings table after a settings command removes its setting', fu
     'soft deletes remove' => ['model:soft-deletes-remove', Modules\Core\Database\Seeders\CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX],
 ]);
 
-it('flushes the settings table after the optimistic lock command inserts its setting', function (): void {
+it('flushes the settings table when the optimistic lock command creates its setting', function (): void {
     massWriteRunCommand('model:optimistic-lock-add');
 
-    expect($this->index->flushedLabels())->toContain(...massWriteWholeTable((new Setting)->getTable()));
+    $setting = Setting::query()->where('name', Modules\Core\Services\PerModelSettingResolver::nameFor(Modules\Core\Database\Seeders\CoreDatabaseSeeder::OPTIMISTIC_LOCK_NAME_PREFIX, 'mass_write_stub'))->first();
+
+    expect($setting)->not->toBeNull()
+        ->and($this->index->flushedLabels())->toContain(CacheLabel::table($setting->getTable()));
 });
 
 it('flushes the settings table after the cleaner moves customized settings to the bin', function (): void {

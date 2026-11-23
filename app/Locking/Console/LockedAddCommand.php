@@ -135,9 +135,17 @@ class LockedAddCommand extends Command
         return module_path('Core', sprintf('app/Locking/Stubs/%s_locked_column_to_table.stub', $this->operation));
     }
 
+    /**
+     * The prefix of the per-table setting this command switches on.
+     */
+    protected function settingNamePrefix(): string
+    {
+        return CoreDatabaseSeeder::LOCK_NAME_PREFIX;
+    }
+
     protected function updateSettingsTable(string $table, bool $enabled): void
     {
-        $key_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::LOCK_NAME_PREFIX, $table);
+        $key_name = PerModelSettingResolver::nameFor($this->settingNamePrefix(), $table);
 
         Setting::query()->updateOrCreate(
             ['name' => $key_name],
