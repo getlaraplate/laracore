@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace Modules\Core\Cache\Labels;
 
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 
 /**
  * Process-local index keeping values, label memberships and flush times in arrays.
  */
-final class ArrayLabelIndex implements ICacheLabelIndex
+final class ArrayLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
 {
     /**
      * @var array<string, array{value: mixed, expires_at: int}>
@@ -112,6 +113,12 @@ final class ArrayLabelIndex implements ICacheLabelIndex
         }
 
         return $removed;
+    }
+
+    #[Override]
+    public function resolveKey(string $key, CacheDependencies $dependencies): string
+    {
+        return $key;
     }
 
     #[Override]

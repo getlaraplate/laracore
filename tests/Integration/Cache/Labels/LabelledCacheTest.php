@@ -106,3 +106,27 @@ it('is resolved from the container around the bound index', function (): void {
 
     expect($index->stores)->toHaveCount(1);
 });
+
+it('forgets without reading the value or counting a lookup when the index can tell the stored key', function (): void {
+    $stats = Illuminate\Support\Facades\Cache::store('array');
+    $stats->flush();
+    $index = new Modules\Core\Cache\Labels\MeasuredLabelIndex(new ArrayLabelIndex(), $stats);
+    $cache = new LabelledCache($index);
+    $cache->remember('k', [CacheLabel::table('core_settings')], 60, static fn (): string => 'old');
+
+    $cache->forget('k', [CacheLabel::table('core_settings')]);
+
+    expect($index->report()['table:core_settings'] ?? null)->toBe(['hits' => 0, 'misses' => 1, 'flushes' => 0])
+        ->and($cache->remember('k', [CacheLabel::table('core_settings')], 60, static fn (): string => 'new'))->toBe('new');
+});
+
+it('forgets the value of a version counter index under the key its counters give', function (): void {
+    $store = new Modules\Core\Cache\Repository(new Illuminate\Cache\ArrayStore());
+    $cache = new LabelledCache(new Modules\Core\Cache\Labels\VersionCounterLabelIndex($store));
+    $cache->remember('k', ['t'], 60, static fn (): string => 'old');
+    (new Modules\Core\Cache\Labels\VersionCounterLabelIndex($store))->flush('other');
+
+    $cache->forget('k', ['t']);
+
+    expect($cache->remember('k', ['t'], 60, static fn (): string => 'new'))->toBe('new');
+});

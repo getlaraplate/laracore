@@ -6,6 +6,7 @@ namespace Modules\Core\Cache\Labels;
 
 use Closure;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 
 /**
  * The lookup, compute and store of a value cached through the label index, in one call.
@@ -60,13 +61,20 @@ final readonly class LabelledCache
 
     /**
      * Drops the value cached under the key and dependencies. On a version counter store the stored key embeds the
-     * versions of the labels, so the dependencies must be those the value was remembered with.
+     * versions of the labels, so the dependencies must be those the value was remembered with. The value is not read
+     * when the index can tell the stored key ({@see IResolvesCacheLabelKeys}).
      *
      * @param  CacheDependencies|list<string>  $dependencies
      */
     public function forget(string $key, CacheDependencies|array $dependencies): void
     {
-        $this->index->forget($this->index->lookup($key, self::dependenciesOf($dependencies)));
+        $dependencies = self::dependenciesOf($dependencies);
+        $resolved = $this->index instanceof IResolvesCacheLabelKeys ? $this->index->resolveKey($key, $dependencies) : null;
+
+        // An index that can tell the stored key forgets it without reading the value or counting a lookup.
+        $this->index->forget($resolved === null
+            ? $this->index->lookup($key, $dependencies)
+            : new CacheLookup($resolved, false, null, 0, $dependencies));
     }
 
     /**

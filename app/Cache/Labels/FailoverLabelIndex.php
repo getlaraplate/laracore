@@ -10,6 +10,7 @@ use Illuminate\Database\LostConnectionDetector;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use PDOException;
 use Predis\PredisException;
@@ -35,7 +36,7 @@ use Throwable;
  * any other exception is a bug and propagates. A memcached primary throws nothing when its server is down (it answers
  * misses and failed writes), so it never degrades: see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
  */
-final class FailoverLabelIndex implements ICacheLabelIndex
+final class FailoverLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
 {
     public const string MARKER_KEY = 'cache-labels:degraded';
 
@@ -94,6 +95,22 @@ final class FailoverLabelIndex implements ICacheLabelIndex
     public function pruneStale(): int
     {
         return $this->guard(fn (): int => $this->primary->pruneStale(), static fn (): int => 0);
+    }
+
+    /**
+     * The key of the primary, with the `stored` label every entry carries here; null while the primary is down or when
+     * it cannot tell the key without a lookup.
+     */
+    #[Override]
+    public function resolveKey(string $key, CacheDependencies $dependencies): ?string
+    {
+        if (! $this->primary instanceof IResolvesCacheLabelKeys) {
+            return null;
+        }
+
+        $dependencies = $dependencies->withLabels(CacheLabel::stored());
+
+        return $this->guard(fn (): ?string => $this->primary->resolveKey($key, $dependencies), static fn (): null => null);
     }
 
     #[Override]

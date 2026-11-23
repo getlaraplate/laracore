@@ -8,6 +8,7 @@ use Illuminate\Cache\RedisStore;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use Redis;
 
@@ -27,7 +28,7 @@ use Redis;
  * Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in
  * different hash slots.
  */
-final readonly class RedisLabelIndex implements ICacheLabelIndex
+final readonly class RedisLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
 {
     private const string LABEL_KEY = 'label:';
 
@@ -245,6 +246,12 @@ LUA;
         } while ((string) $cursor !== '0');
 
         return count($seen);
+    }
+
+    #[Override]
+    public function resolveKey(string $key, CacheDependencies $dependencies): string
+    {
+        return $key;
     }
 
     #[Override]
