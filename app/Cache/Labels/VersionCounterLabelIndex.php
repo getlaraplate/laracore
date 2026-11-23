@@ -62,9 +62,13 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex, IReso
 
             // The database and memcached stores do not increment a missing key: the counter starts at 1 instead,
             // through the store's own atomic add (a ttl is required for it, so a very long one is given), and a
-            // flush that created it in between is followed by an increment of its own.
-            if ($this->cache->increment($counter) === false && ! $this->cache->add($counter, 1, self::COUNTER_TTL)) {
-                $this->cache->increment($counter);
+            // flush that created it in between is followed by an increment of its own. When that increment fails too
+            // the store failed every write (a memcached server that is down answers false, never an exception): the
+            // flush did not happen, and a failover index must degrade instead of losing it.
+            if ($this->cache->increment($counter) === false
+                && ! $this->cache->add($counter, 1, self::COUNTER_TTL)
+                && $this->cache->increment($counter) === false) {
+                throw new LabelIndexUnavailableException(sprintf('The version counter store refused the flush of [%s].', $target));
             }
         }
     }
