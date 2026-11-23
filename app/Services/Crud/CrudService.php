@@ -832,9 +832,16 @@ class CrudService
             }]);
         }
 
-        $data = $requestData->request->has(is_array($requestData->primaryKey) ? $requestData->primaryKey[0] : $requestData->primaryKey)
-            ? $query->sole()
-            : $query->get();
+        // As in list(): the table-level select permission was ensured above and the ACL filters narrow both the roots
+        // and the nodes of the walk, which are records of the same class. Any one registered permission allows the
+        // per-row check, the record's own among them, so it would pass for every row: it is suppressed for this
+        // class while hydrating. Relations of other classes stay guarded.
+        $data = RetrievedSelectGuard::without(
+            $model::class,
+            fn (): Model|Collection => $requestData->request->has(is_array($requestData->primaryKey) ? $requestData->primaryKey[0] : $requestData->primaryKey)
+                ? $query->sole()
+                : $query->get(),
+        );
 
         if (is_string($tree_relation_type)) {
             // Each node carries its signed `depth` from the relation and the `path` of keys from the node the
