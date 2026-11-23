@@ -7,11 +7,12 @@ namespace Modules\Core\Services;
 use Closure;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Cache\Labels\LabelledCache;
-use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Entity;
@@ -209,44 +210,44 @@ final class DynamicContentsService
 
     /**
      * Clear in-memory cache for entities.
-     * Should be called when entities are modified.
+     * Should be called when entities are modified, with the written model as owner (see bumpMetadataGeneration()).
      */
-    public function clearEntitiesCache(): void
+    public function clearEntitiesCache(?Model $owner = null): void
     {
         $this->entities_cache = [];
         $this->forgetRegisteredMemoKeys(self::$registered_entity_memo_keys);
         $this->forgetMemoCacheKey('entities');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
      * Clear in-memory cache for presets.
-     * Should be called when presets are modified.
+     * Should be called when presets are modified, with the written model as owner (see bumpMetadataGeneration()).
      */
-    public function clearPresetsCache(): void
+    public function clearPresetsCache(?Model $owner = null): void
     {
         $this->presets_cache = [];
         $this->forgetRegisteredMemoKeys(self::$registered_preset_memo_keys);
         $this->forgetMemoCacheKey('presets');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
      * Clear in-memory cache for presettables.
-     * Should be called when presettables are modified.
+     * Should be called when presettables are modified, with the written model as owner (see bumpMetadataGeneration()).
      */
-    public function clearPresettablesCache(): void
+    public function clearPresettablesCache(?Model $owner = null): void
     {
         $this->presettables_cache = [];
         $this->forgetRegisteredMemoKeys(self::$registered_presettable_memo_keys);
         $this->forgetMemoCacheKey('presettables');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
-     * Clear all in-memory caches.
+     * Clear all in-memory caches, with the written model as owner when a write causes it (see bumpMetadataGeneration()).
      */
-    public function clearAllCaches(): void
+    public function clearAllCaches(?Model $owner = null): void
     {
         $this->entities_cache = [];
         $this->presets_cache = [];
@@ -257,7 +258,7 @@ final class DynamicContentsService
         $this->forgetMemoCacheKey('entities');
         $this->forgetMemoCacheKey('presets');
         $this->forgetMemoCacheKey('presettables');
-        $this->bumpMetadataGeneration();
+        $this->bumpMetadataGeneration($owner);
     }
 
     /**
@@ -359,12 +360,18 @@ final class DynamicContentsService
         return 0;
     }
 
-    private function bumpMetadataGeneration(): void
+    /**
+     * Moves the generation at once, and flushes the label of the lists through the invalidator: with the written model
+     * as owner, after the commit of its transaction, or after its rollback, so a list another request cached from the
+     * rows before the commit, or one built from rows a rollback removed, is not served. Without an owner it flushes at
+     * once.
+     */
+    private function bumpMetadataGeneration(?Model $owner): void
     {
         // Use the non-memo store only. Cache::memo()->forget() also deletes from the
         // underlying repository, which would wipe the generation we just wrote.
         Cache::forever(self::METADATA_GENERATION_KEY, $this->metadataGeneration() + 1);
-        resolve(ICacheLabelIndex::class)->flush(CacheLabel::dynamicContents());
+        resolve(CacheLabelInvalidator::class)->flushLabels($owner, CacheLabel::dynamicContents());
     }
 
     private function typedMemoKey(string $cache_key, string $type_cache_key): string

@@ -22,26 +22,29 @@ final class DynamicContentMetadataObserver
 {
     public function created(Model $model): void
     {
-        $this->flush();
+        $this->flush($model);
     }
 
     public function updated(Model $model): void
     {
-        $this->flush();
+        $this->flush($model);
     }
 
     public function deleted(Model $model): void
     {
-        $this->flush();
+        $this->flush($model);
     }
 
     public function restored(Model $model): void
     {
-        $this->flush();
+        $this->flush($model);
     }
 
-    private function flush(): void
+    /**
+     * The written model is the owner: the label flush waits for its transaction to end.
+     */
+    private function flush(Model $model): void
     {
-        DynamicContentsService::getInstance()->clearAllCaches();
+        DynamicContentsService::getInstance()->clearAllCaches($model);
     }
 }

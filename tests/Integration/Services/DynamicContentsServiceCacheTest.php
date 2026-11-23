@@ -111,3 +111,49 @@ it('flushes the dynamic contents label when the metadata generation moves, and k
         ->and($generation)->toBeNull()
         ->and(DynamicContentsService::getInstance()->fetchAvailableEntities(EntityType::Pages))->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
 });
+
+/**
+ * Whether the entity list of the type is answered by the label index, read by a fresh service as another request would.
+ */
+function dynamicContentsListCached(Modules\Core\Tests\Stubs\Cache\SpyLabelIndex $index, EntityType $type): bool
+{
+    DynamicContentsService::reset();
+    $before = count($index->lookups);
+    DynamicContentsService::getInstance()->fetchAvailableEntities($type);
+    $lookups = array_slice($index->lookups, $before);
+
+    return $lookups !== [] && $lookups[0]->hit;
+}
+
+it('drops a list another request cached between a metadata write and its commit', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $connection = (new Entity())->getConnection();
+
+    $connection->transaction(function () use ($index): void {
+        Entity::query()->create(['name' => 'Pending', 'slug' => 'pending', 'type' => EntityType::Pages]);
+
+        // A read between the write and the commit stores the list it sees.
+        dynamicContentsListCached($index, EntityType::Pages);
+    });
+
+    expect(dynamicContentsListCached($index, EntityType::Pages))->toBeFalse();
+});
+
+it('drops a list cached from rows a rolled back metadata write created', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $connection = (new Entity())->getConnection();
+
+    try {
+        $connection->transaction(function () use ($index): void {
+            Entity::query()->create(['name' => 'Never', 'slug' => 'never', 'type' => EntityType::Pages]);
+            dynamicContentsListCached($index, EntityType::Pages);
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    expect(dynamicContentsListCached($index, EntityType::Pages))->toBeFalse();
+});

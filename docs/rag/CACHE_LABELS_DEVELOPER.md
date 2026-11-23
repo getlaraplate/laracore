@@ -30,7 +30,7 @@ Label strings are built only by `Modules\Core\Cache\Labels\CacheLabel`; never wr
 | `translations` | `CacheLabel::translations()` | the translations payload | `translations:check` |
 | `inspector` | `CacheLabel::inspector()` | schema inspector results | the schema commands (`CommandListenerProvider`) |
 | `geocoding` | `CacheLabel::geocoding()` | geocoding answers | nothing by default: they expire by TTL, flush the label by hand to drop them |
-| `dynamic_contents` | `CacheLabel::dynamicContents()` | the entity, preset and presettable lists of `DynamicContentsService` | a bump of their metadata generation (`DynamicContentMetadataObserver`, the `clear*Cache()` methods) |
+| `dynamic_contents` | `CacheLabel::dynamicContents()` | the entity, preset and presettable lists of `DynamicContentsService` | a bump of their metadata generation (`DynamicContentMetadataObserver`, `FieldObserver`, the `clear*Cache()` methods): the generation moves at once, the label is flushed after the commit (or the rollback) of the write that bumped it |
 | `models` | `CacheLabel::models()` | model class discovery (`HelpersCache`, the `models()` helper) | the end of a migration (`CommandListenerProvider`), `permission:refresh`, `HelpersCache::clearModels()` |
 
 The settings caches (the groups and the name index of `PerModelSettingResolver`, the site configs) carry
