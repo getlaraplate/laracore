@@ -61,7 +61,7 @@ it('flushes table and row labels on restore and force delete', function (): void
     }
 });
 
-it('waits for the commit and drops the flush on rollback', function (): void {
+it('waits for the commit, and flushes after a rollback too', function (): void {
     $role = makeLabelRole();
     $this->index->flushes = [];
     $connection = $role->getConnection();
@@ -84,7 +84,49 @@ it('waits for the commit and drops the flush on rollback', function (): void {
     } catch (RuntimeException) {
     }
 
-    expect($this->index->flushes)->toBe([]);
+    // A read inside the rolled back transaction may have cached the rows it removed.
+    expect($this->index->flushes)->toHaveCount(1)
+        ->and($this->index->flushedLabels())->toContain(CacheLabel::row($role->getTable(), $role->getKey()));
+});
+
+it('flushes a value cached from uncommitted rows when the transaction rolls back', function (): void {
+    $index = new Modules\Core\Cache\Labels\ArrayLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+    $role = makeLabelRole();
+    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([CacheLabel::table($role->getTable())]);
+
+    try {
+        $role->getConnection()->transaction(function () use ($index, $role, $dependencies): void {
+            $role->update(['name' => 'uncommitted_' . uniqid()]);
+            $index->store($index->lookup('roles', $dependencies), 'built from uncommitted rows', 60);
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    expect($index->lookup('roles', $dependencies)->hit)->toBeFalse();
+});
+
+it('flushes a rolled back transaction and a committed one that follows it, each at its end', function (): void {
+    [$rolled_back, $committed] = [makeLabelRole(), makeLabelRole()];
+    $this->index->flushes = [];
+    $connection = $committed->getConnection();
+
+    try {
+        $connection->transaction(function () use ($rolled_back): void {
+            $rolled_back->update(['name' => 'rolled_back_' . uniqid()]);
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    $connection->transaction(static fn () => $committed->update(['name' => 'committed_' . uniqid()]));
+
+    expect($this->index->flushes)->toHaveCount(2)
+        ->and($this->index->flushes[0])->toContain(CacheLabel::row($rolled_back->getTable(), $rolled_back->getKey()))
+        ->and($this->index->flushes[1])->toContain(CacheLabel::row($committed->getTable(), $committed->getKey()));
 });
 
 it('flushes the labels of a whole transaction once after the commit, deduplicated', function (): void {
