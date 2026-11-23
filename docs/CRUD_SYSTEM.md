@@ -783,7 +783,8 @@ a response holding rows of a table also carries `rows:{table}`, which a whole-ta
 - `Cache::clearByEntity()` flushes the whole table of a `HasCache` entity (its table label and `rows:{table}`, so
   details are reached too), `Cache::clearByUser()` and `Cache::clearByGroup()` the `user:{id}` and `role:{id}` labels
   (a flush of a label deletes every entry carrying it).
-- Every flush made inside a transaction runs after the commit.
+- Every flush made inside a transaction runs after the commit, or after the rollback when the transaction rolls back
+  (a read inside it may have cached rows the rollback removed). The dynamic content lists are flushed the same way.
 - A write that fires no Eloquent event must flush the labels itself, see `CACHE_LABELS_DEVELOPER.md`.
 
 **Degraded behaviour.** With a `redis` store, alone or as the first store of `failover`, while Redis is down the index
