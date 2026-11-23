@@ -27,6 +27,7 @@ use Modules\Core\Tests\Stubs\DeleteRefusingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\HardDeletingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\MutatorCountingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\OrderedClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\RelationCountingClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\ReparentingDeleteClosureTreeStubModel;
 use Modules\Core\Tests\Stubs\SoftDeletingClosureTreeStubModel;
 
@@ -802,4 +803,24 @@ it('hydrates the nodes of a closure relation without going through the model mut
         ->and($nodes[0]->ancestors->pluck('depth')->all())->toBe([-1, -2])
         ->and($nodes[1]->ancestors->pluck('depth')->all())->toBe([-1, -2])
         ->and($nodes[0]->ancestors->first()->isDirty('depth'))->toBeFalse();
+});
+
+it('reads the closure row of each node without building a pivot model for it', function (): void {
+    $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $middle = ClosureTreeStubModel::query()->create(['parent_id' => $root->getKey()]);
+    $leaf = ClosureTreeStubModel::query()->create(['parent_id' => $middle->getKey()]);
+
+    $nodes = RelationCountingClosureTreeStubModel::query()->whereKey([$root->getKey(), $leaf->getKey()])->orderBy('id')->get();
+    RelationCountingClosureTreeStubModel::$relationsSet = [];
+    $nodes->load(['ancestors', 'bloodline']);
+
+    $ancestor = $nodes[1]->ancestors->first();
+
+    expect(RelationCountingClosureTreeStubModel::$relationsSet)->not->toContain('pivot')
+        ->and($nodes[1]->ancestors->pluck('depth')->all())->toBe([-1, -2])
+        ->and($nodes[0]->bloodline->pluck('depth')->all())->toBe([0, 1, 2])
+        ->and($ancestor->getAttributes())->toHaveKey('depth')
+        ->and(array_filter(array_keys($ancestor->getAttributes()), static fn (string $key): bool => str_starts_with($key, 'pivot_')))->toBe([])
+        ->and($ancestor->isDirty())->toBeFalse()
+        ->and($ancestor->relationLoaded('pivot'))->toBeFalse();
 });

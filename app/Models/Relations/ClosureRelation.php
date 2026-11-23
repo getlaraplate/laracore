@@ -346,30 +346,34 @@ abstract class ClosureRelation extends BelongsToMany
 
     /**
      * Turn each closure row into the signed `depth` of its node, remember which node the row starts from, and drop
-     * the pivot.
+     * the row. The `pivot_` columns are read straight off the node: no pivot model is built only to be thrown away.
      *
      * @param  array<int, TRelatedModel>  $models
      */
     #[Override]
     protected function hydratePivotRelation(array $models): void
     {
-        parent::hydratePivotRelation($models);
-
         foreach ($models as $model) {
-            $pivot = $model->getRelation($this->accessor);
-            $model->unsetRelation($this->accessor);
+            $attributes = [];
+            $row = [];
 
-            if (! $pivot instanceof Model) {
-                continue;
+            foreach ($model->getAttributes() as $column => $value) {
+                if (str_starts_with($column, 'pivot_')) {
+                    $row[mb_substr($column, 6)] = $value;
+                } else {
+                    $attributes[$column] = $value;
+                }
             }
 
-            $key = self::keyOf($model->getAttribute($this->relatedKey));
-            $ancestor = self::keyOf($pivot->getAttribute('ancestor_id'));
-            $descendant = self::keyOf($pivot->getAttribute('descendant_id'));
-            $distance = $pivot->getAttribute('depth');
+            $key = self::keyOf($attributes[$this->relatedKey] ?? null);
+            $ancestor = self::keyOf($row['ancestor_id'] ?? null);
+            $descendant = self::keyOf($row['descendant_id'] ?? null);
+            $distance = $row['depth'] ?? null;
             $distance = is_numeric($distance) ? (int) $distance : 0;
 
             if ($key === null || $ancestor === null || $descendant === null) {
+                $model->setRawAttributes($attributes, true);
+
                 continue;
             }
 
@@ -381,7 +385,8 @@ abstract class ClosureRelation extends BelongsToMany
 
             $this->startingNodes[$model] = $starting_node;
             // Raw, not setAttribute(): a model's mutators may do work per node (Taxonomy's dynamic-field lookup lazy loads relations).
-            $model->setRawAttributes([...$model->getAttributes(), 'depth' => $depth], true);
+            $attributes['depth'] = $depth;
+            $model->setRawAttributes($attributes, true);
         }
     }
 
