@@ -103,8 +103,8 @@ TTL, through the store's atomic `add`, so a counter never resets while entries o
 - **Commands and helpers.** `Cache::clearByEntity()` (the whole table: `table:` and `rows:`, for writes whose rows are
   unknown; not needed after a write through models), `clearByUser()`, `clearByGroup()`, `HasCache::invalidateCache()`,
   `AclResolverService::clearCacheFor*()` and `flushCache()`, `translations:check`, the schema commands.
-- **Core mass writes.** The settings rows written by `model:locked-remove`, `model:optimistic-lock-add`,
-  `model:optimistic-lock-remove`, `model:soft-deletes-remove` and `SettingsCleaner`, and the pending modifications a
+- **Core mass writes.** The settings rows deleted by `model:locked-remove`, `model:optimistic-lock-remove` and
+  `model:soft-deletes-remove`, the rows moved by `SettingsCleaner`, and the pending modifications a
   record deleted for good closes (`HasApprovals`), flush their whole table with `flushTable()`.
 - **After commit.** When the owning model has an open transaction, `CacheLabelInvalidator` defers the flush to
   `afterCommit`, so a reader cannot re-cache old rows between the flush and the commit. The labels of every write of

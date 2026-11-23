@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Str;
-use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Command;
@@ -64,8 +63,6 @@ final class ModelSoftDeletesAddCommand extends Command
             $this->info(sprintf('Runtime setting soft_deletes_%s set to true.', $table));
         }
 
-        $this->updateSettingsTable($table);
-
         $this->info('Done. Review the generated migration and run `php artisan migrate`.');
 
         return BaseCommand::SUCCESS;
@@ -92,19 +89,6 @@ final class ModelSoftDeletesAddCommand extends Command
             'group_name' => 'soft_deletes',
             'description' => "Enable soft deletes for {$table}",
         ])->save();
-    }
-
-    private function updateSettingsTable(string $table): void
-    {
-        $key_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table);
-
-        Setting::query()->insertOrIgnore([
-            'name' => $key_name,
-            'value' => true,
-            'type' => SettingTypeEnum::Boolean,
-            'group_name' => 'soft_deletes',
-            'description' => "Soft deletes status for {$table}",
-        ]);
     }
 
     private function resolveModelClass(string $model): string

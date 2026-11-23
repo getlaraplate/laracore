@@ -239,9 +239,9 @@ never offer a lease.
 |---|---|
 | `model:lock-refresh` | detects drift between models using `HasLocks` and the columns actually present, and generates the migrations to close it |
 | `model:lock-sweep {--limit=1000}` | clears lapsed locks. Housekeeping: a missed run changes nothing |
-| `module:locked-add {model} {--namespace=}` | adds the lock columns to a model's table |
+| `model:locked-add {model} {--namespace=}` | adds the lock columns to a model's table and switches its `locking.enabled.{table}` setting on |
 | `model:locked-remove {model} {--namespace=}` | removes them |
-| `model:optimistic-lock-add {model} {--namespace=}` | adds `lock_version` |
+| `model:optimistic-lock-add {model} {--namespace=}` | adds `lock_version` and switches its `locking.optimistic.{table}` setting on |
 | `model:optimistic-lock-remove {model} {--namespace=}` | removes it |
 
 ## Permissions
