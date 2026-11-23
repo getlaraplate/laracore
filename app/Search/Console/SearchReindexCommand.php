@@ -8,7 +8,6 @@ use function in_array;
 
 use Exception;
 use Illuminate\Support\Facades\Log;
-use Modules\Core\Cache\HasCache;
 use Modules\Core\Search\Jobs\ReindexSearchJob;
 use Modules\Core\Search\Traits\SearchableCommandUtils;
 use Override;
@@ -37,12 +36,6 @@ final class SearchReindexCommand extends \Modules\Core\Overrides\Command
             $this->info('Dispatching reindex job for model ' . $model);
             dispatch(new ReindexSearchJob($model));
             $this->info('Reindexing has been queued for model ' . $model);
-
-            // If the model uses the HasCache trait, invalidate the cache
-            if (in_array(HasCache::class, class_uses_recursive($model), true)) {
-                new $model()->invalidateCache();
-                $this->info('Cache has been invalidated for model ' . $model);
-            }
 
             return Command::SUCCESS;
         } catch (Exception $exception) {

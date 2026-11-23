@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Laravel\Prompts\Progress;
-use Modules\Core\Cache\HasCache;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Search\Traits\Searchable;
 use Override;
@@ -90,12 +89,6 @@ final class SearchSyncCommand extends Command
                 gc_collect_cycles();
             });
             $this->info('Documents have been queued for indexing.');
-
-            // Se il modello usa il trait HasCache, invalida la cache
-            if (in_array(HasCache::class, class_uses_recursive($model_class), true)) {
-                new $model_class()->invalidateCache();
-                $this->info('Cache has been invalidated for model ' . $model_class);
-            }
 
             return 0;
         } catch (Exception $exception) {

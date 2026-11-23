@@ -116,7 +116,7 @@ final class EventServiceProvider extends ServiceProvider
             if ($model instanceof CronJob) {
                 Cache::forget($model->getTable());
             } elseif ($model instanceof Fieldable || $model instanceof Preset) {
-                $this->clearPresetCache();
+                $this->clearPresetCache($model);
             } elseif ($model instanceof Entity) {
                 $this->clearEntityCache($model);
             }
@@ -135,15 +135,15 @@ final class EventServiceProvider extends ServiceProvider
     private function clearEntityCache(Entity $model): void
     {
         Cache::forget($model->getCacheKey());
-        DynamicContentsService::getInstance()->clearEntitiesCache();
-        $this->clearPresetCache();
+        DynamicContentsService::getInstance()->clearEntitiesCache($model);
+        $this->clearPresetCache($model);
     }
 
-    private function clearPresetCache(): void
+    private function clearPresetCache(Model $model): void
     {
         Cache::forget('presets');
         Cache::memo()->forget('presets');
-        DynamicContentsService::getInstance()->clearPresetsCache();
-        DynamicContentsService::getInstance()->clearPresettablesCache();
+        DynamicContentsService::getInstance()->clearPresetsCache($model);
+        DynamicContentsService::getInstance()->clearPresettablesCache($model);
     }
 }

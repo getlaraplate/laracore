@@ -79,3 +79,10 @@ it('binds the measured index of the default store', function (): void {
     expect(app(ICacheLabelIndex::class))->toBeInstanceOf(MeasuredLabelIndex::class)
         ->and(app(ICacheLabelIndex::class))->toBe(app(ICacheLabelIndex::class));
 });
+
+it('guards the version counter index of a plain memcached store, whose refused flush would otherwise fail the write', function (): void {
+    $store = Mockery::mock(Illuminate\Cache\MemcachedStore::class);
+    $index = CacheLabelIndexFactory::forStore(new Modules\Core\Cache\Repository($store));
+
+    expect($index)->toBeInstanceOf(FailoverLabelIndex::class);
+});

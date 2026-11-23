@@ -91,3 +91,22 @@ it('counts nothing while the guarded index is degraded', function (): void {
     $index->lookup('k', new CacheDependencies(['table:core_users']));
     $index->flush('table:core_users');
 });
+
+it('stops counting for a minute after a stats failure, then counts again', function (): void {
+    Illuminate\Support\Facades\Exceptions::fake();
+    $this->freezeTime();
+    $stats = Mockery::mock(Illuminate\Contracts\Cache\Repository::class);
+    $stats->shouldReceive('add')->once()->ordered()->andThrow(new RuntimeException('stats store down'));
+    $stats->shouldReceive('add')->once()->ordered()->andReturn(false);
+    $stats->shouldReceive('increment')->once();
+    $index = new MeasuredLabelIndex(new ArrayLabelIndex(), $stats);
+    $dependencies = new CacheDependencies(['table:core_users']);
+
+    $index->lookup('k', $dependencies);
+    $this->travel(59)->seconds();
+    $index->lookup('k', $dependencies);
+    $this->travel(1)->seconds();
+    $index->lookup('k', $dependencies);
+
+    Illuminate\Support\Facades\Exceptions::assertReportedCount(1);
+});

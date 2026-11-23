@@ -6,7 +6,6 @@ use Elastic\Elasticsearch\Client as ElasticsearchClient;
 use GuzzleHttp\HandlerStack;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as BaseSoftDeletes;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
@@ -330,13 +329,34 @@ it('normalizeCronJobs gives parameters and both flags to an entry cached before 
 });
 
 it('registerCommandSchedules reads cached cron jobs without database calls', function (): void {
-    $cache_key = (new ReflectionClass(CronJob::class))->newInstanceWithoutConstructor()->getTable();
-    Cache::put($cache_key, []);
+    CronJob::factory()->create(['command' => 'cron-probe:prune', 'is_active' => true]);
+    $table = (new CronJob())->getTable();
+
+    // The first load reads the table and stores the list in the label index.
+    invokePrivate($this->provider, 'registerCommandSchedules');
+    runLastBootedCallback();
+
+    $connection = (new CronJob())->getConnection();
+    $connection->flushQueryLog();
+    $connection->enableQueryLog();
+    $probe_events = static fn (): int => count(array_filter(
+        app(Illuminate\Console\Scheduling\Schedule::class)->events(),
+        static fn (Illuminate\Console\Scheduling\Event $event): bool => str_contains((string) $event->command, 'cron-probe:prune'),
+    ));
+    $scheduled_before = $probe_events();
 
     invokePrivate($this->provider, 'registerCommandSchedules');
     runLastBootedCallback();
 
-    expect(true)->toBeTrue();
+    $cron_queries = array_filter(
+        $connection->getQueryLog(),
+        static fn (array $query): bool => str_contains((string) $query['query'], $table),
+    );
+    $connection->disableQueryLog();
+
+    // The second load scheduled the cached cron job without reading its table.
+    expect($cron_queries)->toBe([])
+        ->and($probe_events())->toBeGreaterThan($scheduled_before);
 });
 
 it('registerCommandSchedules serves the cron list from the index and reloads it after a cron job is saved', function (): void {

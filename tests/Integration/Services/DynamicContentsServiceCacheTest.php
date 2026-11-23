@@ -71,3 +71,89 @@ it('fetches App entity types as App entity models', function (): void {
         ->and($entities->first())->toBeInstanceOf(Entity::class)
         ->and($entities->first()->id)->toBe($entity->id);
 });
+
+it('caches the lists through the label index under the dynamic contents label, for the long duration', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+
+    $service = DynamicContentsService::getInstance();
+    $service->fetchAvailableEntities(EntityType::Pages);
+    $service->fetchAvailablePresets(EntityType::Pages);
+    $service->fetchAvailablePresettables(EntityType::Pages);
+
+    $stores = array_values(array_filter(
+        $index->stores,
+        static fn (array $store): bool => $store['lookup']->dependencies->labels === [Modules\Core\Cache\Labels\CacheLabel::dynamicContents()],
+    ));
+
+    expect($stores)->toHaveCount(3)
+        ->and(array_unique(array_column($stores, 'ttl')))->toBe([(int) config('cache.duration.long')]);
+});
+
+it('flushes the dynamic contents label when the metadata generation moves, and keeps the generation for good', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $written = [];
+    Illuminate\Support\Facades\Event::listen(
+        Illuminate\Cache\Events\KeyWritten::class,
+        static function (Illuminate\Cache\Events\KeyWritten $event) use (&$written): void {
+            $written[$event->key] = $event->seconds;
+        },
+    );
+
+    $service = DynamicContentsService::getInstance();
+    $service->fetchAvailableEntities(EntityType::Pages);
+    $service->clearAllCaches();
+
+    $generation = array_key_exists('core.dynamic_contents.generation', $written) ? $written['core.dynamic_contents.generation'] : 'missing';
+
+    expect($index->flushes)->toContain([Modules\Core\Cache\Labels\CacheLabel::dynamicContents()])
+        ->and($generation)->toBeNull()
+        ->and(DynamicContentsService::getInstance()->fetchAvailableEntities(EntityType::Pages))->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
+});
+
+/**
+ * Whether the entity list of the type is answered by the label index, read by a fresh service as another request would.
+ */
+function dynamicContentsListCached(Modules\Core\Tests\Stubs\Cache\SpyLabelIndex $index, EntityType $type): bool
+{
+    DynamicContentsService::reset();
+    $before = count($index->lookups);
+    DynamicContentsService::getInstance()->fetchAvailableEntities($type);
+    $lookups = array_slice($index->lookups, $before);
+
+    return $lookups !== [] && $lookups[0]->hit;
+}
+
+it('drops a list another request cached between a metadata write and its commit', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $connection = (new Entity())->getConnection();
+
+    $connection->transaction(function () use ($index): void {
+        Entity::query()->create(['name' => 'Pending', 'slug' => 'pending', 'type' => EntityType::Pages]);
+
+        // A read between the write and the commit stores the list it sees.
+        dynamicContentsListCached($index, EntityType::Pages);
+    });
+
+    expect(dynamicContentsListCached($index, EntityType::Pages))->toBeFalse();
+});
+
+it('drops a list cached from rows a rolled back metadata write created', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $connection = (new Entity())->getConnection();
+
+    try {
+        $connection->transaction(function () use ($index): void {
+            Entity::query()->create(['name' => 'Never', 'slug' => 'never', 'type' => EntityType::Pages]);
+            dynamicContentsListCached($index, EntityType::Pages);
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    expect(dynamicContentsListCached($index, EntityType::Pages))->toBeFalse();
+});

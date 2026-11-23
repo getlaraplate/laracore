@@ -342,12 +342,17 @@ it('stores an ACL resolution through the label index under the acl and user labe
     $first = $service->getEffectiveAcls($user, $permission);
     $second = $service->getEffectiveAcls($user, $permission);
 
-    expect($index->stores)->toHaveCount(1)
-        ->and($index->stores[0]['stored'])->toBeTrue()
-        ->and($index->stores[0]['ttl'])->toBe(3600)
-        ->and($index->stores[0]['lookup']->dependencies->labels)->toContain(CacheLabel::acl(), CacheLabel::user($user->id))
-        ->and($index->lookups)->toHaveCount(2)
-        ->and($index->lookups[1]->hit)->toBeTrue()
+    // Settings and model discovery go through the same index while the ACLs resolve: keep the resolutions only.
+    $is_acl = static fn (Modules\Core\Cache\Labels\CacheLookup $lookup): bool => str_contains($lookup->key, ':acl:');
+    $stores = array_values(array_filter($index->stores, static fn (array $store): bool => $is_acl($store['lookup'])));
+    $lookups = array_values(array_filter($index->lookups, $is_acl));
+
+    expect($stores)->toHaveCount(1)
+        ->and($stores[0]['stored'])->toBeTrue()
+        ->and($stores[0]['ttl'])->toBe(3600)
+        ->and($stores[0]['lookup']->dependencies->labels)->toContain(CacheLabel::acl(), CacheLabel::user($user->id))
+        ->and($lookups)->toHaveCount(2)
+        ->and($lookups[1]->hit)->toBeTrue()
         ->and($second)->toEqual($first);
 });
 
