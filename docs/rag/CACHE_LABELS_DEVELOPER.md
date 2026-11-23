@@ -30,6 +30,12 @@ Label strings are built only by `Modules\Core\Cache\Labels\CacheLabel`; never wr
 | `translations` | `CacheLabel::translations()` | the translations payload | `translations:check` |
 | `inspector` | `CacheLabel::inspector()` | schema inspector results | the schema commands (`CommandListenerProvider`) |
 | `geocoding` | `CacheLabel::geocoding()` | geocoding answers | nothing by default: they expire by TTL, flush the label by hand to drop them |
+| `models` | `CacheLabel::models()` | model class discovery (`HelpersCache`, the `models()` helper) | the end of a migration (`CommandListenerProvider`), `permission:refresh`, `HelpersCache::clearModels()` |
+
+The settings caches (the groups and the name index of `PerModelSettingResolver`, the site configs) carry
+`table:core_settings`, the anonymous user (`AuthorizationService::resolveAnonymousUser()`) the table label of the user
+model, the cron list `table:core_cron_jobs`: all for `cache.duration.long`. A write to one setting through the model
+reloads every settings group (the coordinator still forgets the group it names).
 
 An update flushes both the table and the row label of its table, because an update can move a row into or out of a
 filtered list. A creation flushes only the table label: no cached value can embed a row that did not exist. A detail
@@ -43,10 +49,10 @@ counts hits, misses and flushes. Callers never branch on the driver.
 
 | Store | Index | Row labels | Behaviour |
 |---|---|---|---|
-| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one store window after the flush | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it records the flush time of every label, then deletes the entries and removes them from the sets; labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
+| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one store window after the flush | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it deletes the entries and removes them from the sets, then records the flush time of every label (deletes first, so a Redis over `maxmemory` with `noeviction`, which refuses a script whose first write is a `SET`, still deletes); labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
 | `array` | `ArrayLabelIndex`: in-process twin of the Redis index | yes | Same rules, lives for the process. |
 | `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. |
-| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below. A failover store without a `stores` list throws. |
+| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below, on a lost connection of a `redis` or `database` first store; a `memcached` first store never degrades (see "Known limits"). A failover store without a `stores` list throws. |
 | `null` | `NullLabelIndex` | n/a | Nothing is stored; every lookup misses. |
 
 **Degraded mode.** A Redis index is always guarded by `FailoverLabelIndex`, with a plain `redis` store as with a
@@ -54,14 +60,17 @@ counts hits, misses and flushes. Callers never branch on the driver.
 resolution is cached, and every flush is dropped instead of failing the write that issued it: an outage degrades to "no
 cache, writes succeed". Every entry stored through the guard carries the `stored` label, so the first successful call
 after an outage flushes `stored` before doing anything else, which reaches every kind of entry (CRUD responses, ACL
-resolutions, settings, cron list, docs, translations, inspector, geocoding) whose flushes may have been lost. The outage
+resolutions, settings, the anonymous user, model discovery, cron list, docs, translations, inspector, geocoding) whose
+flushes may have been lost. The outage
 is remembered in a marker on the host-local `file` store, holding the time of the last failed call: a later request or
 worker on the same host also flushes, and each process tries Redis at most once a second, so a request does not pay
 one connection timeout per call. The marker is shared by the host, the pacing is per process: a process reads the marker
 at most once a second, so processes that read it before another one's failure try Redis on their own, once a second
 each. A host that never saw a failure may serve entries written before the outage until some
-host has flushed `stored` (Redis is shared, one flush clears all). Only connection failures count as an outage; any
-other exception propagates.
+host has flushed `stored` (Redis is shared, one flush clears all). Only connection failures count as an outage: a Redis
+or Predis exception, a flush script Redis answers with an error reply (phpredis returns false for it, such as `-OOM`;
+the index throws `LabelIndexUnavailableException`), and a database exception Laravel's lost connection detector
+recognises (a failover cache whose first store is `database`). Any other exception propagates.
 
 Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in different
 hash slots.
@@ -73,7 +82,10 @@ only for the labels flushed within the last window. Raise the window if a cached
 minute; a value that never fits is never cached.
 
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
-TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live.
+TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live. Core caches
+nothing with `Cache::forever` outside the index except such counters: the outage marker of `FailoverLabelIndex` and
+the metadata generation of `DynamicContentsService`, whose entity, preset and presettable lists are kept through
+`Cache::memo()` for `cache.duration.long` under keys that embed the generation.
 
 ## What triggers flushes
 
@@ -111,8 +123,11 @@ TTL, through the store's atomic `add`, so a counter never resets while entries o
 - **After commit.** When the owning model has an open transaction, `CacheLabelInvalidator` defers the flush to
   `afterCommit`, so a reader cannot re-cache old rows between the flush and the commit. The labels of every write of
   the transaction are collected (`PendingLabelFlushes`, per connection) and flushed together, once, deduplicated: a
-  transaction of twenty updates costs one flush. Labels of a write rolled back with a savepoint stay collected and are
-  flushed with the transaction (an extra miss, never a stale read). With no transaction it flushes at once.
+  transaction of twenty updates costs one flush. A rollback flushes them too, once the connection has no transaction
+  left, since a read inside the transaction may have cached rows the rollback removed. Labels of a write rolled back
+  with a savepoint stay collected and are flushed when the transaction ends (an extra miss, never a stale read). A
+  callback Laravel runs at the commit of another connection's transaction waits for its own connection's. With no
+  transaction it flushes at once.
 
 ## Writing outside Eloquent events
 
@@ -222,9 +237,10 @@ Notes:
   counters stay as many as the tables and the fixed labels. On a Redis stats store the counters of one lookup or flush
   cost one script; on other stores each counted label costs an `add` and an `increment`. The label list is written
   only the first time a label is seen, under a lock of the stats store. Stats are best effort: a failing stats store
-  is reported once per process and never fails the read or write being measured, and nothing is counted while the
-  Redis index is degraded.
-- The cron list is warmed by `cache:warm` under the table label of the cron table through the same index.
+  is reported and pauses the counting for a minute (then it is tried again), it never fails the read or write being
+  measured, and nothing is counted while the Redis index is degraded.
+- `cache:warm` warms, through the same index, the settings name index and every settings group the resolver reads
+  (the version strategies are the `versioning` group) and the cron list under the table label of the cron table.
 
 ## Opting a model into the response cache
 
@@ -240,9 +256,15 @@ until its TTL. The same goes for global scopes and appended accessors that read 
   detach and so the flush. Teams are off in Laraplate; enabling them needs a flush added there first.
 - History reads are cached with the label of the requested record and the set labels of the versions and modifications
   tables; a write to those tables that bypasses Eloquent events must flush them as any other.
-- Search is never cached (see `CRUD_SYSTEM.md`), so it needs no flush on reindex.
+- Search is never cached (see `CRUD_SYSTEM.md`), so it needs no flush on reindex: `scout:index`, `scout:import`,
+  `scout:queue-import`, `scout:sync`, `scout:reindex` and `scout:rebuild` write the search engine, not the model's rows,
+  and flush nothing.
 - Stores without sets (`file`, `database`, `memcached`) over-invalidate: a change to one row flushes every response of
   its table, and old entries stay until their TTL.
+- A `memcached` store throws nothing when its server is down: reads miss, and a flush whose counter increment fails
+  is lost without an error. Under a `failover` cache it never degrades, so an invalidation lost during the outage is
+  not made good on recovery; entries expire by their TTL. Use Redis or `database` as the first store of a failover
+  cache when that matters.
 - A Redis flush may delete an entry stored while the flush was paging its label (over-invalidation, never staleness).
 - After a Redis outage, a host that never saw the outage may serve entries stored before it until some host flushes
   `stored`.

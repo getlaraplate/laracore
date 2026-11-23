@@ -776,7 +776,8 @@ a response holding rows of a table also carries `rows:{table}`, which a whole-ta
   touched and the cached details of the other rows stay. A write held for approval (HTTP 202), a disapproval and a
   withdrawal change no record row, only a pending request: every create, change or removal of a `Modification` flushes
   the table and the row of its record too (a preview embeds the request, and a model that hides pending deletions
-  drops the record from the lists of whoever cannot approve). The lock writes its columns with a query that fires no event,
+  drops the record from the lists of whoever cannot approve). A pending create has no record yet, so its request
+  flushes no record labels, only those of the modifications table. The lock writes its columns with a query that fires no event,
   so `HasLocks` flushes the row and table labels itself. A module action (`domainAction`) runs arbitrary code and
   flushes the whole table of the entity afterwards, as does the `clearModelCache` operation.
 - `Cache::clearByEntity()` flushes the whole table of a `HasCache` entity (its table label and `rows:{table}`, so
