@@ -268,6 +268,10 @@ until its TTL. The same goes for global scopes and appended accessors that read 
   and flush nothing.
 - Stores without sets (`file`, `database`, `memcached`) over-invalidate: a change to one row flushes every response of
   its table, and old entries stay until their TTL.
+- Laravel's lost connection detector, which decides an outage of a `database` first store, also matches some errors
+  that are not outages (a read-only replica, a deadlock avoided, access denied, a conflict with recovery). They degrade
+  the index for at least a second and the recovery purges `stored`, which on a version counter store is every entry:
+  over-invalidation, never a stale read.
 - A `memcached` store throws nothing when its server is down: reads miss and writes answer false. A flush whose
   counter can be neither incremented nor created throws `LabelIndexUnavailableException`, so under a `failover` cache
   the index degrades on the first refused flush and purges `stored` on recovery; until a flush is refused, the outage
