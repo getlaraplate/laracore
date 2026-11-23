@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Modules\Core\Search\Console;
 
 use Exception;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
@@ -69,11 +71,11 @@ final class SearchSyncCommand extends Command
             $total_chunks = ceil($total / 100);
             $chunk = 0;
             $use_soft_deletes = class_uses_trait($model_class, SoftDeletes::class);
-            $model->chunk(100, function ($records) use ($total_chunks, &$chunk, $use_soft_deletes): void {
+            $model->chunk(100, function (Collection $records) use ($total_chunks, &$chunk, $use_soft_deletes): void {
                 $chunk++;
                 $progress = new Progress(
                     'Syncing documents chunk ' . $chunk . ' of ' . $total_chunks,
-                    $records->map(static fn ($record): string => 'Record ' . $record->id)->toArray(),
+                    $records->map(static fn (Model $record): string => 'Record ' . $record->id)->toArray(),
                 );
 
                 foreach ($records as $record) {
