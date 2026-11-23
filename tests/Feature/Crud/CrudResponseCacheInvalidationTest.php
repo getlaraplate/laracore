@@ -194,7 +194,7 @@ it('still hits after a write to the table of another entity', function (string $
     crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $url));
 })->with(['array', 'file']);
 
-it('flushes once, after the commit, and leaves the hit after a rollback', function (string $kind): void {
+it('flushes once, after the commit or after the rollback', function (string $kind): void {
     $spy = crudInvalidationBind($kind);
     $setting = crudInvalidationNewSetting();
     $this->actingAs(crudInvalidationSuperadmin());
@@ -207,7 +207,8 @@ it('flushes once, after the commit, and leaves the hit after a rollback', functi
     crudInvalidationRead($spy, new Setting(), $url);
     crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $url));
 
-    // Rolled back: nothing is flushed and the cached response is still served.
+    // Rolled back: nothing inside the transaction, one flush after the rollback, since a read inside it may have
+    // cached the rows it removed.
     $spy->flushes = [];
     $counter_before = $counter();
 
@@ -221,11 +222,14 @@ it('flushes once, after the commit, and leaves the hit after a rollback', functi
     } catch (RuntimeException) {
     }
 
-    expect($spy->flushes)->toBe([])
-        ->and($counter())->toBe($counter_before);
+    expect($spy->flushes)->toHaveCount(1)
+        ->and($spy->flushes[0])->toEqualCanonicalizing([$table_label, $row_label]);
+    crudInvalidationAssertMiss(crudInvalidationRead($spy, new Setting(), $url), false);
     crudInvalidationAssertHit(crudInvalidationRead($spy, new Setting(), $url), false);
 
     // Committed: nothing inside the transaction, one flush of the row and its table at the commit.
+    $spy->flushes = [];
+    $counter_before = $counter();
     $connection->transaction(function () use ($setting, $spy, $counter, $counter_before): void {
         $setting->update(['description' => 'committed ' . uniqid()]);
 
