@@ -786,8 +786,8 @@ a response holding rows of a table also carries `rows:{table}`, which a whole-ta
 - A write that fires no Eloquent event must flush the labels itself, see `CACHE_LABELS_DEVELOPER.md`.
 
 **Degraded behaviour.** With a `redis` store, alone or as the first store of `failover`, while Redis is down the index
-reads nothing and stores nothing: every read is computed and every write succeeds. Redis is tried again at most once a
-second per host. Invalidations issued meanwhile cannot reach Redis, so after recovery every entry stored through the
+reads nothing and stores nothing: every read is computed and every write succeeds. Each process tries Redis again at
+most once a second (the outage marker is shared by the processes of a host, the retry pacing is per process). Invalidations issued meanwhile cannot reach Redis, so after recovery every entry stored through the
 index (label `stored`) is flushed before any entry is read or stored. On `database`, `file`, `memcached` and similar stores, version counters replace row labels
 and a record change flushes the whole table label (over-invalidation, never staleness). With the `null` store nothing
 is cached.

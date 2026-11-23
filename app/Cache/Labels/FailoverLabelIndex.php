@@ -19,8 +19,11 @@ use Throwable;
  * {@see CacheLabel::stored()}, whatever it holds (CRUD responses, ACL resolutions, settings, documentation, ...).
  *
  * The outage is recorded in a marker on the host-local `file` cache store, holding the time of the last failed call,
- * so a later request, Octane worker or queue worker on the same host still flushes after recovery, and the primary is
- * tried at most once a second per host while it is down: a request never pays one connection timeout per call.
+ * so a later request, Octane worker or queue worker on the same host still flushes after recovery. While the primary
+ * is down, each process tries it at most once a second: an instance reads the shared marker at most once a second and
+ * leaves the primary alone for a second after the failure it records, so a request never pays one connection timeout
+ * per call. The pacing is per process, not per host: processes that read the marker before another one's failure try
+ * the primary on their own, at most once a second each.
  * Residual: a host that never saw a failure may serve stale entries until some host flushes the label (Redis is
  * shared, so one flush clears all). Only connection failures count as an outage; any other exception is a bug and
  * propagates.

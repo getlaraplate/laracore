@@ -56,8 +56,10 @@ cache, writes succeed". Every entry stored through the guard carries the `stored
 after an outage flushes `stored` before doing anything else, which reaches every kind of entry (CRUD responses, ACL
 resolutions, settings, cron list, docs, translations, inspector, geocoding) whose flushes may have been lost. The outage
 is remembered in a marker on the host-local `file` store, holding the time of the last failed call: a later request or
-worker on the same host also flushes, and Redis is tried at most once a second per host, so a request does not pay one
-connection timeout per call. A host that never saw a failure may serve entries written before the outage until some
+worker on the same host also flushes, and each process tries Redis at most once a second, so a request does not pay
+one connection timeout per call. The marker is shared by the host, the pacing is per process: a process reads the marker
+at most once a second, so processes that read it before another one's failure try Redis on their own, once a second
+each. A host that never saw a failure may serve entries written before the outage until some
 host has flushed `stored` (Redis is shared, one flush clears all). Only connection failures count as an outage; any
 other exception propagates.
 
