@@ -101,8 +101,10 @@ final readonly class ClosurePaths
         $chains = $this->ancestorChains(array_map(strval(...), array_keys($keys)));
 
         foreach ($walks as $walk) {
-            $walk['node']->setAttribute('path', implode('.', self::pathOf($walk['from'], $walk['to'], $walk['depth'], $chains)));
-            $walk['node']->syncOriginalAttribute('path');
+            $node = $walk['node'];
+            // Raw, not setAttribute(): a model's mutators may do work per node (Taxonomy's dynamic-field lookup).
+            $node->setRawAttributes([...$node->getAttributes(), 'path' => implode('.', self::pathOf($walk['from'], $walk['to'], $walk['depth'], $chains))]);
+            $node->syncOriginalAttribute('path');
         }
     }
 

@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\Support\Hierarchy\ClosurePaths;
 use Modules\Core\Tests\Stubs\ClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\MutatorCountingClosureTreeStubModel;
 
 beforeEach(function (): void {
     Schema::dropIfExists('closure_tree_nodes_closure');
@@ -99,4 +100,17 @@ it('leaves alone the starting nodes that did not load the relation', function ()
     ClosurePaths::forModel(new ClosureTreeStubModel)->assign($starting_nodes, 'descendants');
 
     expect($starting_nodes->every(static fn (ClosureTreeStubModel $node): bool => ! $node->relationLoaded('descendants') && ! array_key_exists('path', $node->getAttributes())))->toBeTrue();
+});
+
+it('writes the path without going through the model mutators and leaves the node clean', function (): void {
+    $starting_nodes = MutatorCountingClosureTreeStubModel::query()->with('descendantsAndSelf')->whereKey($this->nodes[0]->id)->get();
+    MutatorCountingClosureTreeStubModel::$mutatedKeys = [];
+
+    ClosurePaths::forModel(new MutatorCountingClosureTreeStubModel)->assign($starting_nodes, 'descendantsAndSelf');
+
+    $nodes = $starting_nodes->first()->descendantsAndSelf;
+
+    expect(MutatorCountingClosureTreeStubModel::$mutatedKeys)->not->toContain('path')
+        ->and($nodes->pluck('path')->all())->toBe(['1', '1.2', '1.5', '1.2.3', '1.2.3.4'])
+        ->and($nodes->contains(static fn (MutatorCountingClosureTreeStubModel $node): bool => $node->isDirty()))->toBeFalse();
 });
