@@ -79,7 +79,12 @@ hash slots.
 store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. The flush
 records expire after the window plus one second, so every store they must refuse still finds them, and they take memory
 only for the labels flushed within the last window. Raise the window if a cached computation can take longer than a
-minute; a value that never fits is never cached.
+minute; a value that never fits is never cached, and nothing counts it: `store()` returns false and `cache:label-stats`
+shows only the misses, so an endpoint that is always recomputed looks like one that is often flushed.
+
+Change the window on every host before relying on it, and flush `stored` after a raise: the flush records of a host
+still on the old window expire after that window, so a host on a longer one may accept a store the record should
+have refused. Lowering it is safe.
 
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
 TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live. Core caches
@@ -269,11 +274,18 @@ until its TTL. The same goes for global scopes and appended accessors that read 
 - After a Redis outage, a host that never saw the outage may serve entries stored before it until some host flushes
   `stored`.
 - ACL filters that name relations are not labelled (see "Opting a model into the response cache").
-- Redis Cluster is not supported.
+- Redis Cluster is not supported, and nothing checks for it: the scripts fail at runtime with a CROSSSLOT error.
 - On Redis a flush costs one round trip for the index and one for the stats, for one write outside a transaction as
   for a whole transaction (measured by `RedisLabelWritePathTest`; it was 7 for one update and 140 for a transaction of
   twenty). Writes outside a transaction still flush one by one: wrap a burst of writes in a transaction to pay once.
 - A value whose computation takes longer than the store window is never stored on Redis (see "Store window").
+- Script cost on Redis: a flush script `DEL`s up to 1000 cached values in one call, freed synchronously unless
+  `lazyfree-lazy-user-del` is on (large CRUD snapshots make it slower); a store script reads the flush record of
+  every label of the entry in one `MGET`, so an entry with several thousand labels (a large list with per-row labels)
+  fails to store, which only leaves it uncached.
+- The ordering of lookups and flushes uses the clock of the one Redis primary. A Sentinel failover can lose flush
+  records that were not replicated, and the new primary's clock may lag the old one's, so a store started before the
+  failover may be accepted after a flush that should have refused it: flush `stored` after a Redis failover.
 - Upgrading from before v1.81.0 on Redis: while old and new workers run side by side (a multi-host deploy, queue workers
   that restart only after their current job), an old worker records its flushes in the `labelflush` hash, which a new
   worker's store does not read, so a new worker may store a value computed before an old worker's commit. Flush
