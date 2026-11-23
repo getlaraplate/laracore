@@ -22,8 +22,10 @@ use WeakMap;
  * cached a value built from rows the rollback removed. A rolled back savepoint flushes nothing yet: its labels stay
  * collected, and the callbacks are registered again on the transaction still open, which flushes them when it ends.
  *
- * Laravel attaches a callback to the innermost open transaction whatever its connection, so a callback may run at the
- * commit of another connection: it then waits again for its own connection's transaction instead of flushing early.
+ * Laravel's `afterCommit()` attaches a callback to the innermost open transaction whatever its connection, so the
+ * callbacks are registered on the transaction record of their own connection instead: a commit or a full rollback of
+ * another connection neither flushes the set early nor discards it. A callback that still runs while its connection
+ * has a transaction open waits again for that transaction.
  *
  * Bound as a scoped singleton: the set must outlive the invalidator instances that fill it, and a pending callback
  * keeps the instance it was registered on. Labels left by a write whose callbacks were all dropped are forgotten
@@ -77,24 +79,41 @@ final class PendingLabelFlushes
     }
 
     /**
-     * Registers the commit callback of a write, and the rollback callback once per transaction record.
+     * Registers the commit callback of a write on the innermost open transaction of its own connection, and the
+     * rollback callback once per such transaction. Not through `$connection->afterCommit()`: Laravel attaches that to
+     * the innermost open transaction of any connection, and a full rollback of another connection would discard it.
+     * With no transaction of its own open (in a test, only the `RefreshDatabase` wrapper) the set is flushed at once.
      */
     private function watch(Connection $connection, string $key): void
     {
-        $connection->afterCommit(fn () => $this->committed($connection, $key));
-
         $manager = app()->bound('db.transactions') ? app('db.transactions') : null;
-        $record = $manager instanceof DatabaseTransactionsManager ? $manager->callbackApplicableTransactions()->last() : null;
 
-        if ($record instanceof DatabaseTransactionRecord && isset($this->pending[$key])) {
-            if (isset($this->pending[$key]['watched'][$record])) {
-                return;
-            }
+        if (! $manager instanceof DatabaseTransactionsManager) {
+            $connection->afterCommit(fn () => $this->committed($connection, $key));
+            $connection->afterRollBack(fn () => $this->rolledBack($connection, $key));
 
-            $this->pending[$key]['watched'][$record] = true;
+            return;
         }
 
-        $connection->afterRollBack(fn () => $this->rolledBack($connection, $key));
+        $name = $connection->getName();
+        $record = $manager->callbackApplicableTransactions()->last(
+            static fn (DatabaseTransactionRecord $transaction): bool => $transaction->connection === $name,
+        );
+
+        if (! $record instanceof DatabaseTransactionRecord) {
+            $this->flush($key);
+
+            return;
+        }
+
+        $record->addCallback(fn () => $this->committed($connection, $key));
+
+        if (! isset($this->pending[$key]) || isset($this->pending[$key]['watched'][$record])) {
+            return;
+        }
+
+        $this->pending[$key]['watched'][$record] = true;
+        $record->addCallbackForRollback(fn () => $this->rolledBack($connection, $key));
     }
 
     private function committed(Connection $connection, string $key): void

@@ -152,6 +152,35 @@ it('waits for the commit of its own connection when Laravel runs its callback at
         );
 });
 
+it('keeps the labels of a write on the outer connection when the inner connection rolls back in full', function (): void {
+    // Two connections of their own: on the RefreshDatabase connection the inner rollback would be a savepoint rollback.
+    config([
+        'database.connections.labels_outer' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+        'database.connections.labels_inner' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+    ]);
+    $outer = Illuminate\Support\Facades\DB::connection('labels_outer');
+    $inner = Illuminate\Support\Facades\DB::connection('labels_inner');
+    $owner = new Role();
+    $owner->setConnection('labels_outer');
+    $label = CacheLabel::table('outer_audit_rows');
+
+    $outer->transaction(function () use ($inner, $owner, $label): void {
+        try {
+            // A write on the outer connection while the inner one's transaction is innermost.
+            $inner->transaction(static function () use ($owner, $label): void {
+                resolve(CacheLabelInvalidator::class)->flushLabels($owner, $label);
+
+                throw new RuntimeException('rollback the inner connection');
+            });
+        } catch (RuntimeException) {
+        }
+
+        expect($this->index->flushedLabels())->not->toContain($label);
+    });
+
+    expect($this->index->flushedLabels())->toContain($label);
+});
+
 it('flushes at once, through the index, a write with no transaction open', function (): void {
     config(['database.connections.labels_untransacted' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
     $owner = new Role();
