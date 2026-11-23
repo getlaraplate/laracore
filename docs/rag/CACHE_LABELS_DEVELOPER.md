@@ -212,7 +212,9 @@ Notes:
 ## Commands
 
 - `cache:prune-labels`: removes expired entries and memberships from the label sets. It is scheduled hourly with
-  `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL.
+  `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL. On
+  Redis it also deletes the `labelflush` hash the index kept before v1.81.0 (one hash of flush times, without expiry),
+  which nothing reads any more.
 - `cache:label-stats`: a table of hits, misses (counted per first table label of the entry) and flushes per label,
   read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Flushes count
   flush calls: a transaction flushes once after its commit, whatever the number of its writes. Labels that grow with
@@ -250,3 +252,7 @@ until its TTL. The same goes for global scopes and appended accessors that read 
   for a whole transaction (measured by `RedisLabelWritePathTest`; it was 7 for one update and 140 for a transaction of
   twenty). Writes outside a transaction still flush one by one: wrap a burst of writes in a transaction to pay once.
 - A value whose computation takes longer than the store window is never stored on Redis (see "Store window").
+- Upgrading from before v1.81.0 on Redis: while old and new workers run side by side (a multi-host deploy, queue workers
+  that restart only after their current job), an old worker records its flushes in the `labelflush` hash, which a new
+  worker's store does not read, so a new worker may store a value computed before an old worker's commit. Flush
+  `stored` (or clear the cache) once every worker runs the new version.

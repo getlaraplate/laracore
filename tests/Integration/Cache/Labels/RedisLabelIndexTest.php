@@ -173,3 +173,13 @@ it('deletes the members of a flush before it writes the flush records', function
     expect($reply)->toBeFalse()
         ->and($index->lookup('k', $dependencies)->hit)->toBeFalse();
 })->group('redis');
+
+it('deletes the flush hash of the index before v1.81.0 when it prunes', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    $connection = $store->connection();
+    $connection->hset($store->getPrefix() . 'labelflush', 'table:core_users', '1');
+
+    new RedisLabelIndex($store)->pruneStale();
+
+    expect((int) $connection->exists($store->getPrefix() . 'labelflush'))->toBe(0);
+})->group('redis');
