@@ -152,6 +152,29 @@ it('waits for the commit of its own connection when Laravel runs its callback at
         );
 });
 
+it('flushes at once, through the index, a write with no transaction open', function (): void {
+    config(['database.connections.labels_untransacted' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
+    $owner = new Role();
+    $owner->setConnection('labels_untransacted');
+
+    expect($owner->getConnection()->transactionLevel())->toBe(0);
+
+    resolve(CacheLabelInvalidator::class)->flushLabels($owner, CacheLabel::acl(), CacheLabel::acl(), CacheLabel::user(5));
+    resolve(CacheLabelInvalidator::class)->flushLabels(null, CacheLabel::docs());
+
+    expect($this->index->flushes)->toBe([[CacheLabel::acl(), CacheLabel::user(5)], [CacheLabel::docs()]]);
+});
+
+it('forgets the labels collected in a request or job when its scope ends', function (): void {
+    $first = resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class);
+
+    expect(resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class))->toBe($first);
+
+    app()->forgetScopedInstances();
+
+    expect(resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class))->not->toBe($first);
+});
+
 it('flushes the labels of a whole transaction once after the commit, deduplicated', function (): void {
     $roles = [makeLabelRole(), makeLabelRole(), makeLabelRole()];
     $this->index->flushes = [];
