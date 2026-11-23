@@ -55,3 +55,9 @@ confirm or cancel. Cancel changes nothing. A setting can also be locked while an
 reason is written under the field. For example, choosing another embedding model in
 `features.embeddings.model` shows how many records will be re-embedded and that search uses keywords only
 until the switch ends, and the field stays locked until it ends.
+
+Switching versioning off for a table (`versioning.strategy.{table}` set to `false`) also asks first. The window
+shows how many revisions will be deleted. Once you confirm, the edit history of that table is deleted in the
+background and cannot be restored; the snapshots of records deleted for good are kept, so those records can still
+be recovered. If you switch versioning back on before the deletion runs, the history is kept. Switched back on
+later, versioning starts a new history: each record gets its first version at its next save.

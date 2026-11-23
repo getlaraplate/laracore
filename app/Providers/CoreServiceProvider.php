@@ -140,6 +140,7 @@ use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\VersionEpochs;
 use Modules\Core\Versioning\VersionSetManager;
 use Modules\Core\Versioning\VersionWriter;
+use Modules\Core\Versioning\VersioningSettingConfirmation;
 use Nwidart\Modules\Module as NwidartModule;
 use Override;
 use PDO;
@@ -187,6 +188,9 @@ final class CoreServiceProvider extends ModuleServiceProvider
         }
 
         $this->configureFortifyFeatures();
+
+        // Switching a table's versioning off deletes its edit history: the settings page asks first (D22).
+        $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(VersioningSettingConfirmation::class));
 
         $this->registerAuths();
         $this->registerMiddlewares();
