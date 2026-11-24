@@ -52,8 +52,8 @@ counts hits, misses and flushes. Callers never branch on the driver.
 |---|---|---|---|
 | `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one second after the largest store window in use | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it deletes the entries and removes them from the sets, then records the flush time of every label (deletes first, so a Redis over `maxmemory` with `noeviction`, which refuses a script whose first write is a `SET`, still deletes); labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
 | `array` | `ArrayLabelIndex`: in-process twin of the Redis index | yes | Same rules, lives for the process. |
-| `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. On `memcached` the index is guarded by `FailoverLabelIndex`: a flush the store refuses degrades it instead of failing the write. |
-| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below, on a lost connection of a `redis` or `database` first store, and on a flush a `memcached` first store refuses (see "Known limits"). A failover store without a `stores` list throws. |
+| `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A missing counter is created at a seed taken from the clock, at the lookup as at the flush, so a lost counter (evicted, lost with its memcached node, a deleted `database` row) restarts at a fresh value and orphans the entries of its old versions, never serves them again. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. On `memcached` the index is guarded by `FailoverLabelIndex` and checks the client's result code after every call: a read or a write a node failed degrades it instead of resolving every counter to one value or failing the write. |
+| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below, on a lost connection of a `redis` or `database` first store, and on a call a `memcached` first store fails (see "Known limits"). A failover store without a `stores` list throws. |
 | `null` | `NullLabelIndex` | n/a | Nothing is stored; every lookup misses. |
 
 **Degraded mode.** A Redis index is always guarded by `FailoverLabelIndex`, with a plain `redis` store as with a
@@ -98,7 +98,8 @@ nothing counts it: `store()` returns false and `cache:label-stats` shows only th
 recomputed looks like one that is often flushed.
 
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
-TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live. Core caches
+TTL, through the store's atomic `add`, at a seed taken from the clock (microseconds), so a counter never resets while
+entries of its versions live, and one lost anyway restarts above every value it held. Core caches
 nothing with `Cache::forever` outside the index except such counters: the outage marker of `FailoverLabelIndex` and
 the metadata generation of `DynamicContentsService`, whose entity, preset and presettable lists are kept in the index
 under the `dynamic_contents` label for `cache.duration.long`, under keys that embed the generation.
@@ -287,10 +288,15 @@ until its TTL. The same goes for global scopes and appended accessors that read 
   that are not outages (a read-only replica, a deadlock avoided, access denied, a conflict with recovery). They degrade
   the index for at least a second and the recovery purges `stored`, which on a version counter store is every entry:
   over-invalidation, never a stale read.
-- A `memcached` store throws nothing when its server is down: reads miss and writes answer false. A flush whose
-  counter can be neither incremented nor created throws `LabelIndexUnavailableException`, so under a `failover` cache
-  the index degrades on the first refused flush and purges `stored` on recovery; until a flush is refused, the outage
-  only shows as misses.
+- A `memcached` store throws nothing when its server is down: reads miss and writes answer false, and a read that one
+  node of a pool failed answers every key as missing. The version counter index reads the client's result code after
+  every call, and any code but a success, a missing key, a refused add or an existing key throws
+  `LabelIndexUnavailableException`: the index (always guarded on memcached) degrades on the first failed read or write
+  and purges `stored` on recovery.
+- A lost version counter restarts at a seed taken from the clock: the entries of its old versions are orphaned and
+  recomputed (over-invalidation). On the array, file and Redis stores an increment creates a missing key at 1, so a
+  counter lost between the add and the increment of one flush restarts at 1; the flush adds before it increments, which
+  leaves only that race.
 - A Redis flush may delete an entry stored while the flush was paging its label (over-invalidation, never staleness).
 - After a Redis outage, a host that never saw the outage may serve entries stored before it until some host flushes
   `stored`.

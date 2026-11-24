@@ -35,8 +35,8 @@ use Throwable;
  * reply the primary reports ({@see LabelIndexUnavailableException}, such as a flush refused under `-OOM`), and a
  * database exception Laravel's lost connection detector recognises (a failover cache whose first store is `database`);
  * any other exception is a bug and propagates. A memcached primary throws nothing when its server is down (it answers
- * misses and failed writes): it degrades on the first flush its counters refuse
- * ({@see VersionCounterLabelIndex::flush()}), not on reads, see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
+ * misses and failed writes): {@see VersionCounterLabelIndex} reads the client's result code after every call and
+ * throws on a failed one, so it degrades on reads as on flushes, see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
  */
 final class FailoverLabelIndex implements ICacheLabelIndex, IReportsCacheEvictionPolicy, IResolvesCacheLabelKeys
 {
