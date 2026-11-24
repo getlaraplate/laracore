@@ -88,6 +88,39 @@ it('reads the chains of every starting node in one query', function (): void {
     expect($queries)->toBe(1);
 });
 
+it('reads no closure rows when the loaded ancestors already give every path above the starting nodes', function (): void {
+    $starting_nodes = ClosureTreeStubModel::query()->with('ancestorsAndSelf')->orderBy('id')->get();
+
+    DB::enableQueryLog();
+    ClosurePaths::forModel(new ClosureTreeStubModel)->assign($starting_nodes, 'ancestorsAndSelf');
+    $queries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    expect($queries)->toBe(0)
+        ->and($starting_nodes[3]->ancestorsAndSelf->map(static fn (ClosureTreeStubModel $node): array => [$node->id, $node->depth, $node->path])->all())
+        ->toBe([[4, 0, '4'], [3, -1, '4.3'], [2, -2, '4.3.2'], [1, -3, '4.3.2.1']]);
+});
+
+it('reads no closure rows for the ancestors without the node itself either', function (): void {
+    DB::enableQueryLog();
+    $paths = closure_paths_of('ancestors');
+    $closure_reads = collect(DB::getQueryLog())->filter(static fn (array $query): bool => str_contains($query['query'], 'closure_tree_nodes_closure') && ! str_contains($query['query'], 'inner join'))->count();
+    DB::disableQueryLog();
+
+    expect($paths[4])->toBe([[3, -1, '4.3'], [2, -2, '4.3.2'], [1, -3, '4.3.2.1']])
+        ->and($closure_reads)->toBe(0);
+});
+
+it('reads the closure rows of a starting node whose loaded ancestors miss a hidden one', function (): void {
+    DB::enableQueryLog();
+    $paths = closure_paths_of('ancestorsAndSelf', hidden: [2]);
+    $closure_reads = collect(DB::getQueryLog())->filter(static fn (array $query): bool => str_contains($query['query'], 'closure_tree_nodes_closure') && ! str_contains($query['query'], 'inner join'))->count();
+    DB::disableQueryLog();
+
+    expect($paths[4])->toBe([[4, 0, '4'], [3, -1, '4.3'], [1, -3, '4.3.2.1']])
+        ->and($closure_reads)->toBe(1);
+});
+
 it('falls back to the two ends when the closure lacks a link', function (): void {
     DB::table('closure_tree_nodes_closure')->where('ancestor_id', 2)->where('descendant_id', 4)->delete();
 

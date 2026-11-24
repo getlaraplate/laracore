@@ -78,6 +78,8 @@ changed, for a move under the node itself or one of its descendants.
 `Modules\Core\Support\Hierarchy\ClosurePaths` reads the dotted `path` (`1.2.4`, from the node the walk started at)
 that `CrudService::tree()` returns next to the signed `depth`: one query per 500 nodes on the closure table. The
 path comes from the closure rows, so a node a scope or an ACL hides still stands in the path of the nodes beyond it.
+Above a starting node the rows the relation already loaded are enough when no ancestor is missing from them, so a
+tree with parents only, nothing hidden, reads no further row.
 Its `chainsOf()` gives each node's ancestors by distance from the same rows.
 
 A taxonomy's own `path` accessor (`HasPath`) is a different value: the translated slugs of its ancestors, root

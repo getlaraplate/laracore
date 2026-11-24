@@ -14,9 +14,11 @@ use LogicException;
  * grandparent reads `4.2.1`; the node itself reads its own key. The tree payload of
  * {@see \Modules\Core\Services\Crud\CrudService::tree()} carries it next to the signed `depth` of each node.
  *
- * The path is read from the closure rows, not from the nodes loaded: a node a scope or the caller's ACL hides still
- * stands in the path of the nodes beyond it. One query per {@see self::KEY_CHUNK_SIZE} nodes, whatever the number of
- * starting nodes; it reads the ancestors of each node, at most its depth.
+ * The path is read from the closure rows: a node a scope or the caller's ACL hides still stands in the path of the
+ * nodes beyond it. Above a starting node, the rows the relation itself loaded give the path when they hold a node at
+ * every distance up to the one reached, so the ancestors of a node, nothing hidden, read nothing more. The other paths
+ * take one query per {@see self::KEY_CHUNK_SIZE} nodes, whatever the number of starting nodes; it reads the ancestors
+ * of each node, at most its depth.
  */
 final readonly class ClosurePaths
 {
@@ -62,6 +64,9 @@ final readonly class ClosurePaths
         $walks = [];
         $keys = [];
 
+        /** @var array<string, array<int, string>> $above */
+        $above = [];
+
         foreach ($startingNodes as $starting_node) {
             $from = self::keyOf($starting_node->getKey());
 
@@ -89,8 +94,10 @@ final readonly class ClosurePaths
 
                 $depth = (int) $depth;
                 $walks[] = ['node' => $node, 'from' => $from, 'to' => $to, 'depth' => $depth];
-                // Above the starting node the path climbs its own chain; below it, the chain of the node reached.
-                $keys[$depth < 0 ? $from : $to] = true;
+
+                if ($depth <= 0) {
+                    $above[$from][-$depth] = $to;
+                }
             }
         }
 
@@ -98,7 +105,24 @@ final readonly class ClosurePaths
             return;
         }
 
-        $chains = $this->chainsOf(array_map(strval(...), array_keys($keys)));
+        // Above the starting node the path climbs its own chain, which the relation has loaded when it holds a node
+        // at every distance up to the one reached; below it, the path is the chain of the node reached, read here.
+        $chains = [];
+
+        foreach ($walks as $walk) {
+            $distance = -$walk['depth'];
+
+            if ($distance >= 0 && self::holdsEveryDistance($above[$walk['from']] ?? [], $distance)) {
+                $chains[$walk['from']] ??= [0 => $walk['from']] + ($above[$walk['from']] ?? []);
+            } else {
+                $keys[$walk['depth'] < 0 ? $walk['from'] : $walk['to']] = true;
+            }
+        }
+
+        // Keyed by node keys, numeric: merged key by key, never renumbered.
+        foreach ($keys === [] ? [] : $this->chainsOf(array_map(strval(...), array_keys($keys))) as $key => $chain) {
+            $chains[$key] = $chain;
+        }
 
         foreach ($walks as $walk) {
             $node = $walk['node'];
@@ -162,6 +186,22 @@ final readonly class ClosurePaths
         }
 
         return $depth < 0 ? $path : array_reverse($path);
+    }
+
+    /**
+     * Whether the nodes loaded above a starting node, by distance, hold one at every distance from 1 to the one given.
+     *
+     * @param  array<int, string>  $chain
+     */
+    private static function holdsEveryDistance(array $chain, int $distance): bool
+    {
+        for ($step = 1; $step <= $distance; $step++) {
+            if (! isset($chain[$step])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
