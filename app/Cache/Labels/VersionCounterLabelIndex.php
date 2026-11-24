@@ -39,9 +39,9 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex, IReso
 
     /**
      * The memcached result codes of a call that was served: a success, a missing key, an add refused because the key
-     * exists, a compare-and-swap conflict.
+     * exists, a compare-and-swap conflict, a write buffered by the client (`OPT_BUFFER_WRITES`).
      */
-    private const array MEMCACHED_SERVED = [Memcached::RES_SUCCESS, Memcached::RES_NOTFOUND, Memcached::RES_NOTSTORED, Memcached::RES_DATA_EXISTS];
+    private const array MEMCACHED_SERVED = [Memcached::RES_SUCCESS, Memcached::RES_NOTFOUND, Memcached::RES_NOTSTORED, Memcached::RES_DATA_EXISTS, Memcached::RES_BUFFERED];
 
     public function __construct(private CacheRepository $cache) {}
 

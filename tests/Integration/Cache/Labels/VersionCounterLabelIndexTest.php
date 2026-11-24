@@ -117,3 +117,15 @@ it('starts a missing counter at a seed taken from the clock, at the lookup and a
         ->and($cache->get('labelv:table:core_users'))->toBe($seed)
         ->and($cache->get('labelv:table:core_roles'))->toBe($seed);
 });
+
+it('accepts a write memcached buffers, with OPT_BUFFER_WRITES on', function (): void {
+    $memcached = Mockery::mock(Memcached::class);
+    $memcached->shouldReceive('set')->andReturn(true);
+    $memcached->shouldReceive('add')->andReturn(true);
+    $memcached->shouldReceive('getResultCode')->andReturn(Memcached::RES_BUFFERED);
+    $index = new VersionCounterLabelIndex(new Modules\Core\Cache\Repository(new Illuminate\Cache\MemcachedStore($memcached)));
+
+    $index->flush('table:core_users');
+
+    expect($index->store(new Modules\Core\Cache\Labels\CacheLookup('k', false, null, 1, new CacheDependencies(['t'])), 'v', 60))->toBeTrue();
+});
