@@ -48,6 +48,9 @@ use Spatie\EloquentSortable\Sortable;
  * @property \Carbon\CarbonImmutable $valid_from
  * @property \Carbon\CarbonImmutable|null $valid_to
  * @property array<array-key, mixed>|null $shared_components The shared dynamic components of the taxonomy
+ * @property string|null $name
+ * @property string|null $slug
+ * @property array<array-key, mixed>|null $components
  */
 abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, IValidatableModel, Sortable
 {
