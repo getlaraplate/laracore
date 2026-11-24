@@ -65,6 +65,49 @@ it('keeps soft deletes and the records in the bin when the purge is refused', fu
     }
 });
 
+it('leaves the trait, the migrations, the setting and the records in the bin untouched when the purge is refused', function (): void {
+    Schema::create('soft_deletes_stub', static function (Blueprint $table): void {
+        $table->id();
+        $table->string('name')->nullable();
+        $table->timestamps();
+        $table->timestamp('deleted_at')->nullable();
+        $table->boolean('is_deleted')->default(false);
+    });
+    DB::table('soft_deletes_stub')->insert([['name' => 'trashed', 'deleted_at' => now(), 'is_deleted' => true]]);
+    $name = Modules\Core\Services\PerModelSettingResolver::nameFor(Modules\Core\Database\Seeders\CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, 'soft_deletes_stub');
+    Modules\Core\Models\Setting::factory()->persistedWithoutApprovalCapture()->create(['name' => $name, 'value' => true, 'type' => 'boolean', 'group_name' => 'soft_deletes']);
+    $model_file = (string) new ReflectionClass(Modules\Core\Tests\Stubs\SoftDeletesStubModel::class)->getFileName();
+    $source = file_get_contents($model_file);
+    $files = Mockery::mock(Filesystem::class)->makePartial();
+    $files->shouldNotReceive('put');
+    app()->instance(Filesystem::class, $files);
+
+    try {
+        $this->artisan('model:soft-deletes-remove', ['model' => 'SoftDeletesStubModel', '--namespace' => 'Modules\\Core\\Tests\\Stubs'])
+            ->expectsConfirmation('Purge those records with hard delete before removing soft delete columns?', 'no')
+            ->assertFailed()
+            ->run();
+
+        expect(file_get_contents($model_file))->toBe($source)
+            ->and(DB::table('soft_deletes_stub')->count())->toBe(1)
+            ->and(Modules\Core\Models\Setting::query()->where('name', $name)->exists())->toBeTrue();
+    } finally {
+        Schema::dropIfExists('soft_deletes_stub');
+    }
+});
+
+it('deletes the setting of the table and names it', function (): void {
+    $name = Modules\Core\Services\PerModelSettingResolver::nameFor(Modules\Core\Database\Seeders\CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, 'mass_write_stub');
+    Modules\Core\Models\Setting::factory()->persistedWithoutApprovalCapture()->create(['name' => $name, 'value' => true, 'type' => 'boolean', 'group_name' => 'soft_deletes']);
+
+    softDeletesRemove('MassWriteStubModel')
+        ->expectsOutputToContain('Runtime setting ' . $name . ' deleted.')
+        ->assertSuccessful()
+        ->run();
+
+    expect(Modules\Core\Models\Setting::query()->where('name', $name)->exists())->toBeFalse();
+});
+
 it('purges the records in the bin before it removes soft deletes', function (): void {
     softDeletesStubTable();
 

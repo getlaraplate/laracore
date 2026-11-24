@@ -233,6 +233,14 @@ To read, list or restore the versions of a record (`versions`, `history`, `lates
 
 If a concrete model declares its own `versionStrategy = VersionStrategy::DIFF`, that class property takes precedence and is not runtime-configurable. `ForcedVersionStrategySettings` discovers those models across active/inactive modules; `SettingResource`, tabs, filters, and form validation hide/reject matching historical `versioning.strategy.{table}` rows without deleting them.
 
+**What a permission does after a capability is switched off.** `Authorization\PermissionEnforcement` tells the role
+editor when a granted `lock`, `unlock`, `restore` or `delete` does nothing or changes meaning. A missing per-table
+setting reads as on, since the trait decides and the row is only an off switch, so the note follows the model: a
+table whose models (`Support\TableModels`, every concrete model of `models()` on that table) no longer declare
+`HasLocks` or `SoftDeletes` is off whatever its setting says, as after `model:locked-remove` or
+`model:soft-deletes-remove`; a table with such a model follows the model's own reading of the setting; a table no
+model reads follows the setting alone.
+
 **Switching versioning off and on.** A `versioning.strategy.{table}` setting with no value, `false` or an empty string means the table is not versioned (`VersionStrategy::fromSetting()`); any other value must be `DIFF` or `SNAPSHOT`. Switching a table off deletes its edit history: when a save moves the value from a strategy to off, from the settings page, the CRUD API or an approved modification, `SettingObserver` queues `PurgeVersionHistoryJob` after the commit. The job reads the setting again and does nothing when it is back on, so switching on before it runs keeps the history; otherwise `VersionHistoryPurger` deletes, by chunks of 500, every version set of the table (`root_table_ref`) except the hard-delete snapshot sets (a set with a `deleted` row of the root itself, `relation_path` null), and their rows go with them. Records deleted for good can therefore still be recovered; every other revision of the table, translations and links included, is gone and cannot be restored. Only the settings page asks first: `VersioningSettingConfirmation`, registered by `CoreServiceProvider` in `SettingChangeConfirmations`, shows how many revisions and version rows will be deleted and that the snapshots of deleted records are kept. Switched back on, the table starts a new history with no backfill: a record gets a baseline at its first save (the creation set of a new record, otherwise a `baseline` set carrying the image of the aggregate, since `BaselinePolicy` finds no complete anchor), and a record never saved since has no versions and no current revision. Moving from `DIFF` to `SNAPSHOT` or back deletes nothing. Pinned in `tests/Integration/Versioning/VersioningSwitchTest.php`.
 
 ```mermaid
@@ -687,7 +695,14 @@ When building new module features, reuse these primitives instead of re-implemen
 
 - `model:clear-expired`
 - `model:soft-deletes-add`
-- `model:soft-deletes-remove`
+- `model:soft-deletes-remove`: when the table has rows in the bin (`deleted_at` set or `is_deleted` true), asks
+  before anything else and changes nothing on a refusal (no record, trait, migration or setting); confirmed, it
+  deletes those rows for good through the model (`SoftDeletes\TrashedRowsPurger`: each row force deleted on its own,
+  so `forceDeleted` runs and its media and embeddings leave), removes the trait, writes the migration and deletes the
+  `soft_deletes.enabled.{table}` setting: a setting left for a feature the model no longer has would let an
+  administrator switch on something that does nothing. The migration runs the same purge before it drops the
+  columns, for rows a worker still running the old class moved to the bin in between (through the table's model when
+  the application still has one, with a plain delete otherwise).
 - `model:soft-deletes-refresh`
 
 ### Translation and translatable conversion
