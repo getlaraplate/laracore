@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.83.0] - 2026-11-24
+
+### 🚀 Features
+
+- *(cache)* Cache CRUD responses through a morphTo on indexes with row labels
+- *(cache)* Warn when the Redis of the label index may evict its keys
+- *(soft-deletes)* Switching soft deletes off purges the bin, after a confirmation
+- *(locking)* Switching record locking off releases every lock, after a confirmation
+
+### 🐛 Bug Fixes
+
+- *(cache)* Keep Redis flush records for the largest store window in use
+- *(cache)* Store no value read inside an open transaction
+- *(cache)* Version counters degrade on memcached failures and never restart at 0
+- *(soft-deletes)* The feature follows the model after a remove
+- *(cache)* A smaller store window keeps a larger one recorded alive for its own window
+- *(soft-deletes)* Purge the bin with the lock guard lifted
+- *(cache)* Label an empty morphTo with the key name of its own target class
+- *(cache)* The eviction policy check never degrades the index, and ignores a Redis without a memory limit
+- *(cache)* A write memcached buffers is a served call for the version counters
+- *(soft-deletes)* Purge a table no model reads in one statement, whatever its key
+- *(soft-deletes)* Keep the bin of a model that pins soft deletes on in code
+- *(jobs)* Retry the bin purge and the lock release
+- *(jobs)* Never run two purges or two lock releases of one table at once
+
+### 📚 Documentation
+
+- *(soft-deletes)* Say what the remove migration purges at deploy
+
+### 🎨 Styling
+
+- *(core)* Type the search sync chunk closures and point at the renamed pest script
+
+### 🧪 Testing
+
+- *(core)* Rewrite the deferred tests through public behaviour
+- *(dynamic-contents)* Restore the same-module mapping cases
+
+### ⚙️ Miscellaneous Tasks
+
+- *(cache)* Drop the cleanup of the flush hash no release shipped
+
 ## [1.82.0] - 2026-11-23
 
 ### 🚀 Features
