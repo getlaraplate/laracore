@@ -147,3 +147,23 @@ it('purges nothing more when the job runs again, so a retry after a timeout resu
     expect(DB::table('soft_deletes_stub')->pluck('name')->all())->toBe(['live'])
         ->and($job->tries)->toBeGreaterThan(1);
 });
+
+it('never runs two purges of one table at once', function (): void {
+    softDeletesSwitchSetting(false);
+    $job = new PurgeTrashedRowsJob('soft_deletes_stub', 'soft_deletes.enabled.soft_deletes_stub');
+    $middleware = $job->middleware()[0];
+    $held = Illuminate\Support\Facades\Cache::lock($middleware->getLockKey($job), 60);
+    $held->get();
+    $ran = false;
+
+    $middleware->handle($job, static function () use (&$ran): void {
+        $ran = true;
+    });
+    $held->release();
+
+    expect($middleware)->toBeInstanceOf(Illuminate\Queue\Middleware\WithoutOverlapping::class)
+        ->and($middleware->key)->toBe('soft_deletes_stub')
+        ->and($middleware->expiresAfter)->toBeGreaterThan(0)
+        ->and($ran)->toBeFalse()
+        ->and(new PurgeTrashedRowsJob('soft_deletes_other_stub', 'x')->middleware()[0]->getLockKey($job))->not->toBe($middleware->getLockKey($job));
+});

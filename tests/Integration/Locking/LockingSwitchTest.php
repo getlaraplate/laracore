@@ -179,3 +179,21 @@ it('releases nothing more when the job runs again, so a retry is safe', function
         ->and(DB::table('lockable_test_models')->count())->toBe(3)
         ->and($job->tries)->toBeGreaterThan(1);
 });
+
+it('never runs two releases of one table at once', function (): void {
+    $job = new ReleaseLocksJob('lockable_test_models', 'locking.enabled.lockable_test_models');
+    $middleware = $job->middleware()[0];
+    $held = Illuminate\Support\Facades\Cache::lock($middleware->getLockKey($job), 60);
+    $held->get();
+    $ran = false;
+
+    $middleware->handle($job, static function () use (&$ran): void {
+        $ran = true;
+    });
+    $held->release();
+
+    expect($middleware)->toBeInstanceOf(Illuminate\Queue\Middleware\WithoutOverlapping::class)
+        ->and($middleware->key)->toBe('lockable_test_models')
+        ->and($middleware->expiresAfter)->toBeGreaterThan(0)
+        ->and($ran)->toBeFalse();
+});

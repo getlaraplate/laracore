@@ -247,7 +247,10 @@ hidden forever. Any save that switches it off (the settings page, the CRUD API, 
 makes `SettingObserver` queue `PurgeTrashedRowsJob` after the commit; the job reads the setting again and does nothing
 when soft deletes are back on, so switching on before it runs keeps the rows. It is tried up to 5 times, 30 seconds
 apart: a large bin killed at the worker timeout resumes where it stopped, since each row is deleted for good on its own.
-Its timeout is the worker's on purpose: one longer than the queue's `retry_after` would let two workers purge at once. Otherwise `SoftDeletes\TrashedRowsPurger`
+Its timeout is the worker's on purpose: one longer than the queue's `retry_after` would let two workers purge at once.
+Two jobs of one table never run together (`WithoutOverlapping` keyed by table, released for a minute when taken,
+expiring after three): switching off, on and off queues two, and their row events must not fire twice. `ReleaseLocksJob`
+does the same. Otherwise `SoftDeletes\TrashedRowsPurger`
 deletes each row in the bin (`deleted_at` set or `is_deleted` true) on its own, through the table's model, in chunks of
 100: `forceDelete()`, so `forceDeleted` runs and the row's media and embeddings leave with it, and a versioned record
 keeps its snapshot set. Live rows and other tables are untouched; switching back on purges nothing. A table whose

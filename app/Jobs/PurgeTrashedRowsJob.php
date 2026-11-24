@@ -8,6 +8,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\Log;
 use Modules\Core\Models\Setting;
 use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
@@ -39,6 +40,20 @@ final class PurgeTrashedRowsJob implements ShouldQueue
         public readonly string $table,
         public readonly string $settingName,
     ) {}
+
+    /**
+     * One run per table at a time: switching off, on and off again queues two jobs, and two workers running them at
+     * once would fire the events of a row twice. A second job finds the lock taken and is released back to the queue
+     * for a minute (an attempt of its {@see $tries}). The lock expires after three minutes, twice the queue's default
+     * `retry_after`: a run lasts less than the worker timeout, and an attempt the worker killed, which never frees the
+     * lock, holds it no longer than that, so its retries still find it free within their tries.
+     *
+     * @return list<WithoutOverlapping>
+     */
+    public function middleware(): array
+    {
+        return [new WithoutOverlapping($this->table)->releaseAfter(60)->expireAfter(180)];
+    }
 
     public function handle(TrashedRowsPurger $purger): void
     {
