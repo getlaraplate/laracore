@@ -13,6 +13,7 @@ use Illuminate\Support\Collection;
 use Modules\Core\Contracts\IActivatableModel;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Contracts\ILockableModel;
+use Modules\Core\Contracts\ITranslatableModel;
 use Modules\Core\Contracts\IValidatableModel;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\LocaleContext;
@@ -29,7 +30,7 @@ use Modules\Core\Overrides\Model;
 use Override;
 use Spatie\EloquentSortable\Sortable;
 
-abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, IValidatableModel, Sortable
+abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, ITranslatableModel, IValidatableModel, Sortable
 {
     // region Traits
     use HasActivation {

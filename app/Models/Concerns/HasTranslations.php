@@ -246,7 +246,7 @@ trait HasTranslations
      *
      * @param  array<string, mixed>  $data
      */
-    public function setTranslation(string $locale, array $data): self
+    public function setTranslation(string $locale, array $data): static
     {
         $this->writeTranslation($locale, $this->ensureTranslationFieldDefaults($data));
 
@@ -256,6 +256,17 @@ trait HasTranslations
         }
 
         return $this;
+    }
+
+    /**
+     * The translation written first, by creation time then key: the language the record was authored in, before any
+     * other locale was added.
+     */
+    public function getOriginalTranslation(): ?Model
+    {
+        $translation = $this->translations()->orderBy('created_at')->orderBy('id')->first();
+
+        return $translation instanceof Model ? $translation : null;
     }
 
     /**
