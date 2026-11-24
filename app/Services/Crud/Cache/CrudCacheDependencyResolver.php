@@ -16,12 +16,14 @@ use Modules\Core\Cache\Labels\CacheScope;
 use Modules\Core\Casts\HistoryRequestData;
 use Modules\Core\Casts\SelectRequestData;
 use Modules\Core\Casts\TreeRequestData;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Contracts\IDeclaresCacheDependencies;
 use Modules\Core\Models\Concerns\HasTranslations;
 use Modules\Core\Models\User;
 use Modules\Core\Services\Crud\QueryBuilder;
 use Modules\Core\Support\RelationGuard;
 use SplObjectStorage;
+use WeakMap;
 
 /**
  * The labels of a cached CRUD read: what its response depends on.
@@ -37,7 +39,11 @@ use SplObjectStorage;
  *   change which rows match. Every other relation is a set label of its related table: `hasOne` and `hasMany`
  *   (their foreign key sits on the related row), many-to-many with its pivot, through relations with the table they
  *   go through. A segment after a to-many one keeps its own kind;
- * - a `morphTo` segment names no table before the query: the walk stops there and the dependencies are incomplete;
+ * - a `morphTo` segment names no table before the query. On an index that checks at the store every label it receives,
+ *   also those found after the query ({@see ICacheLabelIndex::supportsRowLabels()}), its labels are added after the
+ *   query: for a displayed `morphTo` the row label of each loaded target and what reaching its class brings, for one
+ *   used only to choose rows the table of every type the column holds. Otherwise, and for a `morphTo` that does not
+ *   end its path, the walk stops there and the dependencies are incomplete;
  * - the translations table of every translated model reached, the tables every reached model declares through
  *   {@see IDeclaresCacheDependencies}, its default eager loads (`$with`), walked as displayed paths, and its default
  *   relation counts (`$withCount`), walked as membership paths: a count depends on which related rows exist;
@@ -45,9 +51,10 @@ use SplObjectStorage;
  *   nodes of a tree read, which are rows of the main table;
  * - a history read needs no row label after the query: see {@see forRequest()}.
  *
- * After the query, {@see rowLabels()} gives the row labels of the records the response embeds.
+ * After the query, {@see labelsAfterQuery()} gives the row labels of the records the response embeds and the labels of
+ * the `morphTo` targets.
  *
- * @phpstan-type DependencyState array{labels: list<string>, row_tables: list<string>, complete: bool, rows_after_query: bool, expanded: array<string, true>}
+ * @phpstan-type DependencyState array{labels: list<string>, row_tables: list<string>, complete: bool, rows_after_query: bool, labels_after_query: bool, morph_types: list<array{0: Model, 1: string}>, expanded: array<string, true>}
  */
 final readonly class CrudCacheDependencyResolver
 {
@@ -62,109 +69,103 @@ final readonly class CrudCacheDependencyResolver
         'modifications' => [],
     ];
 
-    public function __construct(private QueryBuilder $query_builder) {}
+    /**
+     * The `morphTo` relations used only to choose rows of each request this instance resolved, by the dependencies it
+     * answered, for {@see labelsAfterQuery()}.
+     *
+     * @var WeakMap<CacheDependencies, list<array{0: Model, 1: string}>>
+     */
+    private WeakMap $morph_types;
+
+    public function __construct(private QueryBuilder $query_builder)
+    {
+        $this->morph_types = new WeakMap();
+    }
 
     /**
      * A history read is recognised by its request class ({@see HistoryRequestData}): its payload is serialized inside
-     * the service, so {@see rowLabels()} finds no model in it. Its dependencies are therefore complete before the
-     * query: the main record by its row label, taken from the key the request names, and every displayed to-one
+     * the service, so {@see labelsAfterQuery()} finds no model in it. Its dependencies are therefore complete before
+     * the query: the main record by its row label, taken from the key the request names, and every displayed to-one
      * relation by the set label of its table instead of a row table.
      *
      * @param  bool  $single_record  True for a read of one record (detail, tree or history of a key), whose main table
      *                               is a row dependency; false for a read of many rows, whose main table is a set label.
      * @param  list<string>|null  $role_keys  The caller's role keys as {@see CacheScope::roleKeys()} builds them, when
      *                                        the caller already has them; computed from the user when null.
+     * @param  bool  $labels_after_query  True when the index checks at the store every label it receives, also those
+     *                                    {@see labelsAfterQuery()} finds ({@see ICacheLabelIndex::supportsRowLabels()}):
+     *                                    a `morphTo` then keeps the dependencies complete.
      */
-    public function forRequest(Model $model, SelectRequestData $request_data, ?User $user, bool $single_record, ?array $role_keys = null): CacheDependencies
+    public function forRequest(Model $model, SelectRequestData $request_data, ?User $user, bool $single_record, ?array $role_keys = null, bool $labels_after_query = false): CacheDependencies
     {
-        $is_history = $request_data instanceof HistoryRequestData;
+        $state = $this->stateFor($model, $request_data, $this->scopeLabels($user, $role_keys), $single_record, $labels_after_query);
+        $dependencies = new CacheDependencies(array_values(array_unique($state['labels'])), array_values(array_unique($state['row_tables'])), $state['complete']);
+        $this->morph_types->offsetSet($dependencies, $state['morph_types']);
 
-        /** @var DependencyState $state */
-        $state = [
-            'labels' => [CacheLabel::all(), ...$this->scopeLabels($user, $role_keys)],
-            'row_tables' => [],
-            'complete' => true,
-            'rows_after_query' => ! $is_history,
-            'expanded' => [],
-        ];
-
-        if ($single_record) {
-            $state['row_tables'][] = $model->getTable();
-
-            if ($is_history) {
-                $state['labels'][] = self::requestedRecordLabel($model, $request_data);
-            }
-        } else {
-            $state['labels'][] = CacheLabel::table($model->getTable());
-        }
-
-        $this->reach($model, $state, []);
-
-        $paths = $this->query_builder->requestedRelationPathsByUse($model, $request_data);
-
-        foreach ($paths['display'] as $path) {
-            $this->walk($model, $path, true, $state);
-        }
-
-        foreach ($paths['membership'] as $path) {
-            $this->walk($model, $path, false, $state);
-        }
-
-        if ($is_history) {
-            foreach (self::HISTORY_RELATIONS as $name => $left_out) {
-                if (RelationGuard::relationOf($model, $name) instanceof Relation) {
-                    $this->walk($model, $name, false, $state, $left_out);
-                }
-            }
-        }
-
-        if ($request_data instanceof TreeRequestData && ($request_data->parents || $request_data->children)) {
-            $state['labels'][] = CacheLabel::table($model->getTable());
-        }
-
-        return new CacheDependencies(array_values(array_unique($state['labels'])), array_values(array_unique($state['row_tables'])), $state['complete']);
+        return $dependencies;
     }
 
     /**
-     * The row labels of the records a computed response embeds: the main records when the dependencies hold the main
-     * table as a row table (a read of one record), and, at any depth, the record of every loaded `belongsTo` and
-     * `morphTo` relation, also below a loaded to-many relation.
-     *
-     * A to-one relation loaded empty still names the row its foreign key points at, when that key is the related
-     * primary key: the response changes when that row appears, is restored or becomes visible.
-     *
-     * The `morphTo` branch feeds no stored response for now: a displayed `morphTo` makes {@see forRequest()} answer
-     * incomplete dependencies, which are never stored on any index. It serves once a displayed `morphTo` gets a flag
-     * of its own (rows known only after the query).
+     * The labels of a computed response known only after its query, to store it with: the row labels of the records it
+     * embeds, what reaching the class of every loaded `morphTo` target brings (its translations, declared tables,
+     * default eager loads and counts), and, for a `morphTo` used only to choose rows, the table of every type its column
+     * holds, read now: a type written later is a write of that table, whose label the response carries, so a store
+     * racing it is refused. Null when the response cannot be stored: a target class whose labels are incomplete. Only
+     * an index that checks every label at the store may receive the labels of the targets (see `$labels_after_query`
+     * of {@see forRequest()}).
      *
      * @param  mixed  $data  A model, a collection or paginator of models, or arrays of them.
-     * @return list<string>
+     * @return list<string>|null
      */
-    public function rowLabels(Model $model, CacheDependencies $dependencies, mixed $data): array
+    public function labelsAfterQuery(Model $model, SelectRequestData $request_data, CacheDependencies $dependencies, mixed $data): ?array
     {
-        $labels = [];
+        $targets = [];
+        $labels = $this->collectRowLabels($model, $dependencies, $data, $targets);
 
-        /** @var SplObjectStorage<Model, null> $visited */
-        $visited = new SplObjectStorage();
+        // Dependencies another instance answered: the request is walked again to find its morph relations.
+        $request_morph_types = $this->morph_types->offsetExists($dependencies)
+            ? $this->morph_types->offsetGet($dependencies)
+            : $this->stateFor($model, $request_data, [], in_array($model->getTable(), $dependencies->row_tables, true), true)['morph_types'];
+        $state = self::emptyState(true, true);
 
-        /** @var array<string, Relation<Model, Model, mixed>|null> $relations */
-        $relations = [];
-        $main_table = $model->getTable();
-        $main_by_row = in_array($main_table, $dependencies->row_tables, true);
-
-        foreach (self::modelsIn($data) as $record) {
-            if ($main_by_row && $main_table === $record->getTable()) {
-                $label = self::rowLabelOf($record);
-
-                if ($label !== null) {
-                    $labels[] = $label;
-                }
-            }
-
-            $this->collectRelationRowLabels($record, $labels, $visited, $relations);
+        foreach ($targets as $target) {
+            $this->reach($target, $state, []);
         }
 
-        return array_values(array_unique($labels));
+        if (! $state['complete']) {
+            return null;
+        }
+
+        foreach ([...$request_morph_types, ...$state['morph_types']] as [$owner, $type_column]) {
+            foreach ($this->morphTargetsIn($owner, $type_column) as $target) {
+                $labels[] = CacheLabel::table($target->getTable());
+                array_push($labels, ...$this->modelLabels($target));
+            }
+        }
+
+        return array_values(array_unique([
+            ...$labels,
+            ...$state['labels'],
+            ...array_map(CacheLabel::rows(...), $state['row_tables']),
+        ]));
+    }
+
+    /**
+     * A state with nothing labelled yet.
+     *
+     * @return DependencyState
+     */
+    private static function emptyState(bool $rows_after_query, bool $labels_after_query): array
+    {
+        return [
+            'labels' => [],
+            'row_tables' => [],
+            'complete' => true,
+            'rows_after_query' => $rows_after_query,
+            'labels_after_query' => $labels_after_query,
+            'morph_types' => [],
+            'expanded' => [],
+        ];
     }
 
     /**
@@ -177,7 +178,6 @@ final readonly class CrudCacheDependencyResolver
     {
         $related = $relation->getRelated();
 
-        // Feeds no stored response yet: see the note on rowLabels().
         if ($relation instanceof MorphTo) {
             $type = $record->getAttribute($relation->getMorphType());
             $related = is_string($type) ? RelationGuard::morphModel($type) : null;
@@ -272,6 +272,96 @@ final readonly class CrudCacheDependencyResolver
     }
 
     /**
+     * The state of a request walked as described on the class.
+     *
+     * @param  list<string>  $scope_labels
+     * @return DependencyState
+     */
+    private function stateFor(Model $model, SelectRequestData $request_data, array $scope_labels, bool $single_record, bool $labels_after_query): array
+    {
+        $is_history = $request_data instanceof HistoryRequestData;
+
+        $state = self::emptyState(! $is_history, $labels_after_query);
+        $state['labels'] = [CacheLabel::all(), ...$scope_labels];
+
+        if ($single_record) {
+            $state['row_tables'][] = $model->getTable();
+
+            if ($is_history) {
+                $state['labels'][] = self::requestedRecordLabel($model, $request_data);
+            }
+        } else {
+            $state['labels'][] = CacheLabel::table($model->getTable());
+        }
+
+        $this->reach($model, $state, []);
+
+        $paths = $this->query_builder->requestedRelationPathsByUse($model, $request_data);
+
+        foreach ($paths['display'] as $path) {
+            $this->walk($model, $path, true, $state);
+        }
+
+        foreach ($paths['membership'] as $path) {
+            $this->walk($model, $path, false, $state);
+        }
+
+        if ($is_history) {
+            foreach (self::HISTORY_RELATIONS as $name => $left_out) {
+                if (RelationGuard::relationOf($model, $name) instanceof Relation) {
+                    $this->walk($model, $name, false, $state, $left_out);
+                }
+            }
+        }
+
+        if ($request_data instanceof TreeRequestData && ($request_data->parents || $request_data->children)) {
+            $state['labels'][] = CacheLabel::table($model->getTable());
+        }
+
+        return $state;
+    }
+
+    /**
+     * The row labels of the records a computed response embeds: the main records when the dependencies hold the main
+     * table as a row table (a read of one record), and, at any depth, the record of every loaded `belongsTo` and
+     * `morphTo` relation, also below a loaded to-many relation. The models loaded through a `morphTo` are collected
+     * in `$targets`, one per class.
+     *
+     * A to-one relation loaded empty still names the row its foreign key points at, when that key is the related
+     * primary key: the response changes when that row appears, is restored or becomes visible.
+     *
+     * @param  mixed  $data  A model, a collection or paginator of models, or arrays of them.
+     * @param  array<class-string<Model>, Model>  $targets
+     * @return list<string>
+     */
+    private function collectRowLabels(Model $model, CacheDependencies $dependencies, mixed $data, array &$targets): array
+    {
+        $labels = [];
+
+        /** @var SplObjectStorage<Model, null> $visited */
+        $visited = new SplObjectStorage();
+
+        /** @var array<string, Relation<Model, Model, mixed>|null> $relations */
+        $relations = [];
+        $main_table = $model->getTable();
+        $main_by_row = in_array($main_table, $dependencies->row_tables, true);
+
+        foreach (self::modelsIn($data) as $record) {
+            if ($main_by_row && $main_table === $record->getTable()) {
+                $label = self::rowLabelOf($record);
+
+                if ($label !== null) {
+                    $labels[] = $label;
+                }
+            }
+
+            $this->collectRelationRowLabels($record, $labels, $visited, $relations, $targets);
+        }
+
+        return array_values(array_unique($labels));
+    }
+
+    /**
      * @param  list<string>|null  $role_keys
      * @return list<string>
      */
@@ -332,8 +422,14 @@ final readonly class CrudCacheDependencyResolver
         foreach ($names as $index => $name) {
             $relation = RelationGuard::relationOf($current, $name);
 
-            if (! $relation instanceof Relation || $relation instanceof MorphTo) {
+            if (! $relation instanceof Relation) {
                 $state['complete'] = false;
+
+                return;
+            }
+
+            if ($relation instanceof MorphTo) {
+                $this->walkMorph($current, $relation, $index === $last, $displayed, $state);
 
                 return;
             }
@@ -359,6 +455,49 @@ final readonly class CrudCacheDependencyResolver
             $this->reach($related, $state, $index === $last ? $left_out_at_end : []);
             $current = $related;
         }
+    }
+
+    /**
+     * A `morphTo` segment: its targets are known only after the query. A displayed one is labelled from the models it
+     * loaded ({@see labelsAfterQuery()}), when rows are labelled after the query; one that only chooses rows is
+     * recorded, so the types its column holds are read after the query. Anything else, a segment after it included,
+     * leaves the dependencies incomplete.
+     *
+     * @param  MorphTo<Model, Model>  $relation
+     * @param  DependencyState  $state
+     */
+    private function walkMorph(Model $owner, MorphTo $relation, bool $ends_path, bool $displayed, array &$state): void
+    {
+        if (! $ends_path || ! $state['labels_after_query'] || ($displayed && ! $state['rows_after_query'])) {
+            $state['complete'] = false;
+
+            return;
+        }
+
+        if (! $displayed) {
+            $state['morph_types'][] = [$owner, $relation->getMorphType()];
+        }
+    }
+
+    /**
+     * The models of the types a morph type column of the owner's table holds, read without scopes: a type the scopes
+     * hide only adds a label.
+     *
+     * @return list<Model>
+     */
+    private function morphTargetsIn(Model $owner, string $type_column): array
+    {
+        $targets = [];
+
+        foreach ($owner->newModelQuery()->distinct()->pluck($type_column) as $type) {
+            $target = is_string($type) ? RelationGuard::morphModel($type) : null;
+
+            if ($target instanceof Model) {
+                $targets[$target::class] = $target;
+            }
+        }
+
+        return array_values($targets);
     }
 
     /**
@@ -400,8 +539,9 @@ final readonly class CrudCacheDependencyResolver
      * @param  list<string>  $labels
      * @param  SplObjectStorage<Model, null>  $visited
      * @param  array<string, Relation<Model, Model, mixed>|null>  $relations  Relation instances by class and name, built once.
+     * @param  array<class-string<Model>, Model>  $targets  The models loaded through a `morphTo`, one per class.
      */
-    private function collectRelationRowLabels(Model $record, array &$labels, SplObjectStorage $visited, array &$relations): void
+    private function collectRelationRowLabels(Model $record, array &$labels, SplObjectStorage $visited, array &$relations, array &$targets): void
     {
         if ($visited->contains($record)) {
             return;
@@ -425,10 +565,14 @@ final readonly class CrudCacheDependencyResolver
                 if ($label !== null) {
                     $labels[] = $label;
                 }
+
+                if ($relation instanceof MorphTo && $loaded instanceof Model) {
+                    $targets[$loaded::class] ??= $loaded;
+                }
             }
 
             foreach (self::modelsIn($loaded) as $child) {
-                $this->collectRelationRowLabels($child, $labels, $visited, $relations);
+                $this->collectRelationRowLabels($child, $labels, $visited, $relations, $targets);
             }
         }
     }

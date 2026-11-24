@@ -220,8 +220,10 @@ $index->store($lookup, $value, 300, [CacheLabel::row('core_users', $author->getK
 Notes:
 
 - `labels` are known before the query. `row_tables` names tables whose row labels the entry may carry; on a version
-  counter store they become table labels. The `row_labels` argument of `store()` carries the rows known only after the
-  query; stores without row labels ignore it.
+  counter store they become table labels. The `row_labels` argument of `store()` carries the labels known only after
+  the query: row labels, and, on an index with row labels, any other label (the CRUD cache passes the tables of the
+  `morphTo` targets it found). The store checks their flush records like those of the lookup labels. Stores without row
+  labels ignore it, so a value whose labels are known only after the query must not be stored there.
 - `store()` returns false and stores nothing when a label of the entry was flushed after the lookup started, or, on
   Redis, when the lookup started more than the store window ago; do not retry it.
 - The key you pass is not the key stored on a version counter store: use `$lookup->key` for `forget()`:

@@ -58,7 +58,7 @@ final readonly class CrudResponseCache
         $role_keys = $user instanceof User ? CacheScope::roleKeys($user) : [];
 
         try {
-            $dependencies = $this->resolver->forRequest($model, $request_data, $user, self::readsOneRecord($request_data), $role_keys);
+            $dependencies = $this->resolver->forRequest($model, $request_data, $user, self::readsOneRecord($request_data), $role_keys, $this->index->supportsRowLabels());
         } catch (InvalidArgumentException) {
             // A name that is not a relation: the read refuses it itself, after its permission check, so a caller
             // without the permission is told 403 rather than which names exist.
@@ -80,13 +80,17 @@ final readonly class CrudResponseCache
         $result = $compute();
         $response = $render($result);
 
-        if ($response->getStatusCode() === Response::HTTP_OK) {
-            $this->index->store(
-                $lookup,
-                self::snapshot($response),
-                Repository::resolveDefaultCacheSeconds(),
-                $this->resolver->rowLabels($model, $dependencies, $result->data),
-            );
+        if ($response->getStatusCode() !== Response::HTTP_OK) {
+            return $response;
+        }
+
+        // An index without row labels keeps nothing known after the query: its key was fixed at the lookup.
+        $labels_after_query = $this->index->supportsRowLabels()
+            ? $this->resolver->labelsAfterQuery($model, $request_data, $dependencies, $result->data)
+            : [];
+
+        if ($labels_after_query !== null) {
+            $this->index->store($lookup, self::snapshot($response), Repository::resolveDefaultCacheSeconds(), $labels_after_query);
         }
 
         return $response;

@@ -742,8 +742,10 @@ related rows leaves a filtered response stale until its TTL.
 
 - the request is a read of the entity through `list`, `detail`, `tree` or `history`;
 - the main model uses `HasCache` (`usesCache()`);
-- the dependencies of the request are complete: a displayed `morphTo` names no table before the query, so such a
-  request is never stored;
+- the dependencies of the request are complete. A `morphTo` names no table before the query: on an index with row
+  labels (Redis, the array index) its labels are added after the query and checked by the store like the others; on
+  a version counter index, whose key is fixed at the lookup, a request through a `morphTo` is never stored, nor is a
+  history read that displays one (its payload holds no model to label);
 - the response status is 200;
 - no label it carries was flushed while it was being computed (a reader that computed from old rows stores nothing).
 
@@ -760,7 +762,11 @@ table is a set label (`table:{table}`) for a read of many rows, and a row label 
 a read of one record. Every relation the request names adds its table: the records of a loaded `belongsTo` get row
 labels, every other relation (`hasOne`, `hasMany`, many-to-many with its pivot, through relations, and any relation used
 only to filter, sort, group or aggregate) a set label of the related table. The translations table of a translated
-model and the tables a model declares through `IDeclaresCacheDependencies` are included. On an index with row labels,
+model and the tables a model declares through `IDeclaresCacheDependencies` are included. A displayed `morphTo` adds,
+after the query, the row label of each loaded target and, per class loaded, what reaching that class brings (its
+translations, declared tables, default eager loads and counts); a `morphTo` used only to filter or sort adds the
+table of every type its column holds, read after the query (a new type is a write of that table, which the response
+carries, so a store racing it is refused). On an index with row labels,
 a response holding rows of a table also carries `rows:{table}`, which a whole-table flush uses to reach it.
 
 **Invalidation.**

@@ -3,7 +3,10 @@
 declare(strict_types=1);
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Schema;
 use Modules\Core\Authorization\RetrievedSelectGuard;
 use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Cache\Labels\CacheLabel;
@@ -24,6 +27,7 @@ use Modules\Core\Support\PermissionName;
 use Modules\Core\Tests\Stubs\Cache\CacheDependencyEagerStubModel;
 use Modules\Core\Tests\Stubs\Cache\CacheDependencyStubChild;
 use Modules\Core\Tests\Stubs\Cache\CacheDependencyStubModel;
+use Modules\Core\Tests\Stubs\Cache\CacheDependencyUnknownEagerStubModel;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocument;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocumentTranslation;
 use Modules\Core\Tests\Support\Cache\AssertsCacheDependencies;
@@ -134,14 +138,15 @@ it('depends on the record of a detail by row, and gives the row labels of the lo
     cache_dependency_acl($role, 7);
 
     $resolver = cache_dependency_resolver();
-    $dependencies = $resolver->forRequest(new ACL, cache_dependency_detail_request(7, ['relations' => ['role']]), null, true);
+    $request_data = cache_dependency_detail_request(7, ['relations' => ['role']]);
+    $dependencies = $resolver->forRequest(new ACL, $request_data, null, true);
 
     expect($dependencies->labels)->not->toContain(CacheLabel::table(CoreTables::Acls->value))
         ->and($dependencies->row_tables)->toContain(CoreTables::Acls->value, CoreTables::Roles->value);
 
     $loaded = ACL::query()->with('role')->findOrFail(7);
 
-    expect($resolver->rowLabels(new ACL, $dependencies, $loaded))
+    expect($resolver->labelsAfterQuery(new ACL, $request_data, $dependencies, $loaded))
         ->toEqualCanonicalizing([CacheLabel::row(CoreTables::Acls->value, 7), CacheLabel::row(CoreTables::Roles->value, $role->id)]);
 });
 
@@ -152,13 +157,14 @@ it('gives the row labels of the belongsTo relations of a list, not of its rows',
     cache_dependency_acl($other_role);
 
     $resolver = cache_dependency_resolver();
-    $dependencies = $resolver->forRequest(new ACL, cache_dependency_list_request(['relations' => ['role']]), null, false);
+    $request_data = cache_dependency_list_request(['relations' => ['role']]);
+    $dependencies = $resolver->forRequest(new ACL, $request_data, null, false);
     $rows = ACL::query()->with('role')->get();
     $expected = [CacheLabel::row(CoreTables::Roles->value, $role->id), CacheLabel::row(CoreTables::Roles->value, $other_role->id)];
 
-    expect($resolver->rowLabels(new ACL, $dependencies, $rows))->toEqualCanonicalizing($expected)
-        ->and($resolver->rowLabels(new ACL, $dependencies, new LengthAwarePaginator($rows, $rows->count(), 25)))->toEqualCanonicalizing($expected)
-        ->and($resolver->rowLabels(new ACL, $dependencies, $rows->groupBy('role_id')))->toEqualCanonicalizing($expected);
+    expect($resolver->labelsAfterQuery(new ACL, $request_data, $dependencies, $rows))->toEqualCanonicalizing($expected)
+        ->and($resolver->labelsAfterQuery(new ACL, $request_data, $dependencies, new LengthAwarePaginator($rows, $rows->count(), 25)))->toEqualCanonicalizing($expected)
+        ->and($resolver->labelsAfterQuery(new ACL, $request_data, $dependencies, $rows->groupBy('role_id')))->toEqualCanonicalizing($expected);
 });
 
 it('gives the row label of a belongsTo the relation answered null for, from the foreign key', function (): void {
@@ -167,9 +173,10 @@ it('gives the row label of a belongsTo the relation answered null for, from the 
     $acl->setRelation('role', null);
 
     $resolver = cache_dependency_resolver();
-    $dependencies = $resolver->forRequest(new ACL, cache_dependency_list_request(['relations' => ['role']]), null, false);
+    $request_data = cache_dependency_list_request(['relations' => ['role']]);
+    $dependencies = $resolver->forRequest(new ACL, $request_data, null, false);
 
-    expect($resolver->rowLabels(new ACL, $dependencies, collect([$acl])))->toBe([CacheLabel::row(CoreTables::Roles->value, $role->id)]);
+    expect($resolver->labelsAfterQuery(new ACL, $request_data, $dependencies, collect([$acl])))->toBe([CacheLabel::row(CoreTables::Roles->value, $role->id)]);
 });
 
 it('gives the row labels of the to-one relations loaded under a to-many relation', function (): void {
@@ -182,9 +189,10 @@ it('gives the row labels of the to-one relations loaded under a to-many relation
     $parent->setRelation('items', collect([$child]));
 
     $resolver = cache_dependency_resolver();
-    $dependencies = $resolver->forRequest(new CacheDependencyStubModel, cache_dependency_list_request(['relations' => ['items.role']]), null, false);
+    $request_data = cache_dependency_list_request(['relations' => ['items.role']]);
+    $dependencies = $resolver->forRequest(new CacheDependencyStubModel, $request_data, null, false);
 
-    expect($resolver->rowLabels(new CacheDependencyStubModel, $dependencies, $parent))->toBe([CacheLabel::row(CoreTables::Roles->value, $role->id)]);
+    expect($resolver->labelsAfterQuery(new CacheDependencyStubModel, $request_data, $dependencies, $parent))->toBe([CacheLabel::row(CoreTables::Roles->value, $role->id)]);
 });
 
 it('labels the translations table of a translated model reached by a path', function (): void {
@@ -208,11 +216,88 @@ it('labels the tables a model declares', function (): void {
     );
 });
 
-it('cannot know the dependencies of a morphTo before the query', function (): void {
-    $dependencies = cache_dependency_resolver()->forRequest(new CacheDependencyStubModel, cache_dependency_list_request(['relations' => ['owner']]), null, false);
+it('cannot know the dependencies of a morphTo before the query on an index that adds no label after it', function (array $validated): void {
+    $dependencies = cache_dependency_resolver()->forRequest(new CacheDependencyStubModel, cache_dependency_list_request($validated), null, false);
+
+    expect($dependencies->complete)->toBeFalse();
+})->with([
+    'displayed' => [['relations' => ['owner']]],
+    'filtered through' => [['filters' => [['property' => 'owner.id', 'value' => 1, 'operator' => '=']]]],
+]);
+
+it('keeps a displayed morphTo complete when labels are added after the query, labelling each loaded target class', function (): void {
+    $target = new TranslatedDocument;
+    $target->forceFill(['id' => 4]);
+    $record = new CacheDependencyStubModel;
+    $record->forceFill(['id' => 1, 'owner_type' => TranslatedDocument::class, 'owner_id' => 4]);
+    $record->setRelation('owner', $target);
+    $resolver = cache_dependency_resolver();
+    $request_data = cache_dependency_list_request(['relations' => ['owner']]);
+
+    $dependencies = $resolver->forRequest(new CacheDependencyStubModel, $request_data, null, false, labels_after_query: true);
+
+    expect($dependencies->complete)->toBeTrue()
+        ->and($resolver->labelsAfterQuery(new CacheDependencyStubModel, $request_data, $dependencies, collect([$record])))
+        ->toContain(CacheLabel::row(TranslatedDocument::TABLE, 4), CacheLabel::table(TranslatedDocumentTranslation::TABLE));
+});
+
+it('labels what reaching the class of a loaded morphTo target brings, and stores nothing when that is incomplete', function (): void {
+    $resolver = cache_dependency_resolver();
+    $request_data = cache_dependency_list_request(['relations' => ['owner']]);
+    $dependencies = $resolver->forRequest(new CacheDependencyStubModel, $request_data, null, false, labels_after_query: true);
+    $read = static function (Model $target) use ($resolver, $request_data, $dependencies): ?array {
+        $target->forceFill(['id' => 4]);
+        $record = new CacheDependencyStubModel;
+        $record->forceFill(['id' => 1, 'owner_type' => $target::class, 'owner_id' => 4]);
+        $record->setRelation('owner', $target);
+
+        return $resolver->labelsAfterQuery(new CacheDependencyStubModel, $request_data, $dependencies, $record);
+    };
+
+    expect($read(new CacheDependencyEagerStubModel))->toContain(
+        CacheLabel::row(CacheDependencyEagerStubModel::TABLE, 4),
+        CacheLabel::rows(CoreTables::Roles->value),
+        CacheLabel::table(CacheDependencyStubChild::TABLE),
+        CacheLabel::table(CacheDependencyStubChild::DECLARED_TABLE),
+    )
+        ->and($read(new CacheDependencyUnknownEagerStubModel))->toBeNull();
+});
+
+it('keeps a displayed morphTo of a history read incomplete, its payload holding no model after the query', function (): void {
+    $request_data = new HistoryRequestData(HistoryRequest::create('/app/crud/history/core/ACL', 'GET', ['id' => 1]), 'ACL', ['relations' => ['owner']], 'id', 'core');
+
+    $dependencies = cache_dependency_resolver()->forRequest(new CacheDependencyStubModel, $request_data, null, true, labels_after_query: true);
 
     expect($dependencies->complete)->toBeFalse();
 });
+
+it('labels a list filtered through a morphTo with the tables of the types its column holds after the query', function (bool $same_instance): void {
+    Schema::create(CacheDependencyStubModel::TABLE, function (Blueprint $table): void {
+        $table->id();
+        $table->nullableMorphs('owner');
+    });
+    CacheDependencyStubModel::query()->insert([
+        ['owner_type' => Role::class, 'owner_id' => 1],
+        ['owner_type' => TranslatedDocument::class, 'owner_id' => 2],
+        ['owner_type' => null, 'owner_id' => null],
+    ]);
+    $request_data = cache_dependency_list_request(['filters' => [['property' => 'owner.id', 'value' => 1, 'operator' => '=']]]);
+    $resolver = cache_dependency_resolver();
+
+    try {
+        $dependencies = $resolver->forRequest(new CacheDependencyStubModel, $request_data, null, false, labels_after_query: true);
+        $labels = ($same_instance ? $resolver : cache_dependency_resolver())->labelsAfterQuery(new CacheDependencyStubModel, $request_data, $dependencies, collect());
+    } finally {
+        Schema::dropIfExists(CacheDependencyStubModel::TABLE);
+    }
+
+    expect($dependencies->complete)->toBeTrue()
+        ->and($labels)->toEqualCanonicalizing([
+            CacheLabel::table(CoreTables::Roles->value),
+            CacheLabel::table(TranslatedDocument::TABLE),
+            CacheLabel::table(TranslatedDocumentTranslation::TABLE),
+        ]);
+})->with(['by the resolver that answered the dependencies' => true, 'by another resolver' => false]);
 
 it('labels hasOne and hasMany as sets and keeps the kind of a segment after a to-many one', function (string $path): void {
     $dependencies = cache_dependency_resolver()->forRequest(new CacheDependencyStubModel, cache_dependency_list_request(['relations' => [$path . '.role']]), null, false);

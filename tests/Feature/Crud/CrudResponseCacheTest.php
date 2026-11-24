@@ -320,13 +320,14 @@ it('never stores the response of a model without HasCache', function (): void {
         ->and(crudResponseCacheStores($this->index))->toBe([]);
 });
 
-it('never stores a response whose dependencies are incomplete', function (Closure $index): void {
+it('stores a response that displays a morphTo on a membership index only', function (Closure $index, bool $stored): void {
     [$inner, $cleanup] = $index();
     $spy = new SpyLabelIndex($inner);
     app()->instance(ICacheLabelIndex::class, $spy);
     Setting::factory()->persistedWithoutApprovalCapture()->create();
     $this->actingAs(crudResponseCacheSuperadmin());
-    // A morphTo segment names no table before the query.
+    // A morphTo segment names no table before the query: only an index that checks the labels found after the query
+    // at the store may keep the response; a counter index fixes its key at the lookup.
     $url = crudResponseCacheSettingsUrl(['relations' => ['modifications.modifiable']]);
 
     try {
@@ -336,10 +337,10 @@ it('never stores a response whose dependencies are incomplete', function (Closur
         $cleanup();
     }
 
-    expect($second_queries)->toBeGreaterThan(0)
-        ->and(crudResponseCacheStores($spy))->toBe([]);
+    expect($second_queries > 0)->toBe(! $stored)
+        ->and(crudResponseCacheStores($spy))->toHaveCount($stored ? 1 : 0);
 })->with([
-    'membership index' => [static fn (): array => [new ArrayLabelIndex(), static fn (): null => null]],
+    'membership index' => [static fn (): array => [new ArrayLabelIndex(), static fn (): null => null], true],
     'counter index' => [static function (): array {
         $directory = storage_path('framework/testing/crud-response-cache-' . uniqid());
 
@@ -347,7 +348,7 @@ it('never stores a response whose dependencies are incomplete', function (Closur
             CacheLabelIndexFactory::forStore(new Repository(new FileStore(new Filesystem(), $directory))),
             static fn (): bool => (new Filesystem())->deleteDirectory($directory),
         ];
-    }],
+    }, false],
 ]);
 
 it('stores a complete response on a counter index', function (): void {

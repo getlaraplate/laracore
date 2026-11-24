@@ -143,7 +143,8 @@ final class CacheLabel
     }
 
     /**
-     * The labels an index with row labels stores an entry under: its labels, its row labels, and `rows:{table}` of
+     * The labels an index with row labels stores an entry under: its labels, the labels found after the query (row
+     * labels, and any other label the query revealed, such as the tables of `morphTo` targets), and `rows:{table}` of
      * every table it names in its row tables or row labels.
      *
      * @param  list<string>  $row_labels
@@ -154,7 +155,9 @@ final class CacheLabel
         $tables = $dependencies->row_tables;
 
         foreach ($row_labels as $row_label) {
-            $tables[] = self::rowTable($row_label);
+            if (self::isRow($row_label)) {
+                $tables[] = self::rowTable($row_label);
+            }
         }
 
         return array_values(array_unique([
