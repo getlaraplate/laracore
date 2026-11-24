@@ -721,7 +721,10 @@ When building new module features, reuse these primitives instead of re-implemen
   `soft_deletes.enabled.{table}` setting: a setting left for a feature the model no longer has would let an
   administrator switch on something that does nothing. The migration runs the same purge before it drops the
   columns, for rows a worker still running the old class moved to the bin in between (through the table's model when
-  the application still has one, with a plain delete otherwise).
+  the application still has one, with a plain delete otherwise). That purge runs at deploy, on the production bin, with
+  no confirmation there and the model's events (media and embeddings removed): the confirmation was the one given when
+  the command ran. On a database whose migrations run inside a transaction (PostgreSQL), a failed migration rolls the
+  rows back, but not the files the events already deleted.
 - `model:soft-deletes-refresh`
 
 ### Translation and translatable conversion
