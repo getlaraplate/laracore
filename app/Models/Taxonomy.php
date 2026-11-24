@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Modules\Core\Contracts\IActivatableModel;
 use Modules\Core\Contracts\IDynamicEntityTypable;
@@ -375,16 +376,31 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     {
         $closure_table = $model->getClosureTable();
         $reach = $closure_table . '_reach';
+        $ancestry = $closure_table . '_ancestry';
         $key_name = $model->getKeyName();
+        // Integer keys are written into the SQL, any other key is bound: the starting keys appear twice, so a bound
+        // chunk is halved to stay below the 999 variables of older SQLite builds.
+        $integer_keys = in_array($model->getKeyType(), ['int', 'integer'], true);
+        $where_in = $integer_keys ? 'whereIntegerInRaw' : 'whereIn';
+        $chunk_size = $integer_keys ? ClosurePaths::KEY_CHUNK_SIZE : intdiv(ClosurePaths::KEY_CHUNK_SIZE, 2);
         $chains = [];
         $ancestors = [];
 
-        foreach (array_chunk($keys, ClosurePaths::KEY_CHUNK_SIZE) as $chunk) {
+        foreach (array_chunk($keys, $chunk_size) as $chunk) {
+            $chunk = $integer_keys ? array_map(intval(...), $chunk) : $chunk;
+            // The sub-select restates the ancestors on the model's key, as ClosureLineage does for an eager lineage:
+            // left to choose, SQLite walks every node through a low-cardinality index before probing the closure.
             $query = $model->newQuery()
                 ->with('translations')
                 ->join($closure_table . ' as ' . $reach, $reach . '.ancestor_id', '=', $model->getQualifiedKeyName())
-                ->whereIn($reach . '.descendant_id', $chunk)
+                ->{$where_in}($reach . '.descendant_id', $chunk)
                 ->where($reach . '.depth', '>', 0)
+                ->whereIn($model->getQualifiedKeyName(), static function (QueryBuilder $reached) use ($closure_table, $ancestry, $chunk, $where_in): void {
+                    $reached->select($ancestry . '.ancestor_id')
+                        ->from($closure_table . ' as ' . $ancestry)
+                        ->{$where_in}($ancestry . '.descendant_id', $chunk)
+                        ->where($ancestry . '.depth', '>', 0);
+                })
                 ->select([$model->getTable() . '.*', $reach . '.descendant_id as closure_descendant_id', $reach . '.depth as closure_depth']);
             $rows = [];
 
