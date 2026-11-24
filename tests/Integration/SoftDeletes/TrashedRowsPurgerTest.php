@@ -71,6 +71,24 @@ it('finds the model of a table among the application models, and purges a table 
         ->and($purger->purgeTable('no_such_table'))->toBe(0);
 });
 
+it('purges a table no model reads whatever its key, in one statement, and flushes it', function (): void {
+    Schema::create('soft_deletes_coded_stub', static function (Blueprint $table): void {
+        $table->string('code')->primary();
+        $table->timestamp('deleted_at')->nullable();
+    });
+    DB::table('soft_deletes_coded_stub')->insert([['code' => 'a', 'deleted_at' => now()], ['code' => 'b', 'deleted_at' => null]]);
+    $index = new Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+
+    try {
+        expect(app(TrashedRowsPurger::class)->purgeTable('soft_deletes_coded_stub'))->toBe(1)
+            ->and(DB::table('soft_deletes_coded_stub')->pluck('code')->all())->toBe(['b'])
+            ->and($index->flushedLabels())->toContain(Modules\Core\Cache\Labels\CacheLabel::table('soft_deletes_coded_stub'), Modules\Core\Cache\Labels\CacheLabel::rows('soft_deletes_coded_stub'));
+    } finally {
+        Schema::dropIfExists('soft_deletes_coded_stub');
+    }
+});
+
 it('writes a remove migration that purges the rows in the bin before it drops the columns', function (): void {
     $stub = (string) file_get_contents(module_path('Core', 'app/SoftDeletes/Stubs/remove_soft_deletes_columns_from_table.stub'));
     $path = storage_path('framework/testing/remove_soft_deletes_' . uniqid() . '.php');

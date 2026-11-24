@@ -7,6 +7,7 @@ namespace Modules\Core\SoftDeletes;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as EloquentSoftDeletes;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Locking\Locked;
 use Modules\Core\Support\PlainTableModel;
 use Modules\Core\Support\TableModels;
@@ -26,6 +27,8 @@ use Modules\Core\Support\TableModels;
 final readonly class TrashedRowsPurger
 {
     private const int CHUNK = 100;
+
+    public function __construct(private CacheLabelInvalidator $invalidator) {}
 
     /**
      * How many rows of the table are in the bin; 0 when it has neither column or does not exist.
@@ -58,6 +61,15 @@ final readonly class TrashedRowsPurger
             return 0;
         }
 
+        // A table no model reads has no events of its own to run and no known key to page by: one statement, then the
+        // whole table is flushed from the cache, as for any write that fires no model event.
+        if ($model instanceof PlainTableModel) {
+            $purged = $query->toBase()->delete();
+            $this->invalidator->flushTable($model->getTable(), $model);
+
+            return $purged;
+        }
+
         $force = class_uses_trait($model, EloquentSoftDeletes::class);
         $purged = 0;
 
@@ -83,7 +95,7 @@ final readonly class TrashedRowsPurger
     }
 
     /**
-     * {@see purge()} for a table: through its model when the application has one, with a plain delete otherwise.
+     * {@see purge()} for a table: through its model when the application has one, with one plain delete otherwise.
      */
     public function purgeTable(string $table): int
     {
