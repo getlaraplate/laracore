@@ -117,6 +117,22 @@ it('keeps a flush record for the largest store window a host announced', functio
         ->and((int) $connection->pttl($store->getPrefix() . 'labelwindow'))->toBeGreaterThan(9_000)->toBeLessThanOrEqual(10_000);
 })->group('redis');
 
+it('keeps a larger window recorded alive for its own window when the larger host stops announcing', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    $connection = $store->connection();
+    $key = $store->getPrefix() . 'labelwindow';
+    // A host with a 60 s window announced 119.5 s ago: its key has half a second left, and nothing renews it.
+    $connection->set($key, '60000', 'PX', 500);
+
+    new RedisLabelIndex($store, 5)->lookup('k', new CacheDependencies(['table:x']));
+    $after_mid = (int) $connection->pttl($key);
+    new RedisLabelIndex($store, 1)->lookup('k', new CacheDependencies(['table:x']));
+
+    expect((int) $connection->get($key))->toBe(60_000)
+        ->and($after_mid)->toBeGreaterThan(9_000)->toBeLessThanOrEqual(10_000)
+        ->and((int) $connection->pttl($key))->toBeGreaterThan(9_000);
+})->group('redis');
+
 it('announces its store window before its first lookup and then at most once per window', function (): void {
     $calls = [];
     $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);

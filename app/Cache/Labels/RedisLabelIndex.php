@@ -91,9 +91,11 @@ LUA;
 
     /**
      * Announces the store window of a process and returns the server time, as {@see LUA_MICROS} gives it. The window
-     * key keeps the largest window announced: a lower one leaves it alone, an equal one extends it, a higher or a
+     * key keeps the largest window announced: a lower one leaves its value alone, an equal one extends it, a higher or a
      * missing one replaces it. It expires after two windows, so a window no process announces any more is dropped,
-     * while a process announcing once per window keeps it alive for every store it may still make.
+     * while a process announcing once per window keeps it alive for every store it may still make. A lower window also
+     * extends the key to two of its own windows when it would expire sooner: the process relies on it until its next
+     * announcement, and the host of the larger window may stop announcing in between.
      * KEYS: the window key. ARGV: the window (ms).
      */
     private const string LUA_ANNOUNCE = <<<'LUA'
@@ -101,7 +103,7 @@ local own = tonumber(ARGV[1])
 local recorded = redis.call('GET', KEYS[1])
 if not recorded or tonumber(recorded) < own then
     redis.call('SET', KEYS[1], ARGV[1], 'PX', string.format('%d', 2 * own))
-elseif tonumber(recorded) == own then
+elseif tonumber(recorded) == own or redis.call('PTTL', KEYS[1]) < 2 * own then
     redis.call('PEXPIRE', KEYS[1], string.format('%d', 2 * own))
 end
 return micros()
