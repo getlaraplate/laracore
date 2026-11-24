@@ -98,7 +98,6 @@ use Modules\Core\Services\ModificationVoteService;
 use Modules\Core\SoftDeletes\SoftDeletes as CoreSoftDeletes;
 use Modules\Core\Support\ColumnKinds;
 use Modules\Core\Support\ComputedColumnGuard;
-use Modules\Core\Support\Hierarchy\ClosurePaths;
 use Modules\Core\Support\PermissionName;
 use Modules\Core\Support\ReadableColumnGuard;
 use Modules\Core\Support\RelationGuard;
@@ -842,13 +841,6 @@ class CrudService
                 ? $query->sole()
                 : $query->get(),
         );
-
-        if (is_string($tree_relation_type)) {
-            // Each node carries its signed `depth` from the relation and the `path` of keys from the node the
-            // walk starts at: from the loaded rows, or from the closure rows when the ACL hides a node on it, so that
-            // the hidden node still stands in the path.
-            ClosurePaths::forModel($model)->assign($data instanceof Model ? [$data] : $data, $tree_relation_type);
-        }
 
         $this->applyComputedMethods($data, $requestData);
 

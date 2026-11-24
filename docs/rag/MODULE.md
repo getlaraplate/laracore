@@ -627,7 +627,7 @@ Code still derives every query and transaction from the model that owns the data
 
 Core exposes reusable primitives for module authors:
 
-- UI/resource helpers (`HasTable`, `HasRecords`, `HasSlug`, `HasPath`, `HasActivation`, `SortableTrait`). A sortable record is created last whatever position it carries (`sort_when_creating`); a writer that owns the order, such as an import mirroring its source, calls `keepPositionWhenCreating()` on the instance to create it at the position it set.
+- UI/resource helpers (`HasTable`, `HasRecords`, `HasSlug`, `HasActivation`, `SortableTrait`). A sortable record is created last whatever position it carries (`sort_when_creating`); a writer that owns the order, such as an import mirroring its source, calls `keepPositionWhenCreating()` on the instance to create it at the position it set.
 - Data lifecycle traits (`HasVersions`, `SoftDeletes`, `HasLocks`, `HasOptimisticLocking`, `HasApprovals`, `HasValidity`).
 - Translation primitives (`HasTranslations`, `HasTranslatedDynamicContents`, `LocaleContext`, `LocaleScope`).
 - Dynamic-entity primitives (`Entity`, `Preset`, `Presettable`, `Field`, `DynamicEntity`).

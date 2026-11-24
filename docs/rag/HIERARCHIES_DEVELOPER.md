@@ -7,7 +7,7 @@ audience: developer
 Roles (`Core\Models\Role`), taxonomies (`Core\Models\Taxonomy`, so CMS categories) and comments
 (`CMS\Models\Comment`) are hierarchies: each row has a `parent_id`. They are stored as an adjacency list and
 queried through a **closure table**, a second table with one row for every ancestor and descendant pair. Reading a
-whole branch, the ancestors of a node or the path of a node is then a join, never a recursive query, and the
+whole branch or the ancestors of a node is then a join, never a recursive query, and the
 SQL is the same on every driver. The package `staudenmeir/laravel-adjacency-list` is no longer used.
 
 ## Giving a model a hierarchy
@@ -75,25 +75,10 @@ Helpers: `getDepth()`, `isRoot()`, `isLeaf()`, `isDescendantOf()`, `isAncestorOf
 `moveTo(self $newParent): bool`, which saves the new parent in a transaction and returns false, with nothing
 changed, for a move under the node itself or one of its descendants.
 
-`Modules\Core\Support\Hierarchy\ClosurePaths` sets the dotted `path` (`1.2.4`, from the node the walk started at)
-that `CrudService::tree()` returns next to the signed `depth`. The rows the relation already loaded give it when they
-hold every node on the path, so a tree with parents, children or both, nothing hidden, reads no further row. Above a
-starting node, that means a loaded ancestor at every distance. Below it, each loaded node links to its parent through
-the raw parent column, and the chain counts only when every step lands on a node the same starting node loaded, one
-level closer, and the last on the starting node: under closure drift the path follows the parent column, which the
-closure is rebuilt from. Any gap (a node a scope or an ACL hides, a selection without the parent column, a parent
-column that disagrees with the closure depths) reads the path from the closure rows instead, one query per 500 such
-nodes, so a hidden node still stands in the path of the nodes beyond it.
-Its `chainsOf()` gives each node's ancestors by distance from the closure rows.
-
-A taxonomy's own `path` accessor (`HasPath`) is a different value: the translated slugs of its ancestors, root
-first, then its own (`Taxonomy::getPath()`), wrapped by `getFullPath()`. Read on taxonomies one by one, it loads the
-ancestors of each. `Taxonomy::assignPaths($taxonomies)` gives the whole collection that value at once: one query
-joins the closure rows of all of them (500 per query) to their ancestors, through the model's global scopes as the
-`ancestors` relation reads them, each distinct ancestor is hydrated once, and their translations come in one more. `getPath()` returns the assigned value when there is
-one and builds it from the ancestors otherwise. The assigned value is used only while the locale, the node's parent
-and its own slug are the ones it was built from, and `refresh()` drops it; a change to an ancestor made through
-another instance is not seen until the node is loaded again or `assignPaths()` runs again. The search indexing of contents uses it (`Content::makeSearchableUsing()`).
+The hierarchy computes no path. Laraplate stays headless (decision of 2026-11-24): neither the tree payload of
+`CrudService::tree()` nor a taxonomy carries one, so the dotted key path the adjacency-list engine gave each tree node
+and the slug path a taxonomy built from its ancestors (`HasPath`, with `ids` and `full_name`) are gone. A client that
+needs a breadcrumb or a URL builds it from the nodes and their signed `depth`, or from the ancestors it loads.
 
 ## What the trait maintains
 
@@ -160,6 +145,6 @@ A delete that a later listener cancels, or that fails, writes nothing to any clo
 `Modules/Core/tests/Integration/Support/Hierarchy/ClosureTableMaintainerTest.php` covers the maintainer (including
 equality between incremental maintenance and a rebuild on a random 300-node tree);
 `Modules/Core/tests/Integration/Helpers/HasClosureTableTest.php` covers the trait and its relations; the CMS
-characterization tests under `Modules/CMS/tests/Feature/Hierarchy` pin the tree payload (`depth`, `path`, order,
-ACL hiding). The benchmark `Modules/CMS/tests/Integration/Performance/HierarchyBenchmarkTest.php` runs only with
+characterization tests under `Modules/CMS/tests/Feature/Hierarchy` pin the tree payload (`depth`, order,
+ACL hiding, no `path`). The benchmark `Modules/CMS/tests/Integration/Performance/HierarchyBenchmarkTest.php` runs only with
 `HIERARCHY_BENCHMARK=1`; data it inserts in bulk must be followed by `rebuildClosure()`.

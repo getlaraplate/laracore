@@ -459,7 +459,7 @@ Columns can be of different types:
 | Type | Description | Example |
 |------|-------------|---------|
 | `column` | Standard database column | `name`, `created_at` |
-| `append` | Eloquent accessor (appended attribute); the model must have the accessor | `full_name` |
+| `append` | Eloquent accessor (appended attribute); the model must have the accessor | `title` |
 | `method` | Model method call; only a method the model declares in `crudComputedDependencies()` | `getFormattedDate()` |
 | `count` | Aggregate count | `comments:count` |
 | `sum` | Aggregate sum | `items:sum:quantity` |
@@ -474,7 +474,7 @@ Columns can be of different types:
   "columns": [
     "id",
     "name",
-    { "name": "full_name", "type": "append" },
+    { "name": "title", "type": "append" },
     { "name": "author.name", "type": "column" },
     { "name": "comments", "type": "count" }
   ]
@@ -802,7 +802,9 @@ class Category extends Model
 }
 ```
 
-Access via `/api/v1/tree/{module}/{entity}` with `parents` and/or `children` parameters.
+Access via `/api/v1/tree/{module}/{entity}` with `parents` and/or `children` parameters. Each node of the walk
+carries its signed `depth` (negative above the starting node, `0` for it, positive below) and no `path`: the backend
+computes no hierarchy path, a client builds one from the nodes and their depths.
 
 ### HasLocks (Locking)
 

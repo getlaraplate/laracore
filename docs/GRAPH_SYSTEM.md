@@ -59,7 +59,7 @@ Graph responses expose:
 - `searchMeta`: search-only metadata for graph search.
 - `stats`: stats-only counts for graph stats.
 
-Node details are controlled by `node_detail`. Summary serialization uses provider summary fields when available and generic model attributes otherwise.
+Node details are controlled by `node_detail`. Summary serialization uses provider summary fields when available and generic model attributes otherwise (`title`, `name`, `label`, `slug`, `status`, `type`, `code`, `created_at`, `updated_at`); `minimal` carries the `slug` alone. No node carries a hierarchy `path`: Laraplate stays headless and computes none.
 
 ## Performance Boundary
 

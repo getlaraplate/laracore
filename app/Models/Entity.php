@@ -16,7 +16,6 @@ use Modules\Core\Database\Factories\EntityFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasActivation;
-use Modules\Core\Models\Concerns\HasPath;
 use Modules\Core\Models\Concerns\HasSlug;
 use Modules\Core\Observers\DynamicContentMetadataObserver;
 use Modules\Core\Observers\HierarchyOwnerObserver;
@@ -38,7 +37,6 @@ abstract class Entity extends Model implements IActivatableModel, ILockableModel
     }
     use HasCache;
     use HasLocks;
-    use HasPath;
     use HasSlug;
     // endregion
 
@@ -95,12 +93,6 @@ abstract class Entity extends Model implements IActivatableModel, ILockableModel
         ]);
 
         return $rules;
-    }
-
-    #[Override]
-    public function getPath(): ?string
-    {
-        return null;
     }
 
     protected static function newFactory(): EntityFactory

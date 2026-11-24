@@ -9,8 +9,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Query\Builder as QueryBuilder;
-use Illuminate\Support\Collection;
 use Modules\Core\Contracts\IActivatableModel;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Contracts\ILockableModel;
@@ -21,13 +19,11 @@ use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasActivation;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasClosureTable;
-use Modules\Core\Models\Concerns\HasPath;
 use Modules\Core\Models\Concerns\HasTranslatedDynamicContents;
 use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\SortableTrait;
 use Modules\Core\Models\Translations\TaxonomyTranslation;
 use Modules\Core\Overrides\Model;
-use Modules\Core\Support\Hierarchy\ClosurePaths;
 use Override;
 use Spatie\EloquentSortable\Sortable;
 
@@ -43,7 +39,6 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     }
     use HasClosureTable;
     use HasLocks;
-    use HasPath;
     use HasTranslatedDynamicContents {
         HasTranslatedDynamicContents::getRules as private getRulesDynamicContents;
         HasTranslatedDynamicContents::toArray as private translatedDynamicContentsToArray;
@@ -87,72 +82,11 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     ];
 
     /**
-     * The value of {@see self::getPath()} given by {@see self::assignPaths()}, with what it was built from on this
-     * node: the locale, the parent and the node's own slug. Null builds it from the ancestors.
-     *
-     * @var array{path: string, locale: string, parent: mixed, slug: mixed}|null
-     */
-    private ?array $assignedPath = null;
-
-    /**
      * @return class-string<Entity>
      */
     abstract public static function getEntityModelClass(): string;
 
     abstract protected static function getEntityType(): IDynamicEntityTypable;
-
-    /**
-     * Give each taxonomy the value {@see self::getPath()} builds from its ancestors, for a whole collection at once:
-     * one query joining the closure rows of all of them to their ancestors (per {@see ClosurePaths::KEY_CHUNK_SIZE}
-     * taxonomies), each distinct ancestor hydrated once, then the ancestors' translations once.
-     * Reading `path` on taxonomies one by one loads the ancestors of each; an eager `ancestors` load hydrates one
-     * ancestor per (taxonomy, ancestor) pair. The ancestors are read as the `ancestors` relation reads them: the
-     * model's global scopes apply, and an ancestor they hide gives no segment.
-     *
-     * The value lasts while the locale, the parent and the node's own slug stay those it was built from, see
-     * {@see self::getPath()}.
-     *
-     * @param  iterable<array-key, mixed>  $taxonomies
-     */
-    public static function assignPaths(iterable $taxonomies): void
-    {
-        /** @var array<class-string<self>, array<string, list<self>>> $nodes */
-        $nodes = [];
-
-        foreach ($taxonomies as $taxonomy) {
-            $key = $taxonomy instanceof self ? $taxonomy->getKey() : null;
-
-            if (is_int($key) || is_string($key)) {
-                $nodes[$taxonomy::class][(string) $key][] = $taxonomy;
-            }
-        }
-
-        foreach ($nodes as $by_key) {
-            [$chains, $ancestors] = self::readAncestors(reset($by_key)[0], array_map(strval(...), array_keys($by_key)));
-
-            foreach ($by_key as $key => $same_node) {
-                $chain = $chains[(string) $key] ?? [];
-                krsort($chain);
-                $slugs = [];
-
-                foreach ($chain as $distance => $ancestor_key) {
-                    if ($distance > 0 && isset($ancestors[$ancestor_key])) {
-                        $slugs[] = $ancestors[$ancestor_key]->slug;
-                    }
-                }
-
-                foreach ($same_node as $taxonomy) {
-                    $own_slug = $taxonomy->slug ?? null;
-                    $taxonomy->assignedPath = [
-                        'path' => self::joinChain($slugs, $own_slug, '/'),
-                        'locale' => LocaleContext::get(),
-                        'parent' => $taxonomy->getAttribute($taxonomy->getParentKeyName()),
-                        'slug' => $own_slug,
-                    ];
-                }
-            }
-        }
-    }
 
     public function getRules(): array
     {
@@ -219,47 +153,6 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         return $relation;
     }
 
-    /**
-     * The translated slugs of the ancestors, root first, then the node's own. The value {@see self::assignPaths()}
-     * gave is used while the locale, the parent and the node's own slug are still the ones it was built from;
-     * otherwise, and after {@see self::refresh()}, the path is built again from the ancestors as they are now. A change
-     * to an ancestor made through another instance is not seen by a given value.
-     */
-    #[Override]
-    public function getPath(): string
-    {
-        $assigned = $this->assignedPath;
-
-        if ($assigned !== null
-            && $assigned['locale'] === LocaleContext::get()
-            && $assigned['parent'] === $this->getAttribute($this->getParentKeyName())
-            && $assigned['slug'] === ($this->slug ?? null)) {
-            return $assigned['path'];
-        }
-
-        $this->assignedPath = null;
-
-        return $this->buildAncestorChain('slug', '/');
-    }
-
-    /**
-     * Reload the row and forget the path {@see self::assignPaths()} gave.
-     */
-    #[Override]
-    public function refresh(): static
-    {
-        $this->assignedPath = null;
-
-        return parent::refresh();
-    }
-
-    public function appendPaths(): self
-    {
-        $this->appends = array_merge($this->appends, ['ids', 'path', 'full_name']);
-
-        return $this;
-    }
-
     #[Override]
     public function toArray(): array
     {
@@ -283,21 +176,6 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     protected static function getTranslationModelClass(): string
     {
         return TaxonomyTranslation::class;
-    }
-
-    /**
-     * Eager-load ancestors (and their translations) for path-related accessors.
-     *
-     * @param  Builder<static>  $query
-     * @return Builder<static>
-     */
-    #[Scope]
-    final protected function withAncestorsForPath(Builder $query): Builder
-    {
-        return $query->with([
-            'ancestors',
-            'ancestors.translations',
-        ]);
     }
 
     #[Scope]
@@ -342,123 +220,10 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         return $this->requiresApprovalWhenTrait($modifications) && ($modifications[self::$valid_from_column] ?? $modifications[self::$valid_to_column] ?? false);
     }
 
-    final protected function ids(): Attribute
-    {
-        return Attribute::make(
-            get: fn (): string => $this->buildAncestorChain('id', '.'),
-        );
-    }
-
-    final protected function fullName(): Attribute
-    {
-        return Attribute::make(
-            get: fn (): string => $this->buildAncestorChain('name', ' > '),
-        );
-    }
-
     final protected function title(): Attribute
     {
         return Attribute::make(
             get: fn () => $this->name,
         );
-    }
-
-    /**
-     * The visible ancestors of the nodes, each hydrated once with its translations and the model's default relations,
-     * and the chain of each node by distance, from one query per {@see ClosurePaths::KEY_CHUNK_SIZE} nodes joining the
-     * closure rows to the model table: the model's global scopes decide which ancestors exist, as they do for the
-     * `ancestors` relation. A node without a visible ancestor has no chain.
-     *
-     * @param  list<string>  $keys
-     * @return array{0: array<string, array<int, string>>, 1: array<string, self>}
-     */
-    private static function readAncestors(self $model, array $keys): array
-    {
-        $closure_table = $model->getClosureTable();
-        $reach = $closure_table . '_reach';
-        $ancestry = $closure_table . '_ancestry';
-        $key_name = $model->getKeyName();
-        // Integer keys are written into the SQL, any other key is bound: the starting keys appear twice, so a bound
-        // chunk is halved to stay below the 999 variables of older SQLite builds.
-        $integer_keys = in_array($model->getKeyType(), ['int', 'integer'], true);
-        $where_in = $integer_keys ? 'whereIntegerInRaw' : 'whereIn';
-        $chunk_size = $integer_keys ? ClosurePaths::KEY_CHUNK_SIZE : intdiv(ClosurePaths::KEY_CHUNK_SIZE, 2);
-        $chains = [];
-        $ancestors = [];
-
-        foreach (array_chunk($keys, $chunk_size) as $chunk) {
-            $chunk = $integer_keys ? array_map(intval(...), $chunk) : $chunk;
-            // The sub-select restates the ancestors on the model's key, as ClosureLineage does for an eager lineage:
-            // left to choose, SQLite walks every node through a low-cardinality index before probing the closure.
-            $query = $model->newQuery()
-                ->with('translations')
-                ->join($closure_table . ' as ' . $reach, $reach . '.ancestor_id', '=', $model->getQualifiedKeyName())
-                ->{$where_in}($reach . '.descendant_id', $chunk)
-                ->where($reach . '.depth', '>', 0)
-                ->whereIn($model->getQualifiedKeyName(), static function (QueryBuilder $reached) use ($closure_table, $ancestry, $chunk, $where_in): void {
-                    $reached->select($ancestry . '.ancestor_id')
-                        ->from($closure_table . ' as ' . $ancestry)
-                        ->{$where_in}($ancestry . '.descendant_id', $chunk)
-                        ->where($ancestry . '.depth', '>', 0);
-                })
-                ->select([$model->getTable() . '.*', $reach . '.descendant_id as closure_descendant_id', $reach . '.depth as closure_depth']);
-            $rows = [];
-
-            foreach ($query->toBase()->get() as $row) {
-                $row = (array) $row;
-                $ancestor = (string) $row[$key_name];
-                $chains[(string) $row['closure_descendant_id']][(int) $row['closure_depth']] = $ancestor;
-                unset($row['closure_descendant_id'], $row['closure_depth']);
-
-                if (! isset($ancestors[$ancestor])) {
-                    $rows[$ancestor] = $row;
-                }
-            }
-
-            if ($rows === []) {
-                continue;
-            }
-
-            $hydrated = $query->hydrate(array_values($rows))->all();
-            $query->eagerLoadRelations($hydrated);
-
-            foreach ($hydrated as $ancestor) {
-                $ancestors[(string) $ancestor->getKey()] = $ancestor;
-            }
-        }
-
-        return [$chains, $ancestors];
-    }
-
-    /**
-     * The non-empty values of the ancestors, root first, then the node's own, joined; the node's own value alone
-     * (or an empty string) when no segment is left.
-     *
-     * @param  array<array-key, mixed>  $ancestorValues  Root first
-     */
-    private static function joinChain(array $ancestorValues, mixed $current, string $separator): string
-    {
-        /** @var Collection<int, mixed> $segments */
-        $segments = collect($ancestorValues)
-            ->filter(static fn (mixed $value): bool => $value !== null && $value !== '')
-            ->values();
-
-        if ($current !== null && $current !== '') {
-            $segments->push($current);
-        }
-
-        if ($segments->isEmpty()) {
-            return (string) ($current ?? '');
-        }
-
-        return $segments->join($separator);
-    }
-
-    /**
-     * Build a concatenated chain from ancestors plus the current model.
-     */
-    private function buildAncestorChain(string $field, string $separator): string
-    {
-        return self::joinChain($this->ancestors->pluck($field)->reverse()->all(), $this->{$field} ?? null, $separator);
     }
 }
