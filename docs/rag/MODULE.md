@@ -233,6 +233,36 @@ To read, list or restore the versions of a record (`versions`, `history`, `lates
 
 If a concrete model declares its own `versionStrategy = VersionStrategy::DIFF`, that class property takes precedence and is not runtime-configurable. `ForcedVersionStrategySettings` discovers those models across active/inactive modules; `SettingResource`, tabs, filters, and form validation hide/reject matching historical `versioning.strategy.{table}` rows without deleting them.
 
+**What a permission does after a capability is switched off.** `Authorization\PermissionEnforcement` tells the role
+editor when a granted `lock`, `unlock`, `restore` or `delete` does nothing or changes meaning. A missing per-table
+setting reads as on, since the trait decides and the row is only an off switch, so the note follows the model: a
+table whose models (`Support\TableModels`, every concrete model of `models()` on that table) no longer declare
+`HasLocks` or `SoftDeletes` is off whatever its setting says, as after `model:locked-remove` or
+`model:soft-deletes-remove`; a table with such a model follows the model's own reading of the setting; a table no
+model reads follows the setting alone.
+
+**Switching soft deletes off and on.** A `soft_deletes.enabled.{table}` setting moved from on to off deletes the rows
+of the table in the bin for good: the scope that hides them does not read the setting, so they would otherwise stay
+hidden forever. Any save that switches it off (the settings page, the CRUD API, an approved modification, a command)
+makes `SettingObserver` queue `PurgeTrashedRowsJob` after the commit; the job reads the setting again and does nothing
+when soft deletes are back on, so switching on before it runs keeps the rows. It is tried up to 5 times, 30 seconds
+apart: a large bin killed at the worker timeout resumes where it stopped, since each row is deleted for good on its own.
+Its timeout is the worker's on purpose: one longer than the queue's `retry_after` would let two workers purge at once.
+Two jobs of one table never run together (`WithoutOverlapping` keyed by table, released for a minute when taken,
+expiring after three): switching off, on and off queues two, and their row events must not fire twice. `ReleaseLocksJob`
+does the same. Otherwise `SoftDeletes\TrashedRowsPurger`
+deletes each row in the bin (`deleted_at` set or `is_deleted` true) on its own, through the table's model, in chunks of
+100: `forceDelete()`, so `forceDeleted` runs and the row's media and embeddings leave with it, and a versioned record
+keeps its snapshot set. Live rows and other tables are untouched; switching back on purges nothing. A table whose
+model pins soft deletes on in code (`softDeletesEnabledInCode()`) keeps its bin: the setting has no effect on it, so
+neither the warning nor the purge applies. The settings page
+asks first through `SoftDeletesSettingConfirmation` (registered by `CoreServiceProvider`), which shows the number of
+rows in the bin; cancelling saves nothing. From the terminal, `model:soft-deletes-refresh` shows the same warning
+before it aligns the setting of a model without the trait to off, and a refusal changes nothing;
+`model:soft-deletes-remove` asks before it purges (see the command list). No other command writes the setting.
+Pinned in `tests/Integration/SoftDeletes/SoftDeletesSwitchTest.php` and
+`tests/Feature/Filament/SoftDeletesSwitchConfirmationTest.php`.
+
 **Switching versioning off and on.** A `versioning.strategy.{table}` setting with no value, `false` or an empty string means the table is not versioned (`VersionStrategy::fromSetting()`); any other value must be `DIFF` or `SNAPSHOT`. Switching a table off deletes its edit history: when a save moves the value from a strategy to off, from the settings page, the CRUD API or an approved modification, `SettingObserver` queues `PurgeVersionHistoryJob` after the commit. The job reads the setting again and does nothing when it is back on, so switching on before it runs keeps the history; otherwise `VersionHistoryPurger` deletes, by chunks of 500, every version set of the table (`root_table_ref`) except the hard-delete snapshot sets (a set with a `deleted` row of the root itself, `relation_path` null), and their rows go with them. Records deleted for good can therefore still be recovered; every other revision of the table, translations and links included, is gone and cannot be restored. Only the settings page asks first: `VersioningSettingConfirmation`, registered by `CoreServiceProvider` in `SettingChangeConfirmations`, shows how many revisions and version rows will be deleted and that the snapshots of deleted records are kept. Switched back on, the table starts a new history with no backfill: a record gets a baseline at its first save (the creation set of a new record, otherwise a `baseline` set carrying the image of the aggregate, since `BaselinePolicy` finds no complete anchor), and a record never saved since has no versions and no current revision. Moving from `DIFF` to `SNAPSHOT` or back deletes nothing. Pinned in `tests/Integration/Versioning/VersioningSwitchTest.php`.
 
 ```mermaid
@@ -687,7 +717,17 @@ When building new module features, reuse these primitives instead of re-implemen
 
 - `model:clear-expired`
 - `model:soft-deletes-add`
-- `model:soft-deletes-remove`
+- `model:soft-deletes-remove`: when the table has rows in the bin (`deleted_at` set or `is_deleted` true), asks
+  before anything else and changes nothing on a refusal (no record, trait, migration or setting); confirmed, it
+  deletes those rows for good through the model (`SoftDeletes\TrashedRowsPurger`: each row force deleted on its own,
+  so `forceDeleted` runs and its media and embeddings leave), removes the trait, writes the migration and deletes the
+  `soft_deletes.enabled.{table}` setting: a setting left for a feature the model no longer has would let an
+  administrator switch on something that does nothing. The migration runs the same purge before it drops the
+  columns, for rows a worker still running the old class moved to the bin in between (through the table's model when
+  the application still has one, with a plain delete otherwise). That purge runs at deploy, on the production bin, with
+  no confirmation there and the model's events (media and embeddings removed): the confirmation was the one given when
+  the command ran. On a database whose migrations run inside a transaction (PostgreSQL), a failed migration rolls the
+  rows back, but not the files the events already deleted.
 - `model:soft-deletes-refresh`
 
 ### Translation and translatable conversion

@@ -10,6 +10,7 @@ use Illuminate\Database\LostConnectionDetector;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IReportsCacheEvictionPolicy;
 use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use PDOException;
@@ -34,10 +35,10 @@ use Throwable;
  * reply the primary reports ({@see LabelIndexUnavailableException}, such as a flush refused under `-OOM`), and a
  * database exception Laravel's lost connection detector recognises (a failover cache whose first store is `database`);
  * any other exception is a bug and propagates. A memcached primary throws nothing when its server is down (it answers
- * misses and failed writes): it degrades on the first flush its counters refuse
- * ({@see VersionCounterLabelIndex::flush()}), not on reads, see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
+ * misses and failed writes): {@see VersionCounterLabelIndex} reads the client's result code after every call and
+ * throws on a failed one, so it degrades on reads as on flushes, see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
  */
-final class FailoverLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
+final class FailoverLabelIndex implements ICacheLabelIndex, IReportsCacheEvictionPolicy, IResolvesCacheLabelKeys
 {
     public const string MARKER_KEY = 'cache-labels:degraded';
 
@@ -118,6 +119,19 @@ final class FailoverLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelK
     public function supportsRowLabels(): bool
     {
         return $this->primary->supportsRowLabels();
+    }
+
+    /**
+     * The policy of the primary; null while it is down or when it cannot tell.
+     */
+    #[Override]
+    public function evictionPolicy(): ?string
+    {
+        if (! $this->primary instanceof IReportsCacheEvictionPolicy) {
+            return null;
+        }
+
+        return $this->guard(fn (): ?string => $this->primary->evictionPolicy(), static fn (): null => null);
     }
 
     /**

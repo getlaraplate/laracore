@@ -18,7 +18,10 @@ interface ICacheLabelIndex
      * Store a value found missing by {@see lookup()}. Returns false, storing nothing usable,
      * when one of its labels was flushed after the lookup started.
      *
-     * @param  list<string>  $row_labels
+     * @param  list<string>  $row_labels  Labels found after the query: row labels, and, on an index with row labels,
+     *                                    any other label the query revealed (the tables of `morphTo` targets). The
+     *                                    flush of any of them after the lookup refuses the store. An index without
+     *                                    row labels ignores them.
      */
     public function store(CacheLookup $lookup, mixed $value, int $ttl, array $row_labels = []): bool;
 

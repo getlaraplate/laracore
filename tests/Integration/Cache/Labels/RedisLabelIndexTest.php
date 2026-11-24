@@ -100,6 +100,70 @@ it('keeps a flush record for the store window only', function (): void {
     expect($ttl)->toBeGreaterThan(5_000)->toBeLessThanOrEqual(6_000);
 })->group('redis');
 
+it('keeps a flush record for the largest store window a host announced', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    $short = new RedisLabelIndex($store, 1);
+    $long = new RedisLabelIndex($store, 5);
+
+    $long->lookup('k', new CacheDependencies(['table:x']));
+    // A host with a shorter window announces too, without lowering the window recorded.
+    $short->lookup('k', new CacheDependencies(['table:x']));
+    $short->flush('table:x');
+
+    $connection = $store->connection();
+
+    expect((int) $connection->pttl($store->getPrefix() . 'labelflush:table:x'))->toBeGreaterThan(5_000)->toBeLessThanOrEqual(6_000)
+        ->and((int) $connection->get($store->getPrefix() . 'labelwindow'))->toBe(5_000)
+        ->and((int) $connection->pttl($store->getPrefix() . 'labelwindow'))->toBeGreaterThan(9_000)->toBeLessThanOrEqual(10_000);
+})->group('redis');
+
+it('keeps a larger window recorded alive for its own window when the larger host stops announcing', function (): void {
+    $store = RedisLabelIndexFactory::store();
+    $connection = $store->connection();
+    $key = $store->getPrefix() . 'labelwindow';
+    // A host with a 60 s window announced 119.5 s ago: its key has half a second left, and nothing renews it.
+    $connection->set($key, '60000', 'PX', 500);
+
+    new RedisLabelIndex($store, 5)->lookup('k', new CacheDependencies(['table:x']));
+    $after_mid = (int) $connection->pttl($key);
+    new RedisLabelIndex($store, 1)->lookup('k', new CacheDependencies(['table:x']));
+
+    expect((int) $connection->get($key))->toBe(60_000)
+        ->and($after_mid)->toBeGreaterThan(9_000)->toBeLessThanOrEqual(10_000)
+        ->and((int) $connection->pttl($key))->toBeGreaterThan(9_000);
+})->group('redis');
+
+it('announces its store window before its first lookup and then at most once per window', function (): void {
+    $calls = [];
+    $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
+    $connection->shouldReceive('command')->andReturnUsing(static function (string $method, array $parameters = []) use (&$calls): mixed {
+        $calls[] = $method;
+
+        return $method === 'time' ? ['1700000000', '0'] : '1700000000000000';
+    });
+    $connection->shouldReceive('get')->andReturn(null);
+    $store = Mockery::mock(Illuminate\Cache\RedisStore::class);
+    $store->shouldReceive('connection')->andReturn($connection);
+    $store->shouldReceive('getPrefix')->andReturn('');
+    $index = new RedisLabelIndex($store, 60);
+
+    $index->lookup('a', new CacheDependencies(['table:x']));
+    $index->lookup('b', new CacheDependencies(['table:x']));
+
+    expect($calls)->toBe(['eval', 'time']);
+});
+
+it('throws when Redis answers the announcement of the store window with an error reply', function (): void {
+    $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
+    $connection->shouldReceive('command')->once()->with('eval', Mockery::any())->andReturn(false);
+    $connection->shouldReceive('client')->andReturn(new stdClass());
+    $store = Mockery::mock(Illuminate\Cache\RedisStore::class);
+    $store->shouldReceive('connection')->andReturn($connection);
+    $store->shouldReceive('getPrefix')->andReturn('');
+
+    new RedisLabelIndex($store)->lookup('k', new CacheDependencies(['table:core_users']));
+})->throws(Modules\Core\Cache\Labels\LabelIndexUnavailableException::class);
+
 it('flushes several labels holding more members than one script deletes', function (): void {
     $store = RedisLabelIndexFactory::store();
     $index = new RedisLabelIndex($store);
@@ -167,19 +231,10 @@ it('deletes the members of a flush before it writes the flush records', function
     $script = new ReflectionClassConstant(RedisLabelIndex::class, 'LUA_MICROS')->getValue() . "\n"
         . new ReflectionClassConstant(RedisLabelIndex::class, 'LUA_FLUSH')->getValue();
 
-    // An invalid record ttl makes the record SET fail, as an -OOM refusal would: what ran before it stays done.
-    $reply = $connection->eval($script, 2, $prefix . 'label:table:core_users', $prefix . 'labelflush:table:core_users', '1000', '1', '-5');
+    // An invalid record ttl makes the record SET fail, as an -OOM refusal would: what ran before it stays done. The
+    // window key named holds no window, so the flusher's own (invalid) one is kept.
+    $reply = $connection->eval($script, 3, $prefix . 'label:table:core_users', $prefix . 'labelflush:table:core_users', $prefix . 'labelwindow:none', '1000', '1', '-2000');
 
     expect($reply)->toBeFalse()
         ->and($index->lookup('k', $dependencies)->hit)->toBeFalse();
-})->group('redis');
-
-it('deletes the flush hash of the index before v1.81.0 when it prunes', function (): void {
-    $store = RedisLabelIndexFactory::store();
-    $connection = $store->connection();
-    $connection->hset($store->getPrefix() . 'labelflush', 'table:core_users', '1');
-
-    new RedisLabelIndex($store)->pruneStale();
-
-    expect((int) $connection->exists($store->getPrefix() . 'labelflush'))->toBe(0);
 })->group('redis');

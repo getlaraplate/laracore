@@ -28,3 +28,15 @@ it('adds labels to dependencies', function (): void {
         ->and($more->complete)->toBeTrue()
         ->and($dependencies->labels)->toBe(['a']);
 });
+
+it('stores an entry under the labels found after the query, adding the rows label of row labels only', function (): void {
+    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies(['crud'], ['core_roles']);
+
+    expect(CacheLabel::storedUnder($dependencies, ['row:core_users:5', 'table:cms_contents']))->toEqualCanonicalizing([
+        'crud',
+        'row:core_users:5',
+        'table:cms_contents',
+        'rows:core_roles',
+        'rows:core_users',
+    ]);
+});

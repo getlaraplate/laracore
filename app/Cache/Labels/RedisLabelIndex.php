@@ -8,9 +8,11 @@ use Illuminate\Cache\RedisStore;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IReportsCacheEvictionPolicy;
 use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use Redis;
+use Throwable;
 
 /**
  * Membership index on Redis. Every cached key is a member of one sorted set per label
@@ -20,7 +22,11 @@ use Redis;
  *
  * A flush record only has to outlive the stores racing it: a store is refused when its lookup
  * started more than the store window ago, so a record expires one window after the flush and
- * the records held are only those of the labels flushed within the last window.
+ * the records held are only those of the labels flushed within the last window. Hosts may run with different windows:
+ * each process announces its own in one key ({@see WINDOW_KEY}) before its first lookup and then once per window, the
+ * key keeping the largest window announced in the last two windows of its host, and a flush keeps its records for the
+ * larger of its own window and the one announced, so a host with a longer window is covered by the flushes of every
+ * other host.
  *
  * All keys live under the store prefix. Nothing is stored without an expiry.
  * A cached null reads back as a miss on phpredis with a native serializer.
@@ -28,17 +34,16 @@ use Redis;
  * Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in
  * different hash slots.
  */
-final readonly class RedisLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
+final class RedisLabelIndex implements ICacheLabelIndex, IReportsCacheEvictionPolicy, IResolvesCacheLabelKeys
 {
     private const string LABEL_KEY = 'label:';
 
     private const string FLUSHED_KEY = 'labelflush:';
 
     /**
-     * The single hash of flush times the index wrote before v1.81.0, with no expiry. Nothing reads it any more:
-     * {@see pruneStale()} deletes it.
+     * The largest store window in use, in milliseconds, announced by the processes that look values up.
      */
-    private const string LEGACY_FLUSHED_HASH = 'labelflush';
+    private const string WINDOW_KEY = 'labelwindow';
 
     /**
      * Page size for every PHP-driven loop, so no single Redis command or script does unbounded work.
@@ -85,17 +90,39 @@ return 1
 LUA;
 
     /**
+     * Announces the store window of a process and returns the server time, as {@see LUA_MICROS} gives it. The window
+     * key keeps the largest window announced: a lower one leaves its value alone, an equal one extends it, a higher or a
+     * missing one replaces it. It expires after two windows, so a window no process announces any more is dropped,
+     * while a process announcing once per window keeps it alive for every store it may still make. A lower window also
+     * extends the key to two of its own windows when it would expire sooner: the process relies on it until its next
+     * announcement, and the host of the larger window may stop announcing in between.
+     * KEYS: the window key. ARGV: the window (ms).
+     */
+    private const string LUA_ANNOUNCE = <<<'LUA'
+local own = tonumber(ARGV[1])
+local recorded = redis.call('GET', KEYS[1])
+if not recorded or tonumber(recorded) < own then
+    redis.call('SET', KEYS[1], ARGV[1], 'PX', string.format('%d', 2 * own))
+elseif tonumber(recorded) == own or redis.call('PTTL', KEYS[1]) < 2 * own then
+    redis.call('PEXPIRE', KEYS[1], string.format('%d', 2 * own))
+end
+return micros()
+LUA;
+
+    /**
      * Flushes labels in one call when they hold few members: deletes members and removes them from their sets, label
      * after label, up to a budget of members per call, then records the flush time of every label (on the first call
      * only), atomically, so a member added by a store that lands between two calls keeps its membership for the next
      * flush. The deletes come first: under `maxmemory` with `noeviction` Redis refuses a script whose first write is a
      * `SET`, while deletes are allowed and let the script write on; inside one atomic script the order does not change
-     * what a racing store sees.
-     * KEYS: the n label sets, then their n flush records. ARGV: budget, 1 to record the flush time, record ttl (ms).
+     * what a racing store sees. A flush record lives one second longer than the larger of the flusher's window and the
+     * window announced ({@see LUA_ANNOUNCE}).
+     * KEYS: the n label sets, then their n flush records, then the window key. ARGV: budget, 1 to record the flush time,
+     * the store window of the flusher (ms).
      * Returns the 1-based positions of the labels that may still hold members.
      */
     private const string LUA_FLUSH = <<<'LUA'
-local labels = #KEYS / 2
+local labels = (#KEYS - 1) / 2
 local budget = tonumber(ARGV[1])
 local unfinished = {}
 for i = 1, labels do
@@ -115,24 +142,36 @@ for i = 1, labels do
 end
 if ARGV[2] == '1' then
     local now = micros()
+    local window = tonumber(ARGV[3])
+    local announced = redis.call('GET', KEYS[#KEYS])
+    if announced and tonumber(announced) > window then
+        window = tonumber(announced)
+    end
+    local ttl = string.format('%d', window + 1000)
     for i = 1, labels do
-        redis.call('SET', KEYS[labels + i], now, 'PX', ARGV[3])
+        redis.call('SET', KEYS[labels + i], now, 'PX', ttl)
     end
 end
 return unfinished
 LUA;
 
     /**
-     * @param  int  $store_window  Seconds a computation may take between its lookup and its store; a later store is
-     *                             refused. Flush records are kept as long, so they cover every store not refused.
+     * Monotonic time (ns) of this process's last announcement of its window, null before the first one.
      */
-    public function __construct(private RedisStore $store, private int $store_window = 60) {}
+    private ?int $announced_at = null;
+
+    /**
+     * @param  int  $store_window  Seconds a computation may take between its lookup and its store; a later store is
+     *                             refused. Flush records are kept as long, or as long as the largest window another
+     *                             host announced, so they cover every store not refused.
+     */
+    public function __construct(private readonly RedisStore $store, private readonly int $store_window = 60) {}
 
     #[Override]
     public function lookup(string $key, CacheDependencies $dependencies): CacheLookup
     {
         $connection = $this->store->connection();
-        $started_at = $this->serverMicros($connection);
+        $started_at = $this->announcementDue() ? $this->announce($connection) : $this->serverMicros($connection);
         $raw = $connection->get($this->store->getPrefix() . $key);
 
         if ($raw === null || $raw === false) {
@@ -183,8 +222,10 @@ LUA;
         $connection = $this->store->connection();
         $prefix = $this->store->getPrefix();
 
-        // A flush record must outlive every store not refused, which started its lookup at most one window ago.
-        $record_ttl = (string) intdiv($this->windowMicros() + 1_000_000, 1000);
+        // A flush record must outlive every store not refused, which started its lookup at most one window ago: the
+        // script keeps it for the largest window announced, one second more.
+        $window = (string) intdiv($this->windowMicros(), 1000);
+        $window_key = $prefix . self::WINDOW_KEY;
 
         // Redis deletes a sorted set once its last member is removed, so the set needs no delete of its own.
         foreach (array_chunk($labels, self::CHUNK) as $batch) {
@@ -193,10 +234,10 @@ LUA;
             while ($batch !== []) {
                 $unfinished = $connection->eval(
                     self::LUA_MICROS . "\n" . self::LUA_FLUSH,
-                    2 * count($batch),
+                    2 * count($batch) + 1,
                     ...array_map(fn (string $label): string => $prefix . self::LABEL_KEY . $label, $batch),
                     ...array_map(fn (string $label): string => $prefix . self::FLUSHED_KEY . $label, $batch),
-                    ...[(string) self::CHUNK, $record ? '1' : '0', $record_ttl],
+                    ...[$window_key, (string) self::CHUNK, $record ? '1' : '0', $window],
                 );
 
                 // phpredis answers an error reply (an `-OOM`, a script error) with false where Predis throws: the
@@ -216,10 +257,6 @@ LUA;
     {
         $connection = $this->store->connection();
         $now = $this->serverMicros($connection);
-
-        // Left by the index before v1.81.0, which kept every flush time in one hash without expiry.
-        $connection->del($this->store->getPrefix() . self::LEGACY_FLUSHED_HASH);
-
         $client_prefix = $this->connectionPrefix($connection);
         $prefix = $this->store->getPrefix();
         $seen = [];
@@ -258,6 +295,108 @@ LUA;
     public function supportsRowLabels(): bool
     {
         return true;
+    }
+
+    /**
+     * `maxmemory_policy` of `INFO memory`, or, when INFO does not show it, `CONFIG GET maxmemory-policy`. A Redis with
+     * no memory limit (`maxmemory` 0) evicts nothing, whatever its policy: it reads as `noeviction`. A managed Redis may
+     * refuse either command: a refusal leaves the policy unknown, and is never an outage of the index, since this is a
+     * diagnostic read.
+     */
+    #[Override]
+    public function evictionPolicy(): ?string
+    {
+        $connection = $this->store->connection();
+
+        try {
+            $info = $connection->command('info', ['memory']);
+        } catch (Throwable) {
+            $info = null;
+        }
+
+        if (in_array(self::infoField($info, 'maxmemory'), ['0', 0], true)) {
+            return EvictionPolicy::REQUIRED;
+        }
+
+        $policy = self::infoField($info, 'maxmemory_policy');
+
+        if (is_string($policy)) {
+            return $policy;
+        }
+
+        try {
+            $config = $connection->command('config', ['get', 'maxmemory-policy']);
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! is_array($config)) {
+            return null;
+        }
+
+        // phpredis answers a map, Predis may answer the flat list of names and values.
+        $value = $config['maxmemory-policy'] ?? (($config[0] ?? null) === 'maxmemory-policy' ? $config[1] ?? null : null);
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * A field of an INFO reply: flat (phpredis) or grouped by section (Predis).
+     */
+    private static function infoField(mixed $info, string $field): string|int|null
+    {
+        if (! is_array($info)) {
+            return null;
+        }
+
+        $value = $info[$field] ?? null;
+
+        if (is_int($value) || (is_string($value) && $value !== '')) {
+            return $value;
+        }
+
+        foreach ($info as $section) {
+            $value = is_array($section) ? $section[$field] ?? null : null;
+
+            if (is_int($value) || (is_string($value) && $value !== '')) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether this process has not announced its window yet, or announced it one window ago or more.
+     */
+    private function announcementDue(): bool
+    {
+        return $this->announced_at === null || hrtime(true) - $this->announced_at >= $this->windowMicros() * 1000;
+    }
+
+    /**
+     * Announces the store window of this process ({@see LUA_ANNOUNCE}) and returns the server time, taken after the
+     * announcement: a flush that follows the lookup already sees the window.
+     *
+     * @throws LabelIndexUnavailableException when Redis answers the script with an error reply.
+     */
+    private function announce(Connection $connection): int
+    {
+        $announced_at = hrtime(true);
+        $now = $connection->eval(
+            self::LUA_MICROS . "\n" . self::LUA_ANNOUNCE,
+            1,
+            $this->store->getPrefix() . self::WINDOW_KEY,
+            (string) intdiv($this->windowMicros(), 1000),
+        );
+
+        if (! is_numeric($now)) {
+            throw LabelIndexUnavailableException::errorReply('announce', $now, $this->lastError($connection));
+        }
+
+        $this->announced_at = $announced_at;
+
+        return (int) $now;
     }
 
     /**

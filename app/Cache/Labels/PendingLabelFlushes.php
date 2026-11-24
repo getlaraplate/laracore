@@ -39,6 +39,42 @@ final class PendingLabelFlushes
     private array $pending = [];
 
     /**
+     * Whether the connection, or any connection when none is given, still has a transaction whose end its callbacks
+     * wait for. In a test wrapped in `RefreshDatabase` the wrapping transaction is not one: the manager runs callbacks
+     * at once outside the others.
+     *
+     * The caches use it too: a read inside a transaction may see a snapshot older than its lookup (REPEATABLE READ takes
+     * it at the first read), so a flush committed between the snapshot and the lookup would not refuse the store of a
+     * value built from it. Such a value is computed and not stored.
+     */
+    public static function inTransaction(?Connection $connection = null): bool
+    {
+        $manager = app()->bound('db.transactions') ? app('db.transactions') : null;
+
+        if (! $manager instanceof DatabaseTransactionsManager) {
+            $connections = $connection instanceof Connection ? [$connection] : app('db')->getConnections();
+
+            foreach ($connections as $open) {
+                if ($open->transactionLevel() > 0) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($connection instanceof Connection && $connection->transactionLevel() === 0) {
+            return false;
+        }
+
+        $name = $connection?->getName();
+
+        return $manager->callbackApplicableTransactions()->contains(
+            static fn (DatabaseTransactionRecord $transaction): bool => $name === null || $transaction->connection === $name,
+        );
+    }
+
+    /**
      * Collects labels to flush on the index once the open transaction of the connection ends.
      *
      * @param  list<string>  $labels
@@ -53,29 +89,6 @@ final class PendingLabelFlushes
         }
 
         $this->watch($connection, $key);
-    }
-
-    /**
-     * Whether the connection still has a transaction whose end its callbacks wait for. In a test wrapped in
-     * `RefreshDatabase` the wrapping transaction is not one: the manager runs callbacks at once outside the others.
-     */
-    private static function inTransaction(Connection $connection): bool
-    {
-        if ($connection->transactionLevel() === 0) {
-            return false;
-        }
-
-        $manager = app()->bound('db.transactions') ? app('db.transactions') : null;
-
-        if (! $manager instanceof DatabaseTransactionsManager) {
-            return true;
-        }
-
-        $name = $connection->getName();
-
-        return $manager->callbackApplicableTransactions()->contains(
-            static fn (DatabaseTransactionRecord $transaction): bool => $transaction->connection === $name,
-        );
     }
 
     /**

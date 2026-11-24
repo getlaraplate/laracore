@@ -295,6 +295,20 @@ it('does not store a response whose status is not 200', function (int $status): 
     'not found' => Response::HTTP_NOT_FOUND,
 ]);
 
+it('computes but does not store a response read inside an open transaction, and stores it outside', function (): void {
+    Setting::factory()->persistedWithoutApprovalCapture()->create();
+    $this->actingAs(crudResponseCacheSuperadmin());
+    $url = crudResponseCacheSettingsUrl();
+
+    // A read inside a transaction may see a snapshot older than the lookup: a flush in between would not refuse it.
+    (new Setting())->getConnection()->transaction(fn (): TestResponse => $this->getJson($url)->assertOk());
+    $stores_inside = count(crudResponseCacheStores($this->index));
+    $this->getJson($url)->assertOk();
+
+    expect($stores_inside)->toBe(0)
+        ->and(crudResponseCacheStores($this->index))->toHaveCount(1);
+});
+
 it('bypasses the cache with no_cache', function (): void {
     Setting::factory()->persistedWithoutApprovalCapture()->create();
     $this->actingAs(crudResponseCacheSuperadmin());
@@ -320,13 +334,14 @@ it('never stores the response of a model without HasCache', function (): void {
         ->and(crudResponseCacheStores($this->index))->toBe([]);
 });
 
-it('never stores a response whose dependencies are incomplete', function (Closure $index): void {
+it('stores a response that displays a morphTo on a membership index only', function (Closure $index, bool $stored): void {
     [$inner, $cleanup] = $index();
     $spy = new SpyLabelIndex($inner);
     app()->instance(ICacheLabelIndex::class, $spy);
     Setting::factory()->persistedWithoutApprovalCapture()->create();
     $this->actingAs(crudResponseCacheSuperadmin());
-    // A morphTo segment names no table before the query.
+    // A morphTo segment names no table before the query: only an index that checks the labels found after the query
+    // at the store may keep the response; a counter index fixes its key at the lookup.
     $url = crudResponseCacheSettingsUrl(['relations' => ['modifications.modifiable']]);
 
     try {
@@ -336,10 +351,10 @@ it('never stores a response whose dependencies are incomplete', function (Closur
         $cleanup();
     }
 
-    expect($second_queries)->toBeGreaterThan(0)
-        ->and(crudResponseCacheStores($spy))->toBe([]);
+    expect($second_queries > 0)->toBe(! $stored)
+        ->and(crudResponseCacheStores($spy))->toHaveCount($stored ? 1 : 0);
 })->with([
-    'membership index' => [static fn (): array => [new ArrayLabelIndex(), static fn (): null => null]],
+    'membership index' => [static fn (): array => [new ArrayLabelIndex(), static fn (): null => null], true],
     'counter index' => [static function (): array {
         $directory = storage_path('framework/testing/crud-response-cache-' . uniqid());
 
@@ -347,7 +362,7 @@ it('never stores a response whose dependencies are incomplete', function (Closur
             CacheLabelIndexFactory::forStore(new Repository(new FileStore(new Filesystem(), $directory))),
             static fn (): bool => (new Filesystem())->deleteDirectory($directory),
         ];
-    }],
+    }, false],
 ]);
 
 it('stores a complete response on a counter index', function (): void {

@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\App;
 use InvalidArgumentException;
 use Laravel\Sanctum\PersonalAccessToken;
 use Modules\Core\Cache\Labels\CacheScope;
+use Modules\Core\Cache\Labels\PendingLabelFlushes;
 use Modules\Core\Cache\Repository;
 use Modules\Core\Casts\CrudRequestData;
 use Modules\Core\Casts\DetailRequestData;
@@ -29,7 +30,7 @@ use Symfony\Component\HttpFoundation\Response;
  * A response is cached when the main model uses {@see \Modules\Core\Cache\HasCache} and the dependencies of the
  * request are complete. It is stored under a key built from the request ({@see keyFor()}) with the labels of
  * {@see CrudCacheDependencyResolver}, for the default ttl ({@see Repository::resolveDefaultCacheSeconds()}), and only
- * when its status is 200. A hit still runs the permission check of the operation before it is returned. When the
+ * when its status is 200 and the connection of the model has no transaction open. A hit still runs the permission check of the operation before it is returned. When the
  * index keeps nothing (a failover cache while Redis is down, the null store) every read is computed.
  */
 final readonly class CrudResponseCache
@@ -58,7 +59,7 @@ final readonly class CrudResponseCache
         $role_keys = $user instanceof User ? CacheScope::roleKeys($user) : [];
 
         try {
-            $dependencies = $this->resolver->forRequest($model, $request_data, $user, self::readsOneRecord($request_data), $role_keys);
+            $dependencies = $this->resolver->forRequest($model, $request_data, $user, self::readsOneRecord($request_data), $role_keys, $this->index->supportsRowLabels());
         } catch (InvalidArgumentException) {
             // A name that is not a relation: the read refuses it itself, after its permission check, so a caller
             // without the permission is told 403 rather than which names exist.
@@ -80,13 +81,18 @@ final readonly class CrudResponseCache
         $result = $compute();
         $response = $render($result);
 
-        if ($response->getStatusCode() === Response::HTTP_OK) {
-            $this->index->store(
-                $lookup,
-                self::snapshot($response),
-                Repository::resolveDefaultCacheSeconds(),
-                $this->resolver->rowLabels($model, $dependencies, $result->data),
-            );
+        // A read inside a transaction may come from a snapshot older than the lookup, which a flush cannot refuse.
+        if ($response->getStatusCode() !== Response::HTTP_OK || PendingLabelFlushes::inTransaction($model->getConnection())) {
+            return $response;
+        }
+
+        // An index without row labels keeps nothing known after the query: its key was fixed at the lookup.
+        $labels_after_query = $this->index->supportsRowLabels()
+            ? $this->resolver->labelsAfterQuery($model, $request_data, $dependencies, $result->data)
+            : [];
+
+        if ($labels_after_query !== null) {
+            $this->index->store($lookup, self::snapshot($response), Repository::resolveDefaultCacheSeconds(), $labels_after_query);
         }
 
         return $response;

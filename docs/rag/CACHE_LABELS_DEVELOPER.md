@@ -50,10 +50,10 @@ counts hits, misses and flushes. Callers never branch on the driver.
 
 | Store | Index | Row labels | Behaviour |
 |---|---|---|---|
-| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one store window after the flush | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it deletes the entries and removes them from the sets, then records the flush time of every label (deletes first, so a Redis over `maxmemory` with `noeviction`, which refuses a script whose first write is a `SET`, still deletes); labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
+| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one second after the largest store window in use | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it deletes the entries and removes them from the sets, then records the flush time of every label (deletes first, so a Redis over `maxmemory` with `noeviction`, which refuses a script whose first write is a `SET`, still deletes); labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
 | `array` | `ArrayLabelIndex`: in-process twin of the Redis index | yes | Same rules, lives for the process. |
-| `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. On `memcached` the index is guarded by `FailoverLabelIndex`: a flush the store refuses degrades it instead of failing the write. |
-| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below, on a lost connection of a `redis` or `database` first store, and on a flush a `memcached` first store refuses (see "Known limits"). A failover store without a `stores` list throws. |
+| `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A missing counter is created at a seed taken from the clock, at the lookup as at the flush, so a lost counter (evicted, lost with its memcached node, a deleted `database` row) restarts at a fresh value and orphans the entries of its old versions, never serves them again. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. On `memcached` the index is guarded by `FailoverLabelIndex` and checks the client's result code after every call: a read or a write a node failed degrades it instead of resolving every counter to one value or failing the write. |
+| `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below, on a lost connection of a `redis` or `database` first store, and on a call a `memcached` first store fails (see "Known limits"). A failover store without a `stores` list throws. |
 | `null` | `NullLabelIndex` | n/a | Nothing is stored; every lookup misses. |
 
 **Degraded mode.** A Redis index is always guarded by `FailoverLabelIndex`, with a plain `redis` store as with a
@@ -77,19 +77,30 @@ and a database exception Laravel's lost connection detector recognises (a failov
 Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in different
 hash slots.
 
-**Store window.** `core.cache.label_store_window` (seconds, default 60) bounds the time between the lookup and the
-store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. The flush
-records expire after the window plus one second, so every store they must refuse still finds them, and they take memory
-only for the labels flushed within the last window. Raise the window if a cached computation can take longer than a
-minute; a value that never fits is never cached, and nothing counts it: `store()` returns false and `cache:label-stats`
-shows only the misses, so an endpoint that is always recomputed looks like one that is often flushed.
+**Eviction policy.** The Redis of the index must run with `maxmemory-policy noeviction`. Under an `allkeys-*` policy a
+label set, kept without expiry, can be evicted, and a later flush of the label misses the entries it listed; under a
+`volatile-*` policy a flush record can be evicted before the stores it must refuse, and a value computed before the
+flush is stored after it. `cache:label-stats` prints a warning, and the hourly `cache:prune-labels` logs one, when the
+policy is another; it is read from `INFO memory`, or from `CONFIG GET maxmemory-policy` when INFO does not show it. A
+Redis with no memory limit (`maxmemory` 0) evicts nothing and is not warned about. A managed Redis that refuses `INFO`
+or `CONFIG` leaves the policy unknown and nothing is said; the refusal never degrades the index.
 
-Change the window on every host before relying on it, and flush `stored` after a raise: the flush records of a host
-still on the old window expire after that window, so a host on a longer one may accept a store the record should
-have refused. Lowering it is safe.
+**Store window.** `core.cache.label_store_window` (seconds, default 60) bounds the time between the lookup and the
+store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. Each
+process announces its window in the key `labelwindow` before its first lookup and then once per window; the key keeps
+the largest window announced (a lower one leaves it, an equal one extends it) and expires after two windows, so a window
+no process uses any more is dropped. A flush keeps its records for the larger of its own window and the announced one,
+plus one second, so every store they must refuse still finds them, whatever the window of the host that looked the
+value up, and they take memory only for the labels flushed within that window. Hosts may therefore run with different
+windows, during a rolling change of the setting as for good.
+
+Raise the window if a cached computation can take longer than a minute; a value that never fits is never cached, and
+nothing counts it: `store()` returns false and `cache:label-stats` shows only the misses, so an endpoint that is always
+recomputed looks like one that is often flushed.
 
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
-TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live. Core caches
+TTL, through the store's atomic `add`, at a seed taken from the clock (microseconds), so a counter never resets while
+entries of its versions live, and one lost anyway restarts above every value it held. Core caches
 nothing with `Cache::forever` outside the index except such counters: the outage marker of `FailoverLabelIndex` and
 the metadata generation of `DynamicContentsService`, whose entity, preset and presettable lists are kept in the index
 under the `dynamic_contents` label for `cache.duration.long`, under keys that embed the generation.
@@ -190,8 +201,12 @@ $report = resolve(LabelledCache::class)->remember(
 - `refresh()` takes the same arguments and computes and stores whatever the cache holds, for warmers.
 - `forget($key, $dependencies)` drops one value; pass the dependencies it was remembered with, since a version counter
   store embeds their versions in the stored key.
-- It stores nothing while a failover index is degraded, when a label was flushed while the value was computed, and
-  when the dependencies are incomplete.
+- It stores nothing while a failover index is degraded, when a label was flushed while the value was computed, when
+  the dependencies are incomplete, and while any connection has a transaction open (the `RefreshDatabase` wrapper of
+  a test aside): a read inside a transaction may come from a snapshot older than the lookup (REPEATABLE READ takes it
+  at the first read), and a flush committed between the two would not refuse the store. The value is still computed
+  and returned. A value stored by hand through the index should follow the same rule
+  (`PendingLabelFlushes::inTransaction()`).
 
 A value that carries row labels known only after the query (the CRUD response cache) uses the index directly, lookup,
 compute, store:
@@ -220,8 +235,10 @@ $index->store($lookup, $value, 300, [CacheLabel::row('core_users', $author->getK
 Notes:
 
 - `labels` are known before the query. `row_tables` names tables whose row labels the entry may carry; on a version
-  counter store they become table labels. The `row_labels` argument of `store()` carries the rows known only after the
-  query; stores without row labels ignore it.
+  counter store they become table labels. The `row_labels` argument of `store()` carries the labels known only after
+  the query: row labels, and, on an index with row labels, any other label (the CRUD cache passes the tables of the
+  `morphTo` targets it found). The store checks their flush records like those of the lookup labels. Stores without row
+  labels ignore it, so a value whose labels are known only after the query must not be stored there.
 - `store()` returns false and stores nothing when a label of the entry was flushed after the lookup started, or, on
   Redis, when the lookup started more than the store window ago; do not retry it.
 - The key you pass is not the key stored on a version counter store: use `$lookup->key` for `forget()`:
@@ -235,10 +252,10 @@ Notes:
 
 - `cache:prune-labels`: removes expired entries and memberships from the label sets. It is scheduled hourly with
   `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL. On
-  Redis it also deletes the `labelflush` hash the index kept before v1.81.0 (one hash of flush times, without expiry),
-  which nothing reads any more.
+  Redis it logs a warning when the eviction policy is not `noeviction` (see "Eviction policy").
 - `cache:label-stats`: a table of hits, misses (counted per first table label of the entry) and flushes per label,
-  read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Flushes count
+  read from the stats counters, after a warning when the Redis of the index may evict its keys (see "Eviction
+  policy"). Use it to decide whether a coarse table label deserves a narrower one. Flushes count
   flush calls: a transaction flushes once after its commit, whatever the number of its writes. Labels that grow with
   the data are counted in buckets: every row label of a table as `row:{table}:*`, every user label as `user:*`, so the
   counters stay as many as the tables and the fixed labels. On a Redis stats store the counters of one lookup or flush
@@ -272,10 +289,15 @@ until its TTL. The same goes for global scopes and appended accessors that read 
   that are not outages (a read-only replica, a deadlock avoided, access denied, a conflict with recovery). They degrade
   the index for at least a second and the recovery purges `stored`, which on a version counter store is every entry:
   over-invalidation, never a stale read.
-- A `memcached` store throws nothing when its server is down: reads miss and writes answer false. A flush whose
-  counter can be neither incremented nor created throws `LabelIndexUnavailableException`, so under a `failover` cache
-  the index degrades on the first refused flush and purges `stored` on recovery; until a flush is refused, the outage
-  only shows as misses.
+- A `memcached` store throws nothing when its server is down: reads miss and writes answer false, and a read that one
+  node of a pool failed answers every key as missing. The version counter index reads the client's result code after
+  every call, and any code but a success, a missing key, a refused add or an existing key throws
+  `LabelIndexUnavailableException`: the index (always guarded on memcached) degrades on the first failed read or write
+  and purges `stored` on recovery.
+- A lost version counter restarts at a seed taken from the clock: the entries of its old versions are orphaned and
+  recomputed (over-invalidation). On the array, file and Redis stores an increment creates a missing key at 1, so a
+  counter lost between the add and the increment of one flush restarts at 1; the flush adds before it increments, which
+  leaves only that race.
 - A Redis flush may delete an entry stored while the flush was paging its label (over-invalidation, never staleness).
 - After a Redis outage, a host that never saw the outage may serve entries stored before it until some host flushes
   `stored`.
@@ -292,7 +314,6 @@ until its TTL. The same goes for global scopes and appended accessors that read 
 - The ordering of lookups and flushes uses the clock of the one Redis primary. A Sentinel failover can lose flush
   records that were not replicated, and the new primary's clock may lag the old one's, so a store started before the
   failover may be accepted after a flush that should have refused it: flush `stored` after a Redis failover.
-- Upgrading from before v1.81.0 on Redis: while old and new workers run side by side (a multi-host deploy, queue workers
-  that restart only after their current job), an old worker records its flushes in the `labelflush` hash, which a new
-  worker's store does not read, so a new worker may store a value computed before an old worker's commit. Flush
-  `stored` (or clear the cache) once every worker runs the new version.
+- Upgrading from v1.80.x or older: old workers flush cache tags, not labels, so while old and new workers run side by
+  side (a multi-host deploy, queue workers that restart only after their current job) a write of an old worker does not
+  reach the entries a new worker stored. Flush `stored` (or clear the cache) once the last old worker has stopped.

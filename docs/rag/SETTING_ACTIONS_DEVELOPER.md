@@ -117,7 +117,11 @@ confirmation, for `features.embeddings.model` (`Modules/AI/docs/rag/MODULE.md`, 
 model switch*). Core registers one for every `versioning.strategy.{table}` setting
 (`Versioning\VersioningSettingConfirmation`): it warns when the value moves to off and does nothing in
 `confirmed()`, because the purge it announces is queued by `SettingObserver` on any save, not only a
-confirmed one (`MODULE.md`, *Switching versioning off and on*).
+confirmed one (`MODULE.md`, *Switching versioning off and on*). It registers one, the same way, for every
+`soft_deletes.enabled.{table}` setting (`SoftDeletes\SoftDeletesSettingConfirmation`), which tells how many rows of the
+table are in the bin (`MODULE.md`, *Switching soft deletes off and on*), and one for every `locking.enabled.{table}`
+setting (`Locking\LockingSettingConfirmation`), which tells how many records are locked
+(`RECORD_LOCKING_DEVELOPER.md`, *Switching locking off releases the locks*).
 
 ## Settings in queue workers
 

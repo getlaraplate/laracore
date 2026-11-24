@@ -194,14 +194,34 @@ it('flushes at once, through the index, a write with no transaction open', funct
     expect($this->index->flushes)->toBe([[CacheLabel::acl(), CacheLabel::user(5)], [CacheLabel::docs()]]);
 });
 
-it('forgets the labels collected in a request or job when its scope ends', function (): void {
+it('collects the labels of a new request or job apart from those its previous scope left', function (): void {
+    $role = makeLabelRole();
+    $permission = Permission::query()->create(['name' => 'label.perm.' . uniqid(), 'guard_name' => 'web']);
+    $this->index->flushes = [];
+    $connection = $role->getConnection();
     $first = resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class);
 
     expect(resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class))->toBe($first);
 
+    $connection->beginTransaction();
+    $role->update(['name' => 'left_by_the_scope_' . uniqid()]);
+
     app()->forgetScopedInstances();
 
     expect(resolve(Modules\Core\Cache\Labels\PendingLabelFlushes::class))->not->toBe($first);
+
+    $connection->transaction(static function () use ($permission): void {
+        $permission->update(['name' => 'label.scope.' . uniqid()]);
+    });
+    $connection->commit();
+
+    $role_labels = [CacheLabel::table($role->getTable()), CacheLabel::row($role->getTable(), $role->getKey())];
+    $permission_row = CacheLabel::row($permission->getTable(), $permission->getKey());
+    $new_scope = array_values(array_filter($this->index->flushes, static fn (array $labels): bool => in_array($permission_row, $labels, true)));
+
+    expect($new_scope)->toHaveCount(1)
+        ->and(array_intersect($new_scope[0], $role_labels))->toBe([])
+        ->and($this->index->flushedLabels())->toContain(...$role_labels);
 });
 
 it('flushes the labels of a whole transaction once after the commit, deduplicated', function (): void {

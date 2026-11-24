@@ -33,19 +33,23 @@ it('never hits with the null index', function (): void {
 });
 
 it('moves a table counter once for its table, row and rows labels flushed together', function (): void {
+    $this->freezeTime();
     $cache = new Repository(new ArrayStore());
     $index = new VersionCounterLabelIndex($cache);
+    $index->flush('table:core_users');
+    $created = $cache->get('labelv:table:core_users');
 
     $index->flush('table:core_users', 'row:core_users:5', 'rows:core_users');
 
-    expect($cache->get('labelv:table:core_users'))->toBe(1)
+    expect($cache->get('labelv:table:core_users'))->toBe($created + 1)
         ->and($cache->get('labelv:rows:core_users'))->toBeNull();
 });
 
-it('creates a missing counter through the atomic add of the store, with a ttl longer than any entry', function (): void {
+it('creates a missing counter at a seed, through the atomic add of the store, with a ttl longer than any entry', function (): void {
+    $this->freezeTime();
     $cache = Mockery::mock(Illuminate\Contracts\Cache\Repository::class);
-    $cache->shouldReceive('increment')->once()->with('labelv:table:core_users')->andReturn(false);
-    $cache->shouldReceive('add')->once()->with('labelv:table:core_users', 1, Mockery::on(static fn (mixed $ttl): bool => is_int($ttl) && $ttl >= 86400 * 365))->andReturn(true);
+    $cache->shouldNotReceive('increment');
+    $cache->shouldReceive('add')->once()->with('labelv:table:core_users', Modules\Core\Cache\Labels\Clock::micros(), Mockery::on(static fn (mixed $ttl): bool => is_int($ttl) && $ttl >= 86400 * 365))->andReturn(true);
 
     new VersionCounterLabelIndex($cache)->flush('table:core_users');
 });
