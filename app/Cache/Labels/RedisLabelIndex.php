@@ -44,12 +44,6 @@ final class RedisLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
     private const string WINDOW_KEY = 'labelwindow';
 
     /**
-     * The single hash of flush times the index wrote before v1.81.0, with no expiry. Nothing reads it any more:
-     * {@see pruneStale()} deletes it.
-     */
-    private const string LEGACY_FLUSHED_HASH = 'labelflush';
-
-    /**
      * Page size for every PHP-driven loop, so no single Redis command or script does unbounded work.
      */
     private const int CHUNK = 1000;
@@ -259,10 +253,6 @@ LUA;
     {
         $connection = $this->store->connection();
         $now = $this->serverMicros($connection);
-
-        // Left by the index before v1.81.0, which kept every flush time in one hash without expiry.
-        $connection->del($this->store->getPrefix() . self::LEGACY_FLUSHED_HASH);
-
         $client_prefix = $this->connectionPrefix($connection);
         $prefix = $this->store->getPrefix();
         $seen = [];

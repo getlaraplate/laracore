@@ -238,9 +238,7 @@ Notes:
 ## Commands
 
 - `cache:prune-labels`: removes expired entries and memberships from the label sets. It is scheduled hourly with
-  `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL. On
-  Redis it also deletes the `labelflush` hash the index kept before v1.81.0 (one hash of flush times, without expiry),
-  which nothing reads any more.
+  `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL.
 - `cache:label-stats`: a table of hits, misses (counted per first table label of the entry) and flushes per label,
   read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Flushes count
   flush calls: a transaction flushes once after its commit, whatever the number of its writes. Labels that grow with
@@ -296,7 +294,6 @@ until its TTL. The same goes for global scopes and appended accessors that read 
 - The ordering of lookups and flushes uses the clock of the one Redis primary. A Sentinel failover can lose flush
   records that were not replicated, and the new primary's clock may lag the old one's, so a store started before the
   failover may be accepted after a flush that should have refused it: flush `stored` after a Redis failover.
-- Upgrading from before v1.81.0 on Redis: while old and new workers run side by side (a multi-host deploy, queue workers
-  that restart only after their current job), an old worker records its flushes in the `labelflush` hash, which a new
-  worker's store does not read, so a new worker may store a value computed before an old worker's commit. Flush
-  `stored` (or clear the cache) once every worker runs the new version.
+- Upgrading from v1.80.x or older: old workers flush cache tags, not labels, so while old and new workers run side by
+  side (a multi-host deploy, queue workers that restart only after their current job) a write of an old worker does not
+  reach the entries a new worker stored. Flush `stored` (or clear the cache) once the last old worker has stopped.
