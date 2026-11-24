@@ -241,6 +241,21 @@ table whose models (`Support\TableModels`, every concrete model of `models()` on
 `model:soft-deletes-remove`; a table with such a model follows the model's own reading of the setting; a table no
 model reads follows the setting alone.
 
+**Switching soft deletes off and on.** A `soft_deletes.enabled.{table}` setting moved from on to off deletes the rows
+of the table in the bin for good: the scope that hides them does not read the setting, so they would otherwise stay
+hidden forever. Any save that switches it off (the settings page, the CRUD API, an approved modification, a command)
+makes `SettingObserver` queue `PurgeTrashedRowsJob` after the commit; the job reads the setting again and does nothing
+when soft deletes are back on, so switching on before it runs keeps the rows. Otherwise `SoftDeletes\TrashedRowsPurger`
+deletes each row in the bin (`deleted_at` set or `is_deleted` true) on its own, through the table's model, in chunks of
+100: `forceDelete()`, so `forceDeleted` runs and the row's media and embeddings leave with it, and a versioned record
+keeps its snapshot set. Live rows and other tables are untouched; switching back on purges nothing. The settings page
+asks first through `SoftDeletesSettingConfirmation` (registered by `CoreServiceProvider`), which shows the number of
+rows in the bin; cancelling saves nothing. From the terminal, `model:soft-deletes-refresh` shows the same warning
+before it aligns the setting of a model without the trait to off, and a refusal changes nothing;
+`model:soft-deletes-remove` asks before it purges (see the command list). No other command writes the setting.
+Pinned in `tests/Integration/SoftDeletes/SoftDeletesSwitchTest.php` and
+`tests/Feature/Filament/SoftDeletesSwitchConfirmationTest.php`.
+
 **Switching versioning off and on.** A `versioning.strategy.{table}` setting with no value, `false` or an empty string means the table is not versioned (`VersionStrategy::fromSetting()`); any other value must be `DIFF` or `SNAPSHOT`. Switching a table off deletes its edit history: when a save moves the value from a strategy to off, from the settings page, the CRUD API or an approved modification, `SettingObserver` queues `PurgeVersionHistoryJob` after the commit. The job reads the setting again and does nothing when it is back on, so switching on before it runs keeps the history; otherwise `VersionHistoryPurger` deletes, by chunks of 500, every version set of the table (`root_table_ref`) except the hard-delete snapshot sets (a set with a `deleted` row of the root itself, `relation_path` null), and their rows go with them. Records deleted for good can therefore still be recovered; every other revision of the table, translations and links included, is gone and cannot be restored. Only the settings page asks first: `VersioningSettingConfirmation`, registered by `CoreServiceProvider` in `SettingChangeConfirmations`, shows how many revisions and version rows will be deleted and that the snapshots of deleted records are kept. Switched back on, the table starts a new history with no backfill: a record gets a baseline at its first save (the creation set of a new record, otherwise a `baseline` set carrying the image of the aggregate, since `BaselinePolicy` finds no complete anchor), and a record never saved since has no versions and no current revision. Moving from `DIFF` to `SNAPSHOT` or back deletes nothing. Pinned in `tests/Integration/Versioning/VersioningSwitchTest.php`.
 
 ```mermaid

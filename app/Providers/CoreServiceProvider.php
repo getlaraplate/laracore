@@ -133,14 +133,15 @@ use Modules\Core\Services\SettingChangeConfirmations;
 use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Services\StubOutboxPublisher;
 use Modules\Core\SoftDeletes\SoftDeletes;
+use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
 use Modules\Core\Support\Env\ConfigCacheRefresher;
 use Modules\Core\Support\OwnerTimestamp;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\VersionEpochs;
+use Modules\Core\Versioning\VersioningSettingConfirmation;
 use Modules\Core\Versioning\VersionSetManager;
 use Modules\Core\Versioning\VersionWriter;
-use Modules\Core\Versioning\VersioningSettingConfirmation;
 use Nwidart\Modules\Module as NwidartModule;
 use Override;
 use PDO;
@@ -191,6 +192,8 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         // Switching a table's versioning off deletes its edit history: the settings page asks first (D22).
         $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(VersioningSettingConfirmation::class));
+        // Switching a table's soft deletes off deletes the rows in its bin for good: the settings page asks first.
+        $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(SoftDeletesSettingConfirmation::class));
 
         $this->registerAuths();
         $this->registerMiddlewares();

@@ -61,3 +61,8 @@ shows how many revisions will be deleted. Once you confirm, the edit history of 
 background and cannot be restored; the snapshots of records deleted for good are kept, so those records can still
 be recovered. If you switch versioning back on before the deletion runs, the history is kept. Switched back on
 later, versioning starts a new history: each record gets its first version at its next save.
+
+Switching soft deletes off for a table (`soft_deletes.enabled.{table}` set to `false`) asks first too. The window
+shows how many records of that table are in the bin. Once you confirm, they are deleted for good in the background
+and cannot be restored, and from then on deleting a record of the table deletes it for good. If you switch soft
+deletes back on before the deletion runs, the records stay in the bin. Cancelling the window changes nothing.
