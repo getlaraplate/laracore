@@ -228,30 +228,6 @@ trait HasTable
             ->deferColumnManager(true);
     }
 
-    private static function loadUserPermissionsForTable(?User $user): void
-    {
-        if (! $user instanceof User) {
-            return;
-        }
-
-        // Eager load dei permessi e ruoli per evitare N+1 queries
-        $user->loadMissing([
-            'permissions',
-            'roles.permissions',
-        ]);
-    }
-
-    private static function checkPermissionCached(?User $user, string $permission): bool
-    {
-        if (! $user instanceof User) {
-            return false;
-        }
-
-        // Memoized for the current request only. Capturing $user is safe because
-        // User implements HasOnceHash, so the memo key is the user identity.
-        return once(fn (): bool => $user->can($permission));
-    }
-
     /**
      * Whether the signed-in user holds the `update` permission of the record's table.
      */
@@ -280,6 +256,30 @@ trait HasTable
             ->alignCenter()
             ->grow(false)
             ->disabled(static fn (Model $record): bool => ! self::canUpdateRecord($record));
+    }
+
+    private static function loadUserPermissionsForTable(?User $user): void
+    {
+        if (! $user instanceof User) {
+            return;
+        }
+
+        // Eager load dei permessi e ruoli per evitare N+1 queries
+        $user->loadMissing([
+            'permissions',
+            'roles.permissions',
+        ]);
+    }
+
+    private static function checkPermissionCached(?User $user, string $permission): bool
+    {
+        if (! $user instanceof User) {
+            return false;
+        }
+
+        // Memoized for the current request only. Capturing $user is safe because
+        // User implements HasOnceHash, so the memo key is the user identity.
+        return once(fn (): bool => $user->can($permission));
     }
 
     private static function configureColumns(
