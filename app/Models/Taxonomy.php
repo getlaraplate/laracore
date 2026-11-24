@@ -13,6 +13,7 @@ use Illuminate\Support\Collection;
 use Modules\Core\Contracts\IActivatableModel;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Contracts\ILockableModel;
+use Modules\Core\Contracts\ITranslatableModel;
 use Modules\Core\Contracts\IValidatableModel;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\LocaleContext;
@@ -52,7 +53,7 @@ use Spatie\EloquentSortable\Sortable;
  * @property string|null $slug
  * @property array<array-key, mixed>|null $components
  */
-abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, IValidatableModel, Sortable
+abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, ITranslatableModel, IValidatableModel, Sortable
 {
     // region Traits
     use HasActivation {
