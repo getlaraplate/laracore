@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Casts\EntityType;
 use App\Models\Pivot\Presettable as AppPresettable;
 use App\Models\Preset as AppPreset;
+use Modules\Core\Models\Pivot\Presettable;
+use Modules\Core\Models\Preset;
 use Modules\Core\Services\DynamicContentsService;
 use Modules\Core\Tests\Support\AppDynamicEntities;
 
@@ -39,4 +41,31 @@ it('fetches the presettables of an App type as App presettables', function (): v
 
     expect($presettables)->not->toBeEmpty()
         ->and($presettables->first())->toBeInstanceOf(AppPresettable::class);
+});
+
+/**
+ * The same-module mapping serves modules that declare their own dynamic entity types (CMS, for one); Core declares none,
+ * so no public path reaches it from Core's tests and the private resolver is called directly.
+ *
+ * @return class-string
+ */
+function dynamic_contents_invoke_get_module_model_class(string $local_class, string $target_class): string
+{
+    $ref = new ReflectionClass(DynamicContentsService::class);
+    $method = $ref->getMethod('getModuleModelClass');
+    $method->setAccessible(true);
+
+    return $method->invoke(DynamicContentsService::getInstance(), $local_class, $target_class);
+}
+
+it('maps module target model to the local module namespace', function (): void {
+    $resolved = dynamic_contents_invoke_get_module_model_class(Preset::class, Preset::class);
+
+    expect($resolved)->toBe(Preset::class);
+});
+
+it('returns the target class unchanged when local and target share the same module', function (): void {
+    $resolved = dynamic_contents_invoke_get_module_model_class(Presettable::class, Presettable::class);
+
+    expect($resolved)->toBe(Presettable::class);
 });
