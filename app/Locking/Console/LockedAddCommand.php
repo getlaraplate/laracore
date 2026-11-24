@@ -61,6 +61,10 @@ class LockedAddCommand extends Command
         $instance = new ReflectionClass($className)->newInstanceWithoutConstructor();
         assert($instance instanceof Model);
 
+        if (! $this->beforeChanges($instance)) {
+            return BaseCommand::FAILURE;
+        }
+
         $table = $instance->getTable();
         $module = class_module($instance);
 
@@ -133,6 +137,14 @@ class LockedAddCommand extends Command
     public function getStubPath(): string
     {
         return module_path('Core', sprintf('app/Locking/Stubs/%s_locked_column_to_table.stub', $this->operation));
+    }
+
+    /**
+     * Runs before the command changes anything; false stops it with nothing changed.
+     */
+    protected function beforeChanges(Model $instance): bool
+    {
+        return true;
     }
 
     /**

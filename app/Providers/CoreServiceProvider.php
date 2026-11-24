@@ -99,6 +99,7 @@ use Modules\Core\Listeners\SendImportFinishedNotification;
 use Modules\Core\Locking\Console\ModelLockSweepCommand;
 use Modules\Core\Locking\LockAwareUserProvider;
 use Modules\Core\Locking\Locked;
+use Modules\Core\Locking\LockingSettingConfirmation;
 use Modules\Core\Models\CronJob;
 use Modules\Core\Models\License;
 use Modules\Core\Models\User as CoreUser;
@@ -194,6 +195,8 @@ final class CoreServiceProvider extends ModuleServiceProvider
         $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(VersioningSettingConfirmation::class));
         // Switching a table's soft deletes off deletes the rows in its bin for good: the settings page asks first.
         $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(SoftDeletesSettingConfirmation::class));
+        // Switching a table's record locking off releases every lock of the table: the settings page asks first.
+        $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(LockingSettingConfirmation::class));
 
         $this->registerAuths();
         $this->registerMiddlewares();

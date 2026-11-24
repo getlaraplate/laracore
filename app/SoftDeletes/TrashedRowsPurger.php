@@ -7,6 +7,7 @@ namespace Modules\Core\SoftDeletes;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as EloquentSoftDeletes;
+use Modules\Core\Support\PlainTableModel;
 use Modules\Core\Support\TableModels;
 
 /**
@@ -80,7 +81,7 @@ final readonly class TrashedRowsPurger
      */
     public function purgeTable(string $table): int
     {
-        return $this->purge($this->modelOf($table) ?? new TrashedRowsTable($table));
+        return $this->purge($this->modelOf($table) ?? new PlainTableModel($table));
     }
 
     /**

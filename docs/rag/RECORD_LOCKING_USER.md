@@ -81,6 +81,11 @@ to unblock a colleague are different responsibilities, and often different peopl
 Releasing a record that is not locked is not an error. Nothing happens and nothing is reported as
 having changed.
 
+Switching record locking off for a table (`locking.enabled.{table}` set to `false` on the settings page)
+releases every lock of that table. The page asks first and says how many records are locked; cancelling
+changes nothing. No record is deleted: the locks are released in the background, and switching locking
+back on before that runs keeps them.
+
 ## API
 
 Both verbs are `PATCH` on `/app/crud/{lock|unlock}/{module}/{entity}`, with the record id in the

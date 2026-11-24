@@ -6,6 +6,8 @@ namespace Modules\Core\Observers;
 
 use Modules\Core\Jobs\PurgeTrashedRowsJob;
 use Modules\Core\Jobs\PurgeVersionHistoryJob;
+use Modules\Core\Jobs\ReleaseLocksJob;
+use Modules\Core\Locking\LockingSettingConfirmation;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
@@ -26,6 +28,7 @@ final class SettingObserver
 
         $this->purgeHistoryWhenVersioningSwitchesOff($setting);
         $this->purgeTrashedRowsWhenSoftDeletesSwitchOff($setting);
+        $this->releaseLocksWhenLockingSwitchesOff($setting);
     }
 
     public function deleted(Setting $setting): void
@@ -69,5 +72,23 @@ final class SettingObserver
         }
 
         PurgeTrashedRowsJob::dispatch($table, $setting->name)->afterCommit();
+    }
+
+    /**
+     * A save that switches a table's record locking off releases every lock of the table, whatever made it. The
+     * release is queued after the commit and checks the setting again when it runs.
+     */
+    private function releaseLocksWhenLockingSwitchesOff(Setting $setting): void
+    {
+        $table = LockingSettingConfirmation::tableOf($setting->name);
+
+        if ($table === null
+            || ! $setting->wasChanged('value')
+            || ! LockingSettingConfirmation::isOff($setting->value)
+            || LockingSettingConfirmation::isOff($setting->getOriginal('value'))) {
+            return;
+        }
+
+        ReleaseLocksJob::dispatch($table, $setting->name)->afterCommit();
     }
 }
