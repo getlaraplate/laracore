@@ -10,6 +10,7 @@ use Illuminate\Database\LostConnectionDetector;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IReportsCacheEvictionPolicy;
 use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use PDOException;
@@ -37,7 +38,7 @@ use Throwable;
  * misses and failed writes): it degrades on the first flush its counters refuse
  * ({@see VersionCounterLabelIndex::flush()}), not on reads, see "Known limits" in `CACHE_LABELS_DEVELOPER.md`.
  */
-final class FailoverLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
+final class FailoverLabelIndex implements ICacheLabelIndex, IReportsCacheEvictionPolicy, IResolvesCacheLabelKeys
 {
     public const string MARKER_KEY = 'cache-labels:degraded';
 
@@ -118,6 +119,19 @@ final class FailoverLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelK
     public function supportsRowLabels(): bool
     {
         return $this->primary->supportsRowLabels();
+    }
+
+    /**
+     * The policy of the primary; null while it is down or when it cannot tell.
+     */
+    #[Override]
+    public function evictionPolicy(): ?string
+    {
+        if (! $this->primary instanceof IReportsCacheEvictionPolicy) {
+            return null;
+        }
+
+        return $this->guard(fn (): ?string => $this->primary->evictionPolicy(), static fn (): null => null);
     }
 
     /**

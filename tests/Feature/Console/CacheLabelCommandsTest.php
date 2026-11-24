@@ -110,3 +110,67 @@ it('stops counting for a minute after a stats failure, then counts again', funct
 
     Illuminate\Support\Facades\Exceptions::assertReportedCount(1);
 });
+
+/**
+ * The measured Redis index of production, on a connection that answers INFO memory and CONFIG GET with the replies
+ * given (an exception is thrown).
+ */
+function cacheLabelCommandsRedisIndex(mixed $info, mixed $config): MeasuredLabelIndex
+{
+    $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
+    $connection->shouldReceive('command')->with('info', ['memory'])->andReturn($info);
+    $connection->shouldReceive('command')->with('config', ['get', 'maxmemory-policy'])->andReturnUsing(
+        static fn (): mixed => $config instanceof Throwable ? throw $config : $config,
+    );
+    $store = Mockery::mock(Illuminate\Cache\RedisStore::class);
+    $store->shouldReceive('connection')->andReturn($connection);
+    $store->shouldReceive('getPrefix')->andReturn('');
+    $marker = new Modules\Core\Cache\Repository(new Illuminate\Cache\ArrayStore());
+    $stats = Cache::store('array');
+    $stats->flush();
+
+    return new MeasuredLabelIndex(new Modules\Core\Cache\Labels\FailoverLabelIndex(new Modules\Core\Cache\Labels\RedisLabelIndex($store), $marker), $stats);
+}
+
+it('warns when the Redis of the label index may evict its keys', function (mixed $info, mixed $config, string $policy): void {
+    $this->app->instance(ICacheLabelIndex::class, cacheLabelCommandsRedisIndex($info, $config));
+
+    $this->artisan('cache:label-stats')
+        ->expectsOutputToContain('maxmemory-policy [' . $policy . ']')
+        ->assertSuccessful();
+})->with([
+    'from INFO memory (phpredis)' => [['maxmemory_policy' => 'allkeys-lru'], null, 'allkeys-lru'],
+    'from INFO memory (Predis)' => [['Memory' => ['maxmemory_policy' => 'volatile-ttl']], null, 'volatile-ttl'],
+    'from CONFIG GET (phpredis)' => [[], ['maxmemory-policy' => 'volatile-lru'], 'volatile-lru'],
+    'from CONFIG GET (list reply)' => [false, ['maxmemory-policy', 'allkeys-random'], 'allkeys-random'],
+]);
+
+it('does not warn when Redis evicts nothing or the policy cannot be read', function (mixed $info, mixed $config): void {
+    $this->app->instance(ICacheLabelIndex::class, cacheLabelCommandsRedisIndex($info, $config));
+
+    $this->artisan('cache:label-stats')
+        ->doesntExpectOutputToContain('maxmemory-policy')
+        ->assertSuccessful();
+})->with([
+    'noeviction' => [['maxmemory_policy' => 'noeviction'], null],
+    'CONFIG refused' => [[], new RuntimeException('ERR unknown command CONFIG')],
+    'CONFIG answering nothing' => [[], false],
+]);
+
+it('logs the eviction warning when it prunes, the scheduled run reporting it once an hour', function (): void {
+    $this->app->instance(ICacheLabelIndex::class, new Modules\Core\Tests\Stubs\Cache\EvictionPolicyLabelIndex('allkeys-lru'));
+    Illuminate\Support\Facades\Log::spy();
+
+    $this->artisan('cache:prune-labels')->expectsOutputToContain('allkeys-lru')->assertSuccessful();
+
+    Illuminate\Support\Facades\Log::shouldHaveReceived('warning')->once();
+});
+
+it('logs nothing when it prunes a store that evicts nothing or cannot tell', function (?string $policy): void {
+    $this->app->instance(ICacheLabelIndex::class, new Modules\Core\Tests\Stubs\Cache\EvictionPolicyLabelIndex($policy));
+    Illuminate\Support\Facades\Log::spy();
+
+    $this->artisan('cache:prune-labels')->assertSuccessful();
+
+    Illuminate\Support\Facades\Log::shouldNotHaveReceived('warning');
+})->with(['noeviction' => 'noeviction', 'unknown' => null]);

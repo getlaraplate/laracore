@@ -9,6 +9,7 @@ use Illuminate\Cache\Repository as BaseRepository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IReportsCacheEvictionPolicy;
 use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use Throwable;
@@ -27,7 +28,7 @@ use Throwable;
  * minute, after which it tries again (a long-lived Octane or queue worker resumes counting once the store is back), and
  * nothing is counted while a guarded index is degraded. It never fails the read or the write it measures.
  */
-final class MeasuredLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
+final class MeasuredLabelIndex implements ICacheLabelIndex, IReportsCacheEvictionPolicy, IResolvesCacheLabelKeys
 {
     private const string PREFIX = 'labelstats:';
 
@@ -117,6 +118,12 @@ LUA;
     public function supportsRowLabels(): bool
     {
         return $this->inner->supportsRowLabels();
+    }
+
+    #[Override]
+    public function evictionPolicy(): ?string
+    {
+        return $this->inner instanceof IReportsCacheEvictionPolicy ? $this->inner->evictionPolicy() : null;
     }
 
     /**

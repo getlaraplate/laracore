@@ -8,9 +8,11 @@ use Illuminate\Cache\RedisStore;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Contracts\IReportsCacheEvictionPolicy;
 use Modules\Core\Contracts\IResolvesCacheLabelKeys;
 use Override;
 use Redis;
+use Throwable;
 
 /**
  * Membership index on Redis. Every cached key is a member of one sorted set per label
@@ -32,7 +34,7 @@ use Redis;
  * Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in
  * different hash slots.
  */
-final class RedisLabelIndex implements ICacheLabelIndex, IResolvesCacheLabelKeys
+final class RedisLabelIndex implements ICacheLabelIndex, IReportsCacheEvictionPolicy, IResolvesCacheLabelKeys
 {
     private const string LABEL_KEY = 'label:';
 
@@ -291,6 +293,62 @@ LUA;
     public function supportsRowLabels(): bool
     {
         return true;
+    }
+
+    /**
+     * `maxmemory_policy` of `INFO memory`, or, when INFO does not show it, `CONFIG GET maxmemory-policy`, which a
+     * managed Redis may refuse: a refusal leaves the policy unknown.
+     */
+    #[Override]
+    public function evictionPolicy(): ?string
+    {
+        $connection = $this->store->connection();
+        $policy = self::infoField($connection->command('info', ['memory']), 'maxmemory_policy');
+
+        if ($policy !== null) {
+            return $policy;
+        }
+
+        try {
+            $config = $connection->command('config', ['get', 'maxmemory-policy']);
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! is_array($config)) {
+            return null;
+        }
+
+        // phpredis answers a map, Predis may answer the flat list of names and values.
+        $value = $config['maxmemory-policy'] ?? (($config[0] ?? null) === 'maxmemory-policy' ? $config[1] ?? null : null);
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * A field of an INFO reply: flat (phpredis) or grouped by section (Predis).
+     */
+    private static function infoField(mixed $info, string $field): ?string
+    {
+        if (! is_array($info)) {
+            return null;
+        }
+
+        $value = $info[$field] ?? null;
+
+        if (is_string($value) && $value !== '') {
+            return $value;
+        }
+
+        foreach ($info as $section) {
+            $value = is_array($section) ? $section[$field] ?? null : null;
+
+            if (is_string($value) && $value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -77,6 +77,13 @@ and a database exception Laravel's lost connection detector recognises (a failov
 Redis Cluster is not supported: the store and flush scripts touch an entry and its label sets, which live in different
 hash slots.
 
+**Eviction policy.** The Redis of the index must run with `maxmemory-policy noeviction`. Under an `allkeys-*` policy a
+label set, kept without expiry, can be evicted, and a later flush of the label misses the entries it listed; under a
+`volatile-*` policy a flush record can be evicted before the stores it must refuse, and a value computed before the
+flush is stored after it. `cache:label-stats` prints a warning, and the hourly `cache:prune-labels` logs one, when the
+policy is another; it is read from `INFO memory`, or from `CONFIG GET maxmemory-policy` when INFO does not show it (a
+managed Redis that refuses `CONFIG` leaves it unknown, and nothing is said).
+
 **Store window.** `core.cache.label_store_window` (seconds, default 60) bounds the time between the lookup and the
 store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. Each
 process announces its window in the key `labelwindow` before its first lookup and then once per window; the key keeps
@@ -238,9 +245,11 @@ Notes:
 ## Commands
 
 - `cache:prune-labels`: removes expired entries and memberships from the label sets. It is scheduled hourly with
-  `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL.
+  `onOneServer()` by `CoreServiceProvider`. It does nothing on version counter stores, where entries expire by TTL. On
+  Redis it logs a warning when the eviction policy is not `noeviction` (see "Eviction policy").
 - `cache:label-stats`: a table of hits, misses (counted per first table label of the entry) and flushes per label,
-  read from the stats counters. Use it to decide whether a coarse table label deserves a narrower one. Flushes count
+  read from the stats counters, after a warning when the Redis of the index may evict its keys (see "Eviction
+  policy"). Use it to decide whether a coarse table label deserves a narrower one. Flushes count
   flush calls: a transaction flushes once after its commit, whatever the number of its writes. Labels that grow with
   the data are counted in buckets: every row label of a table as `row:{table}:*`, every user label as `user:*`, so the
   counters stay as many as the tables and the fixed labels. On a Redis stats store the counters of one lookup or flush
