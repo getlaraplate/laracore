@@ -295,6 +295,20 @@ it('does not store a response whose status is not 200', function (int $status): 
     'not found' => Response::HTTP_NOT_FOUND,
 ]);
 
+it('computes but does not store a response read inside an open transaction, and stores it outside', function (): void {
+    Setting::factory()->persistedWithoutApprovalCapture()->create();
+    $this->actingAs(crudResponseCacheSuperadmin());
+    $url = crudResponseCacheSettingsUrl();
+
+    // A read inside a transaction may see a snapshot older than the lookup: a flush in between would not refuse it.
+    (new Setting())->getConnection()->transaction(fn (): TestResponse => $this->getJson($url)->assertOk());
+    $stores_inside = count(crudResponseCacheStores($this->index));
+    $this->getJson($url)->assertOk();
+
+    expect($stores_inside)->toBe(0)
+        ->and(crudResponseCacheStores($this->index))->toHaveCount(1);
+});
+
 it('bypasses the cache with no_cache', function (): void {
     Setting::factory()->persistedWithoutApprovalCapture()->create();
     $this->actingAs(crudResponseCacheSuperadmin());

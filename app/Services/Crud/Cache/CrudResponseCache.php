@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\App;
 use InvalidArgumentException;
 use Laravel\Sanctum\PersonalAccessToken;
 use Modules\Core\Cache\Labels\CacheScope;
+use Modules\Core\Cache\Labels\PendingLabelFlushes;
 use Modules\Core\Cache\Repository;
 use Modules\Core\Casts\CrudRequestData;
 use Modules\Core\Casts\DetailRequestData;
@@ -29,7 +30,7 @@ use Symfony\Component\HttpFoundation\Response;
  * A response is cached when the main model uses {@see \Modules\Core\Cache\HasCache} and the dependencies of the
  * request are complete. It is stored under a key built from the request ({@see keyFor()}) with the labels of
  * {@see CrudCacheDependencyResolver}, for the default ttl ({@see Repository::resolveDefaultCacheSeconds()}), and only
- * when its status is 200. A hit still runs the permission check of the operation before it is returned. When the
+ * when its status is 200 and the connection of the model has no transaction open. A hit still runs the permission check of the operation before it is returned. When the
  * index keeps nothing (a failover cache while Redis is down, the null store) every read is computed.
  */
 final readonly class CrudResponseCache
@@ -80,7 +81,8 @@ final readonly class CrudResponseCache
         $result = $compute();
         $response = $render($result);
 
-        if ($response->getStatusCode() !== Response::HTTP_OK) {
+        // A read inside a transaction may come from a snapshot older than the lookup, which a flush cannot refuse.
+        if ($response->getStatusCode() !== Response::HTTP_OK || PendingLabelFlushes::inTransaction($model->getConnection())) {
             return $response;
         }
 

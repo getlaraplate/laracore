@@ -13,7 +13,9 @@ use Modules\Core\Contracts\IResolvesCacheLabelKeys;
  *
  * It follows the rules of {@see ICacheLabelIndex}: the value is computed after the lookup, so a label flushed while it
  * was computed refuses the store (no stale write-back); a degraded failover index stores nothing; a value whose
- * dependencies are incomplete is never stored. Resolve it from the container: it holds no state of its own.
+ * dependencies are incomplete is never stored, nor is a value computed while a connection has a transaction open, whose
+ * reads may come from a snapshot older than the lookup ({@see PendingLabelFlushes::inTransaction()}). Resolve it from
+ * the container: it holds no state of its own.
  */
 final readonly class LabelledCache
 {
@@ -96,7 +98,7 @@ final readonly class LabelledCache
     {
         $value = $compute();
 
-        if ($lookup->dependencies->complete && ($cacheable === null || $cacheable($value))) {
+        if ($lookup->dependencies->complete && ($cacheable === null || $cacheable($value)) && ! PendingLabelFlushes::inTransaction()) {
             $this->index->store($lookup, $value, $ttl);
         }
 

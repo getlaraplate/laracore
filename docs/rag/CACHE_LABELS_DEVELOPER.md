@@ -199,8 +199,12 @@ $report = resolve(LabelledCache::class)->remember(
 - `refresh()` takes the same arguments and computes and stores whatever the cache holds, for warmers.
 - `forget($key, $dependencies)` drops one value; pass the dependencies it was remembered with, since a version counter
   store embeds their versions in the stored key.
-- It stores nothing while a failover index is degraded, when a label was flushed while the value was computed, and
-  when the dependencies are incomplete.
+- It stores nothing while a failover index is degraded, when a label was flushed while the value was computed, when
+  the dependencies are incomplete, and while any connection has a transaction open (the `RefreshDatabase` wrapper of
+  a test aside): a read inside a transaction may come from a snapshot older than the lookup (REPEATABLE READ takes it
+  at the first read), and a flush committed between the two would not refuse the store. The value is still computed
+  and returned. A value stored by hand through the index should follow the same rule
+  (`PendingLabelFlushes::inTransaction()`).
 
 A value that carries row labels known only after the query (the CRUD response cache) uses the index directly, lookup,
 compute, store:

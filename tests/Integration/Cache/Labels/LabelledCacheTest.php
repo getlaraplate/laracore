@@ -130,3 +130,26 @@ it('forgets the value of a version counter index under the key its counters give
 
     expect($cache->remember('k', ['t'], 60, static fn (): string => 'new'))->toBe('new');
 });
+
+it('computes but does not store a value inside an open transaction, and stores it outside', function (): void {
+    $index = new SpyLabelIndex();
+    $cache = new LabelledCache($index);
+    $calls = 0;
+    $compute = static function () use (&$calls): string {
+        $calls++;
+
+        return 'value';
+    };
+
+    // A read inside a transaction may see a snapshot older than the lookup: a flush in between would not refuse it.
+    $inside = Modules\Core\Models\Setting::query()->getConnection()->transaction(
+        static fn (): string => $cache->remember('k', [CacheLabel::docs()], 60, $compute),
+    );
+    $outside = $cache->remember('k', [CacheLabel::docs()], 60, $compute);
+    $cache->remember('k', [CacheLabel::docs()], 60, $compute);
+
+    expect($inside)->toBe('value')
+        ->and($outside)->toBe('value')
+        ->and($calls)->toBe(2)
+        ->and($index->stores)->toHaveCount(1);
+});

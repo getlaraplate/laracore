@@ -747,6 +747,8 @@ related rows leaves a filtered response stale until its TTL.
   a version counter index, whose key is fixed at the lookup, a request through a `morphTo` is never stored, nor is a
   history read that displays one (its payload holds no model to label);
 - the response status is 200;
+- the connection of the model has no transaction open (the `RefreshDatabase` wrapper of a test aside): a read inside a
+  transaction may come from a snapshot older than the lookup, which a flush committed in between could not refuse;
 - no label it carries was flushed while it was being computed (a reader that computed from old rows stores nothing).
 
 The entry lives for the default duration (`Repository::resolveDefaultCacheSeconds()`, from `cache.duration`). It is
