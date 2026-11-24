@@ -7,10 +7,13 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Setting;
 use Modules\Core\Models\User;
 use Modules\Core\Models\Version;
 use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Tests\Stubs\Versioning\VersionedArticle;
 use Modules\Core\Tests\Unit\Helpers\VersionableStub;
 
@@ -196,7 +199,7 @@ it('uses prefixed grouped settings cache key when resolving version strategy', f
     Illuminate\Support\Facades\Cache::flush();
     app(PerModelSettingResolver::class)->flush();
 
-    Modules\Core\Models\Setting::factory()
+    Setting::factory()
         ->persistedWithoutApprovalCapture()
         ->create([
             'group_name' => 'versioning',
@@ -243,7 +246,7 @@ it('invalidates the versioning group settings cache when a versioning Setting is
 
     expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeTrue();
 
-    $setting = Modules\Core\Models\Setting::factory()
+    $setting = Setting::factory()
         ->persistedWithoutApprovalCapture()
         ->make(['group_name' => 'versioning', 'name' => 'versioning.strategy.' . fake()->unique()->lexify('????????')]);
 
@@ -260,7 +263,7 @@ it('invalidates the versioning group settings cache when a versioning Setting is
 
     $cache_key = PerModelSettingResolver::groupCacheKey('versioning');
 
-    $setting = Modules\Core\Models\Setting::factory()
+    $setting = Setting::factory()
         ->persistedWithoutApprovalCapture()
         ->make(['group_name' => 'versioning', 'name' => 'versioning.strategy.' . fake()->unique()->lexify('????????')]);
 
@@ -287,7 +290,7 @@ it('invalidates the affected group settings cache when any Setting is saved', fu
 
     expect(Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe::has($cache_key))->toBeTrue();
 
-    $setting = Modules\Core\Models\Setting::factory()
+    $setting = Setting::factory()
         ->persistedWithoutApprovalCapture()
         ->make(['group_name' => 'base', 'name' => fake()->unique()->lexify('????????')]);
 
@@ -386,4 +389,29 @@ it('exposes the first and latest versions through the absorbed members', functio
     } finally {
         Schema::dropIfExists(VersionedArticle::TABLE);
     }
+});
+
+it('re-resolves the strategy of a model that uses the trait itself once the settings caches are flushed', function (): void {
+    // User declares `use HasVersions` itself, so it held its own copy of a static declared in the trait,
+    // and a flush that cleared the trait's copy left the strategy User had already resolved in place.
+    app(PerModelSettingResolver::class)->flush();
+
+    $setting = Setting::factory()
+        ->persistedWithoutApprovalCapture()
+        ->create([
+            'group_name' => 'versioning',
+            'name' => 'versioning.strategy.users',
+            'value' => VersionStrategy::DIFF->value,
+        ]);
+
+    expect((new User())->getVersionStrategy())->toBe(VersionStrategy::DIFF);
+
+    $setting->value = VersionStrategy::SNAPSHOT->value;
+    $setting->setSkipValidation(true);
+    $setting->setForcedApprovalUpdate(true);
+    $setting->saveQuietly();
+
+    app(SettingsCacheCoordinator::class)->flushAll();
+
+    expect((new User())->getVersionStrategy())->toBe(VersionStrategy::SNAPSHOT);
 });
