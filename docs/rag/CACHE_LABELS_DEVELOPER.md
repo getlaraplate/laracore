@@ -50,7 +50,7 @@ counts hits, misses and flushes. Callers never branch on the driver.
 
 | Store | Index | Row labels | Behaviour |
 |---|---|---|---|
-| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one store window after the flush | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it deletes the entries and removes them from the sets, then records the flush time of every label (deletes first, so a Redis over `maxmemory` with `noeviction`, which refuses a script whose first write is a `SET`, still deletes); labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
+| `redis` | `FailoverLabelIndex` around `RedisLabelIndex`: one sorted set per label (score is the expiry), one key per label with its last flush time (`labelflush:{label}`), expiring one second after the largest store window in use | yes | A flush is one atomic script when its labels hold up to 1000 members in all: it deletes the entries and removes them from the sets, then records the flush time of every label (deletes first, so a Redis over `maxmemory` with `noeviction`, which refuses a script whose first write is a `SET`, still deletes); labels holding more are paged by further scripts of up to 1000 members each. Redis drops the emptied set. A value is not stored when one of its labels was flushed after the lookup started (no stale write-back), nor when the lookup started more than the store window ago. Time comes from the Redis server clock. Degraded mode, below. |
 | `array` | `ArrayLabelIndex`: in-process twin of the Redis index | yes | Same rules, lives for the process. |
 | `file`, `database`, `memcached`, `dynamodb`, `octane` and any other | `VersionCounterLabelIndex`: a counter `labelv:{label}` per label, appended to the key | no | A flush increments counters; entries of older versions are never read and expire by TTL. A row label flush becomes a flush of its table: documented over-invalidation, never staleness. On `memcached` the index is guarded by `FailoverLabelIndex`: a flush the store refuses degrades it instead of failing the write. |
 | `failover` | the index of its first store, read from the store's own `stores` entry in `config/cache.php` (any store name), guarded by `FailoverLabelIndex` | as the primary | Degraded mode, below, on a lost connection of a `redis` or `database` first store, and on a flush a `memcached` first store refuses (see "Known limits"). A failover store without a `stores` list throws. |
@@ -78,15 +78,17 @@ Redis Cluster is not supported: the store and flush scripts touch an entry and i
 hash slots.
 
 **Store window.** `core.cache.label_store_window` (seconds, default 60) bounds the time between the lookup and the
-store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. The flush
-records expire after the window plus one second, so every store they must refuse still finds them, and they take memory
-only for the labels flushed within the last window. Raise the window if a cached computation can take longer than a
-minute; a value that never fits is never cached, and nothing counts it: `store()` returns false and `cache:label-stats`
-shows only the misses, so an endpoint that is always recomputed looks like one that is often flushed.
+store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. Each
+process announces its window in the key `labelwindow` before its first lookup and then once per window; the key keeps
+the largest window announced (a lower one leaves it, an equal one extends it) and expires after two windows, so a window
+no process uses any more is dropped. A flush keeps its records for the larger of its own window and the announced one,
+plus one second, so every store they must refuse still finds them, whatever the window of the host that looked the
+value up, and they take memory only for the labels flushed within that window. Hosts may therefore run with different
+windows, during a rolling change of the setting as for good.
 
-Change the window on every host before relying on it, and flush `stored` after a raise: the flush records of a host
-still on the old window expire after that window, so a host on a longer one may accept a store the record should
-have refused. Lowering it is safe.
+Raise the window if a cached computation can take longer than a minute; a value that never fits is never cached, and
+nothing counts it: `store()` returns false and `cache:label-stats` shows only the misses, so an endpoint that is always
+recomputed looks like one that is often flushed.
 
 Entries are never stored without an expiry on any index. Version counters (`labelv:*`) are created with a ten-year
 TTL, through the store's atomic `add`, so a counter never resets while entries of its versions live. Core caches
