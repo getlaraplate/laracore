@@ -81,8 +81,9 @@ hash slots.
 label set, kept without expiry, can be evicted, and a later flush of the label misses the entries it listed; under a
 `volatile-*` policy a flush record can be evicted before the stores it must refuse, and a value computed before the
 flush is stored after it. `cache:label-stats` prints a warning, and the hourly `cache:prune-labels` logs one, when the
-policy is another; it is read from `INFO memory`, or from `CONFIG GET maxmemory-policy` when INFO does not show it (a
-managed Redis that refuses `CONFIG` leaves it unknown, and nothing is said).
+policy is another; it is read from `INFO memory`, or from `CONFIG GET maxmemory-policy` when INFO does not show it. A
+Redis with no memory limit (`maxmemory` 0) evicts nothing and is not warned about. A managed Redis that refuses `INFO`
+or `CONFIG` leaves the policy unknown and nothing is said; the refusal never degrades the index.
 
 **Store window.** `core.cache.label_store_window` (seconds, default 60) bounds the time between the lookup and the
 store of a value on Redis. A store that comes later is refused: the value is computed again on the next read. Each

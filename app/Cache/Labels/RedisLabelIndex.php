@@ -298,16 +298,29 @@ LUA;
     }
 
     /**
-     * `maxmemory_policy` of `INFO memory`, or, when INFO does not show it, `CONFIG GET maxmemory-policy`, which a
-     * managed Redis may refuse: a refusal leaves the policy unknown.
+     * `maxmemory_policy` of `INFO memory`, or, when INFO does not show it, `CONFIG GET maxmemory-policy`. A Redis with
+     * no memory limit (`maxmemory` 0) evicts nothing, whatever its policy: it reads as `noeviction`. A managed Redis may
+     * refuse either command: a refusal leaves the policy unknown, and is never an outage of the index, since this is a
+     * diagnostic read.
      */
     #[Override]
     public function evictionPolicy(): ?string
     {
         $connection = $this->store->connection();
-        $policy = self::infoField($connection->command('info', ['memory']), 'maxmemory_policy');
 
-        if ($policy !== null) {
+        try {
+            $info = $connection->command('info', ['memory']);
+        } catch (Throwable) {
+            $info = null;
+        }
+
+        if (in_array(self::infoField($info, 'maxmemory'), ['0', 0], true)) {
+            return EvictionPolicy::REQUIRED;
+        }
+
+        $policy = self::infoField($info, 'maxmemory_policy');
+
+        if (is_string($policy)) {
             return $policy;
         }
 
@@ -330,7 +343,7 @@ LUA;
     /**
      * A field of an INFO reply: flat (phpredis) or grouped by section (Predis).
      */
-    private static function infoField(mixed $info, string $field): ?string
+    private static function infoField(mixed $info, string $field): string|int|null
     {
         if (! is_array($info)) {
             return null;
@@ -338,14 +351,14 @@ LUA;
 
         $value = $info[$field] ?? null;
 
-        if (is_string($value) && $value !== '') {
+        if (is_int($value) || (is_string($value) && $value !== '')) {
             return $value;
         }
 
         foreach ($info as $section) {
             $value = is_array($section) ? $section[$field] ?? null : null;
 
-            if (is_string($value) && $value !== '') {
+            if (is_int($value) || (is_string($value) && $value !== '')) {
                 return $value;
             }
         }

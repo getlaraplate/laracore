@@ -118,7 +118,9 @@ it('stops counting for a minute after a stats failure, then counts again', funct
 function cacheLabelCommandsRedisIndex(mixed $info, mixed $config): MeasuredLabelIndex
 {
     $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
-    $connection->shouldReceive('command')->with('info', ['memory'])->andReturn($info);
+    $connection->shouldReceive('command')->with('info', ['memory'])->andReturnUsing(
+        static fn (): mixed => $info instanceof Throwable ? throw $info : $info,
+    );
     $connection->shouldReceive('command')->with('config', ['get', 'maxmemory-policy'])->andReturnUsing(
         static fn (): mixed => $config instanceof Throwable ? throw $config : $config,
     );
@@ -155,7 +157,26 @@ it('does not warn when Redis evicts nothing or the policy cannot be read', funct
     'noeviction' => [['maxmemory_policy' => 'noeviction'], null],
     'CONFIG refused' => [[], new RuntimeException('ERR unknown command CONFIG')],
     'CONFIG answering nothing' => [[], false],
+    'no memory limit' => [['maxmemory' => '0', 'maxmemory_policy' => 'allkeys-lru'], null],
+    'no memory limit (integer)' => [['maxmemory' => 0, 'maxmemory_policy' => 'volatile-lru'], null],
+    'INFO and CONFIG refused' => [new RedisException('ERR unknown command INFO'), new RuntimeException('ERR unknown command CONFIG')],
 ]);
+
+it('does not degrade the failover index when Redis refuses INFO and CONFIG', function (): void {
+    $connection = Mockery::mock(Illuminate\Redis\Connections\PhpRedisConnection::class);
+    $connection->shouldReceive('command')->with('info', ['memory'])->andThrow(new RedisException('ERR unknown command INFO'));
+    $connection->shouldReceive('command')->with('config', ['get', 'maxmemory-policy'])->andThrow(new RedisException('ERR unknown command CONFIG'));
+    $store = Mockery::mock(Illuminate\Cache\RedisStore::class);
+    $store->shouldReceive('connection')->andReturn($connection);
+    $store->shouldReceive('getPrefix')->andReturn('');
+    $index = new Modules\Core\Cache\Labels\FailoverLabelIndex(
+        new Modules\Core\Cache\Labels\RedisLabelIndex($store),
+        new Modules\Core\Cache\Repository(new Illuminate\Cache\ArrayStore()),
+    );
+
+    expect($index->evictionPolicy())->toBeNull()
+        ->and($index->isDegraded())->toBeFalse();
+});
 
 it('logs the eviction warning when it prunes, the scheduled run reporting it once an hour', function (): void {
     $this->app->instance(ICacheLabelIndex::class, new Modules\Core\Tests\Stubs\Cache\EvictionPolicyLabelIndex('allkeys-lru'));
