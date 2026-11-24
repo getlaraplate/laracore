@@ -79,6 +79,10 @@ final class ClosureLineage extends ClosureRelation
      * a low-cardinality index of the model table (SQLite on `is_deleted`) walks every node, runs the global scopes'
      * subqueries on each, and only then probes the closure rows. One starting node needs no help.
      *
+     * The sub-select also names the depth, always true, so that it reads as a range of the `(descendant_id, depth)`
+     * and `(ancestor_id, descendant_id)` indexes: without it MySQL 8 semi-joined it by a loose scan of the whole
+     * closure primary key (26,685 rows read for 353 kept, 14 ms against 6 ms).
+     *
      * @param  array<int, mixed>  $keys
      */
     private function reachFromClosureRows(array $keys): void
@@ -96,7 +100,7 @@ final class ClosureLineage extends ClosureRelation
         $this->query->whereIn(
             $this->getQualifiedRelatedKeyName(),
             static function (QueryBuilder $reached) use ($closure_table, $reach, $from, $to, $keys, $where_in): void {
-                $reached->select($to)->from($closure_table . ' as ' . $reach)->{$where_in}($from, $keys);
+                $reached->select($to)->from($closure_table . ' as ' . $reach)->{$where_in}($from, $keys)->where($reach . '.depth', '>=', 0);
             },
         );
     }
