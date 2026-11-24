@@ -269,3 +269,63 @@ it('declares a column whose generated type has spaces in its generics', function
 
     expect((string) file_get_contents($model))->toContain(" * @property int \$id\n * @property array<array-key, mixed>|null \$meta\n");
 });
+
+it('declares the translated fields of a translatable model with the type its translation declares, nullable', function (): void {
+    Schema::create(($this->tableFor)('Page'), static function (Blueprint $table): void {
+        $table->id();
+    });
+    $translation_file = $this->directory . '/PageTranslation.php';
+    file_put_contents($translation_file, "<?php\n\ndeclare(strict_types=1);\n\nnamespace Modules\\{$this->probe}\\Models;\n\n/**\n * @property int \$id\n * @property string \$title\n * @property array<string, mixed>|null \$components\n */\nfinal class PageTranslation extends \\Illuminate\\Database\\Eloquent\\Model\n{\n}\n");
+
+    require $translation_file;
+    $model = declareColumnsProbeModel($this, 'Page', '', <<<'PHP'
+
+    use \Modules\Core\Models\Concerns\HasTranslations;
+
+    public static function getTranslatableFields(): array
+    {
+        return ['title', 'components'];
+    }
+
+    protected static function getTranslationModelClass(): string
+    {
+        return PageTranslation::class;
+    }
+
+PHP, '\\Illuminate\\Database\\Eloquent\\Model implements \\Modules\\Core\\Contracts\\ITranslatableModel');
+    $helper = declareColumnsHelperFile($this, ['Page' => ['@property int $id']]);
+
+    $this->artisan('models:declare-columns', ['--module' => [$this->probe], '--from' => $helper])->assertSuccessful();
+
+    expect((string) file_get_contents($model))->toContain(" * @property int \$id\n * @property string|null \$title\n * @property array<string, mixed>|null \$components\n */\nclass Page");
+});
+
+it('writes a class the translation imports by its full name', function (): void {
+    Schema::create(($this->tableFor)('Page'), static function (Blueprint $table): void {
+        $table->id();
+    });
+    $translation_file = $this->directory . '/PageTranslation.php';
+    file_put_contents($translation_file, "<?php\n\ndeclare(strict_types=1);\n\nnamespace Modules\\{$this->probe}\\Models;\n\nuse Carbon\\CarbonImmutable;\n\n/**\n * @property CarbonImmutable|null \$published_at\n * @property PageTranslation \$self\n */\nfinal class PageTranslation extends \\Illuminate\\Database\\Eloquent\\Model\n{\n}\n");
+
+    require $translation_file;
+    $model = declareColumnsProbeModel($this, 'Page', '', <<<'PHP'
+
+    use \Modules\Core\Models\Concerns\HasTranslations;
+
+    public static function getTranslatableFields(): array
+    {
+        return ['published_at', 'self'];
+    }
+
+    protected static function getTranslationModelClass(): string
+    {
+        return PageTranslation::class;
+    }
+
+PHP, '\\Illuminate\\Database\\Eloquent\\Model implements \\Modules\\Core\\Contracts\\ITranslatableModel');
+    $helper = declareColumnsHelperFile($this, ['Page' => ['@property int $id']]);
+
+    $this->artisan('models:declare-columns', ['--module' => [$this->probe], '--from' => $helper])->assertSuccessful();
+
+    expect((string) file_get_contents($model))->toContain(" * @property \\Carbon\\CarbonImmutable|null \$published_at\n * @property \\Modules\\{$this->probe}\\Models\\PageTranslation|null \$self\n");
+});

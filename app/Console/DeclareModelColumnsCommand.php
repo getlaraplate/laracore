@@ -7,9 +7,11 @@ namespace Modules\Core\Console;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Contracts\ITranslatableModel;
 use Modules\Core\Overrides\Command;
 use Override;
 use ReflectionClass;
+use ReflectionMethod;
 
 /**
  * Writes, into each model's own class docblock, an `@property` tag for every column of its table, typed as ide-helper
@@ -62,7 +64,7 @@ final class DeclareModelColumnsCommand extends Command
                 continue;
             }
 
-            $tags_by_target[$target] ??= $this->columnTags($class, $lines);
+            $tags_by_target[$target] ??= [...$this->columnTags($class, $lines), ...$this->translatedTags($class)];
         }
 
         foreach ($tags_by_target as $target => $tags) {
@@ -234,6 +236,70 @@ final class DeclareModelColumnsCommand extends Command
     {
         return (str_starts_with($class, 'Modules\\') || str_starts_with($class, 'App\\'))
             && ! str_contains($class, '\\Overrides\\');
+    }
+
+    /**
+     * The fields a translatable model reads from its translation, typed as the translation model declares them and
+     * nullable, since a record can lack the translation; `mixed` when the translation model declares no such tag.
+     *
+     * @param  class-string<Model>  $class
+     * @return list<string>
+     */
+    private function translatedTags(string $class): array
+    {
+        if (! is_a($class, ITranslatableModel::class, true)) {
+            return [];
+        }
+
+        $translation = new ReflectionMethod($class, 'getTranslationModelClass')->invoke(null);
+
+        if (! is_string($translation) || ! class_exists($translation)) {
+            return [];
+        }
+
+        $source = new ReflectionClass($translation);
+        $doc = (string) $source->getDocComment();
+        $tags = [];
+
+        foreach ($class::getTranslatableFields() as $field) {
+            $type = preg_match('/@property(?:-read|-write)?\s+([^\n$]+?)\s\$' . preg_quote($field, '/') . '\b/', $doc, $match) === 1 ? $match[1] : 'mixed';
+
+            if ($type !== 'mixed' && preg_match('/(^|\|)null(\||$)/', $type) !== 1) {
+                $type .= '|null';
+            }
+
+            $tags[] = '@property ' . $this->fullyQualified($type, $source) . ' $' . $field;
+        }
+
+        return $tags;
+    }
+
+    /**
+     * $type with every class name written as the translation model's file resolves it, so it reads the same in the
+     * file it is copied to: an imported name through its `use` line, any other through the file's namespace.
+     *
+     * @param  ReflectionClass<object>  $source
+     */
+    private function fullyQualified(string $type, ReflectionClass $source): string
+    {
+        $code = (string) file_get_contents((string) $source->getFileName());
+        $imports = [];
+
+        preg_match_all('/^use\s+([\w\\\\]+)(?:\s+as\s+(\w+))?;/m', $code, $uses, PREG_SET_ORDER);
+
+        foreach ($uses as $use) {
+            $imports[($use[2] ?? '') !== '' ? $use[2] : class_basename($use[1])] = $use[1];
+        }
+
+        return preg_replace_callback('/(?<![\\\\\w])([A-Z]\w*)/', static function (array $name) use ($imports, $source): string {
+            if (isset($imports[$name[1]])) {
+                return '\\' . $imports[$name[1]];
+            }
+
+            $candidate = $source->getNamespaceName() . '\\' . $name[1];
+
+            return class_exists($candidate) || interface_exists($candidate) || enum_exists($candidate) ? '\\' . $candidate : $name[1];
+        }, $type) ?? $type;
     }
 
     /**
