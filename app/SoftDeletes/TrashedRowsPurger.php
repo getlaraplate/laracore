@@ -7,6 +7,7 @@ namespace Modules\Core\SoftDeletes;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as EloquentSoftDeletes;
+use Modules\Core\Locking\Locked;
 use Modules\Core\Support\PlainTableModel;
 use Modules\Core\Support\TableModels;
 
@@ -19,7 +20,8 @@ use Modules\Core\Support\TableModels;
  * the rows are found whether or not the model still declares soft deletes. Each row is deleted on its own, through its
  * model, in pages by key: a model that still soft deletes is force deleted (its `forceDeleted` event runs, so its
  * media and embeddings leave with it, and a versioned record keeps its snapshot set), one that no longer does is
- * deleted, which is then a hard delete with its own events.
+ * deleted, which is then a hard delete with its own events. The lock guard is lifted for the purge: a row in the bin
+ * may still carry a lock, and nobody running the purge holds it.
  */
 final readonly class TrashedRowsPurger
 {
@@ -59,18 +61,22 @@ final readonly class TrashedRowsPurger
         $force = class_uses_trait($model, EloquentSoftDeletes::class);
         $purged = 0;
 
-        $query->chunkById(self::CHUNK, static function (iterable $records) use ($force, &$purged): void {
-            foreach ($records as $record) {
-                /** @var Model $record */
-                if (method_exists($record, 'setForcedApprovalUpdate')) {
-                    // A maintenance purge: it runs at once instead of queueing a request nobody approves.
-                    $record->setForcedApprovalUpdate(true);
-                }
+        // A row in the bin can still carry a lock nobody running a maintenance purge holds: the guard is lifted, as for
+        // the other maintenance writes.
+        Locked::withoutGuard(static function () use ($query, $force, &$purged): bool {
+            return $query->chunkById(self::CHUNK, static function (iterable $records) use ($force, &$purged): void {
+                foreach ($records as $record) {
+                    /** @var Model $record */
+                    if (method_exists($record, 'setForcedApprovalUpdate')) {
+                        // A maintenance purge: it runs at once instead of queueing a request nobody approves.
+                        $record->setForcedApprovalUpdate(true);
+                    }
 
-                if ($force ? $record->forceDelete() : $record->delete()) {
-                    $purged++;
+                    if ($force ? $record->forceDelete() : $record->delete()) {
+                        $purged++;
+                    }
                 }
-            }
+            });
         });
 
         return $purged;
