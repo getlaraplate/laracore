@@ -263,6 +263,27 @@ it('labels what reaching the class of a loaded morphTo target brings, and stores
         ->and($read(new CacheDependencyUnknownEagerStubModel))->toBeNull();
 });
 
+it('gives the row label of every morphTo loaded empty, whatever the key name of its target class', function (): void {
+    $resolver = cache_dependency_resolver();
+    $request_data = cache_dependency_list_request(['relations' => ['owner']]);
+    $dependencies = $resolver->forRequest(new CacheDependencyStubModel, $request_data, null, false, labels_after_query: true);
+    $records = collect([
+        [Role::class, 1],
+        [Modules\Core\Tests\Stubs\Cache\CacheMorphCodeKeyedStubModel::class, 'abc'],
+    ])->map(static function (array $target): CacheDependencyStubModel {
+        $record = new CacheDependencyStubModel;
+        $record->forceFill(['owner_type' => $target[0], 'owner_id' => $target[1]]);
+        $record->setRelation('owner', null);
+
+        return $record;
+    });
+
+    expect($resolver->labelsAfterQuery(new CacheDependencyStubModel, $request_data, $dependencies, $records))->toContain(
+        CacheLabel::row(CoreTables::Roles->value, 1),
+        CacheLabel::row(Modules\Core\Tests\Stubs\Cache\CacheMorphCodeKeyedStubModel::TABLE, 'abc'),
+    );
+});
+
 it('keeps a displayed morphTo of a history read incomplete, its payload holding no model after the query', function (): void {
     $request_data = new HistoryRequestData(HistoryRequest::create('/app/crud/history/core/ACL', 'GET', ['id' => 1]), 'ACL', ['relations' => ['owner']], 'id', 'core');
 

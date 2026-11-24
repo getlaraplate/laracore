@@ -559,6 +559,12 @@ final readonly class CrudCacheDependencyResolver
 
             $relation = $relations[$cache_key];
 
+            // A morphTo takes its owner key from the target class of the record it was built on: built once per class,
+            // it would test the record of another target class against a key name that is not its own.
+            if ($relation instanceof MorphTo && ! $loaded instanceof Model) {
+                $relation = RelationGuard::relationOf($record, $name);
+            }
+
             if ($relation instanceof BelongsTo) {
                 $label = $loaded instanceof Model ? self::rowLabelOf($loaded) : self::pointedRowLabel($record, $relation);
 
