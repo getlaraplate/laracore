@@ -83,6 +83,7 @@ use UnexpectedValueException;
  * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
  * @property \Carbon\CarbonImmutable $valid_from
  * @property \Carbon\CarbonImmutable|null $valid_to
+ * @property array<array-key, mixed>|null $preferences Server-persisted UI preferences (theme, density, layout) synced from the SPA
  */
 #[ObservedBy([UserObserver::class])]
 class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, MustVerifyEmail, PasskeyUser

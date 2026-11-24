@@ -23,6 +23,7 @@ use Override;
  * @property \Carbon\CarbonImmutable $updated_at
  * @property \Carbon\CarbonImmutable|null $deleted_at
  * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $components The translated taxonomy components
  */
 final class TaxonomyTranslation extends Model implements ITranslated
 {

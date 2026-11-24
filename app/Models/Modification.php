@@ -42,6 +42,7 @@ use Override;
  * @property string $md5 The md5 hash of the modifications
  * @property \Carbon\CarbonImmutable $created_at
  * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed> $modifications The modifications
  */
 final class Modification extends Model implements RestrictsCrudWrites
 {

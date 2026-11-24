@@ -23,6 +23,7 @@ use Illuminate\Notifications\DatabaseNotification;
  * @property \Carbon\CarbonImmutable|null $read_at
  * @property \Carbon\CarbonImmutable|null $created_at
  * @property \Carbon\CarbonImmutable|null $updated_at
+ * @property array<array-key, mixed> $data
  */
 final class Notification extends DatabaseNotification
 {

@@ -61,6 +61,10 @@ use Throwable;
  * @property \Carbon\CarbonImmutable $updated_at
  * @property \Carbon\CarbonImmutable|null $deleted_at
  * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $manipulations The manipulations of the media
+ * @property array<array-key, mixed> $custom_properties The custom properties of the media
+ * @property array<array-key, mixed> $generated_conversions The generated conversions of the media
+ * @property array<array-key, mixed> $responsive_images The responsive images of the media
  */
 #[ObservedBy([MediaMetadataObserver::class, MediaLifecycleObserver::class])]
 final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEmbeddableModel, IRestrictsReadableColumns, ISearchableModel, ISoftDeletableModel

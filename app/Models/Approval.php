@@ -24,6 +24,7 @@ use Override;
  * @property string|null $reason The reason for the approval
  * @property \Carbon\CarbonImmutable $created_at
  * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed>|null $meta The additional meta data for the approval
  */
 final class Approval extends Model implements IsPartOfParent
 {

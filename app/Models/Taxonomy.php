@@ -47,6 +47,7 @@ use Spatie\EloquentSortable\Sortable;
  * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
  * @property \Carbon\CarbonImmutable $valid_from
  * @property \Carbon\CarbonImmutable|null $valid_to
+ * @property array<array-key, mixed>|null $shared_components The shared dynamic components of the taxonomy
  */
 abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, IValidatableModel, Sortable
 {

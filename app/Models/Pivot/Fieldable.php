@@ -26,6 +26,7 @@ use Spatie\EloquentSortable\Sortable;
  * @property \Carbon\CarbonImmutable $updated_at
  * @property string|null $deleted_at
  * @property int|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed>|null $default The default value of the field
  */
 #[ObservedBy([FieldableObserver::class, DynamicContentMetadataObserver::class])]
 final class Fieldable extends Pivot implements Sortable

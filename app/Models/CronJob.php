@@ -33,6 +33,7 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
  * @property int|null $locked_user_id The user who locked the entity
  * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property array<array-key, mixed> $parameters The parameters of the cron job
  */
 final class CronJob extends Model implements IActivatableModel, ILockableModel
 {

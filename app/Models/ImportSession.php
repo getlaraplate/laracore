@@ -38,6 +38,9 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $finished_at
  * @property \Carbon\CarbonImmutable $created_at
  * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed>|null $detected_columns Source column headers detected on upload
+ * @property array<array-key, mixed>|null $mapping Target field name => source column header
+ * @property array<array-key, mixed>|null $options Reader hints: delimiter, etc.
  */
 final class ImportSession extends Model
 {

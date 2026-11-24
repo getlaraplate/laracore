@@ -22,6 +22,7 @@ use Override;
  * @property string|null $last_error
  * @property \Carbon\CarbonImmutable $created_at
  * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed> $payload
  */
 final class OutboxEvent extends Model
 {

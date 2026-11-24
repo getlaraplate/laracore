@@ -18,6 +18,7 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $last_used_at The last login made with the passkey
  * @property \Carbon\CarbonImmutable $created_at
  * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed> $credential The public key credential
  */
 final class Passkey extends BasePasskey
 {

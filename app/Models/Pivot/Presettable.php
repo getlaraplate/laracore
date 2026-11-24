@@ -23,6 +23,7 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $created_at
  * @property \Carbon\CarbonImmutable|null $deleted_at
  * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $fields_snapshot
  */
 abstract class Presettable extends Pivot implements ISoftDeletableModel
 {

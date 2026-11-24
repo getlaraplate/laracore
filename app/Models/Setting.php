@@ -36,6 +36,9 @@ use Override;
  * @property \Carbon\CarbonImmutable $updated_at
  * @property \Carbon\CarbonImmutable|null $deleted_at
  * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $value The value of the setting
+ * @property array<array-key, mixed>|null $choices Constrained available values
+ * @property array<array-key, mixed>|null $seeded_value Last value written by the seeder; drift is value !== seeded_value
  */
 #[ObservedBy(SettingObserver::class)]
 final class Setting extends Model

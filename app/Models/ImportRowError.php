@@ -22,6 +22,8 @@ use Override;
  * @property int $row_number 1-based data row number in the source (header excluded)
  * @property \Carbon\CarbonImmutable $created_at
  * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed> $errors Field name => list of messages; "_" for row-level
+ * @property array<array-key, mixed>|null $raw The raw mapped row that failed, for the downloadable report
  */
 final class ImportRowError extends Model implements IsPartOfParent
 {
