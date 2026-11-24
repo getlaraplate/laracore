@@ -25,7 +25,7 @@ final readonly class ClosurePaths
     /**
      * Node keys bound per query, below the 999 variables of older SQLite builds.
      */
-    private const int KEY_CHUNK_SIZE = 500;
+    public const int KEY_CHUNK_SIZE = 500;
 
     public function __construct(
         private ConnectionInterface $connection,

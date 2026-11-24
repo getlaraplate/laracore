@@ -84,9 +84,9 @@ Its `chainsOf()` gives each node's ancestors by distance from the same rows.
 
 A taxonomy's own `path` accessor (`HasPath`) is a different value: the translated slugs of its ancestors, root
 first, then its own (`Taxonomy::getPath()`), wrapped by `getFullPath()`. Read on taxonomies one by one, it loads the
-ancestors of each. `Taxonomy::assignPaths($taxonomies)` gives the whole collection that value at once: the closure
-rows of all of them in one query, then their distinct ancestors with their translations once, read through the
-model's global scopes as the `ancestors` relation reads them. `getPath()` returns the assigned value when there is
+ancestors of each. `Taxonomy::assignPaths($taxonomies)` gives the whole collection that value at once: one query
+joins the closure rows of all of them (500 per query) to their ancestors, through the model's global scopes as the
+`ancestors` relation reads them, each distinct ancestor is hydrated once, and their translations come in one more. `getPath()` returns the assigned value when there is
 one and builds it from the ancestors otherwise. The value belongs to that load: a taxonomy moved afterwards keeps it
 until it is loaded again. The search indexing of contents uses it (`Content::makeSearchableUsing()`).
 

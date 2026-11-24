@@ -100,7 +100,8 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
 
     /**
      * Give each taxonomy the value {@see self::getPath()} builds from its ancestors, for a whole collection at once:
-     * the closure rows of all of them in one query, then their distinct ancestors with their translations once.
+     * one query joining the closure rows of all of them to their ancestors (per {@see ClosurePaths::KEY_CHUNK_SIZE}
+     * taxonomies), each distinct ancestor hydrated once, then the ancestors' translations once.
      * Reading `path` on taxonomies one by one loads the ancestors of each; an eager `ancestors` load hydrates one
      * ancestor per (taxonomy, ancestor) pair. The ancestors are read as the `ancestors` relation reads them: the
      * model's global scopes apply, and an ancestor they hide gives no segment.
@@ -123,23 +124,7 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         }
 
         foreach ($nodes as $by_key) {
-            $model = reset($by_key)[0];
-            $chains = ClosurePaths::forModel($model)->chainsOf(array_map(strval(...), array_keys($by_key)));
-            $ancestor_keys = [];
-
-            foreach ($chains as $chain) {
-                foreach ($chain as $distance => $ancestor_key) {
-                    if ($distance > 0) {
-                        $ancestor_keys[$ancestor_key] = true;
-                    }
-                }
-            }
-
-            $ancestors = $ancestor_keys === []
-                ? []
-                : $model->newQuery()->whereKey(array_keys($ancestor_keys))->with('translations')->get()
-                    ->keyBy(static fn (self $ancestor): string => (string) $ancestor->getKey())
-                    ->all();
+            [$chains, $ancestors] = self::readAncestors(reset($by_key)[0], array_map(strval(...), array_keys($by_key)));
 
             foreach ($by_key as $key => $same_node) {
                 $chain = $chains[(string) $key] ?? [];
@@ -339,6 +324,58 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         return Attribute::make(
             get: fn () => $this->name,
         );
+    }
+
+    /**
+     * The visible ancestors of the nodes, each hydrated once with its translations and the model's default relations,
+     * and the chain of each node by distance, from one query per {@see ClosurePaths::KEY_CHUNK_SIZE} nodes joining the
+     * closure rows to the model table: the model's global scopes decide which ancestors exist, as they do for the
+     * `ancestors` relation. A node without a visible ancestor has no chain.
+     *
+     * @param  list<string>  $keys
+     * @return array{0: array<string, array<int, string>>, 1: array<string, self>}
+     */
+    private static function readAncestors(self $model, array $keys): array
+    {
+        $closure_table = $model->getClosureTable();
+        $reach = $closure_table . '_reach';
+        $key_name = $model->getKeyName();
+        $chains = [];
+        $ancestors = [];
+
+        foreach (array_chunk($keys, ClosurePaths::KEY_CHUNK_SIZE) as $chunk) {
+            $query = $model->newQuery()
+                ->with('translations')
+                ->join($closure_table . ' as ' . $reach, $reach . '.ancestor_id', '=', $model->getQualifiedKeyName())
+                ->whereIn($reach . '.descendant_id', $chunk)
+                ->where($reach . '.depth', '>', 0)
+                ->select([$model->getTable() . '.*', $reach . '.descendant_id as closure_descendant_id', $reach . '.depth as closure_depth']);
+            $rows = [];
+
+            foreach ($query->toBase()->get() as $row) {
+                $row = (array) $row;
+                $ancestor = (string) $row[$key_name];
+                $chains[(string) $row['closure_descendant_id']][(int) $row['closure_depth']] = $ancestor;
+                unset($row['closure_descendant_id'], $row['closure_depth']);
+
+                if (! isset($ancestors[$ancestor])) {
+                    $rows[$ancestor] = $row;
+                }
+            }
+
+            if ($rows === []) {
+                continue;
+            }
+
+            $hydrated = $query->hydrate(array_values($rows))->all();
+            $query->eagerLoadRelations($hydrated);
+
+            foreach ($hydrated as $ancestor) {
+                $ancestors[(string) $ancestor->getKey()] = $ancestor;
+            }
+        }
+
+        return [$chains, $ancestors];
     }
 
     /**
