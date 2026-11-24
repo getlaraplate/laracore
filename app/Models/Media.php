@@ -44,6 +44,27 @@ use Throwable;
  * @phpstan-use Searchable<Media>
  *
  * @implements IAuthorizesSearchRehydration<Media>
+ *
+ * @property int $id
+ * @property string $model_type
+ * @property int $model_id
+ * @property string|null $uuid The UUID of the media
+ * @property string $collection_name The collection name of the media
+ * @property string $name The name of the media
+ * @property string $file_name The file name of the media
+ * @property string|null $mime_type The mime type of the media
+ * @property string $disk The disk of the media
+ * @property string|null $conversions_disk The conversions disk of the media
+ * @property int $size The size of the media
+ * @property int $order_column The order column of the media
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $manipulations The manipulations of the media
+ * @property array<array-key, mixed> $custom_properties The custom properties of the media
+ * @property array<array-key, mixed> $generated_conversions The generated conversions of the media
+ * @property array<array-key, mixed> $responsive_images The responsive images of the media
  */
 #[ObservedBy([MediaMetadataObserver::class, MediaLifecycleObserver::class])]
 final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEmbeddableModel, IRestrictsReadableColumns, ISearchableModel, ISoftDeletableModel

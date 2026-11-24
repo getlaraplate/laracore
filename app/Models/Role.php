@@ -30,6 +30,20 @@ use Override;
 use Spatie\Permission\Exceptions\PermissionDoesNotExist;
 use Spatie\Permission\Models\Role as BaseRole;
 
+/**
+ * @property int $id
+ * @property string $name The name of the role
+ * @property string $guard_name The guard name of the role
+ * @property string|null $description The description of the role
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property int|null $parent_id The parent id of the role
+ */
 #[ObservedBy([RoleObserver::class])]
 final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
 {

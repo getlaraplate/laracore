@@ -28,6 +28,20 @@ use Override;
  * - If a role has NO ACL → inherit from parent role
  * - If unrestricted=true → no filters applied (full access)
  * - Multiple non-hierarchical roles → combine with OR (union)
+ *
+ * @property int $id
+ * @property int $permission_id
+ * @property int|null $role_id
+ * @property string|null $description The description of the acl
+ * @property \Modules\Core\Casts\FiltersGroup|null $filters The filters of the acl
+ * @property bool $unrestricted If true, this ACL is transparent and does not contribute filters to the query
+ * @property int $priority Higher priority ACLs are evaluated first (for conflict resolution)
+ * @property bool $is_active If false, this ACL is ignored (allows temporary disable)
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed>|null $sort The sort of the acl
  */
 #[ObservedBy([AclObserver::class])]
 final class ACL extends Model

@@ -18,6 +18,19 @@ use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Override;
 use Spatie\Permission\Models\Permission as ModelsPermission;
 
+/**
+ * @property int $id
+ * @property string $name The name of the permission
+ * @property string $guard_name The guard name of the permission
+ * @property string|null $description The description of the permission
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property string|null $deleted_at
+ * @property int|null $is_deleted Whether the entity is deleted
+ * @property string|null $connection_name
+ * @property string|null $table_name
+ * @property string|null $module_name
+ */
 final class Permission extends ModelsPermission
 {
     use HasCache;

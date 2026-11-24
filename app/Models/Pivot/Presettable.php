@@ -15,6 +15,16 @@ use Modules\Core\Overrides\Pivot;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Override;
 
+/**
+ * @property int $id
+ * @property int $preset_id The preset that the entity preset relation belongs to
+ * @property int $entity_id The entity that the entity preset relation belongs to
+ * @property int $version Incremental version number scoped to preset+entity
+ * @property \Carbon\CarbonImmutable|null $created_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $fields_snapshot
+ */
 abstract class Presettable extends Pivot implements ISoftDeletableModel
 {
     use SoftDeletes;

@@ -19,6 +19,17 @@ use Override;
  * create a bootstrap dependency that fails exactly when the ledger is most
  * needed. {@see OutboxEvent} follows the same pattern
  * for the same reason.
+ *
+ * @property int $id
+ * @property string $run_id Identifies one invocation of the orchestrator
+ * @property string $node Seeder class executed
+ * @property string $status running, succeeded or failed
+ * @property string|null $content_hash Hash of the definitions this node would write
+ * @property \Carbon\CarbonImmutable $started_at
+ * @property \Carbon\CarbonImmutable|null $finished_at
+ * @property string|null $error
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class SeedRun extends Model
 {
