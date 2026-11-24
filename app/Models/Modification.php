@@ -29,6 +29,20 @@ use Override;
  * Only the approval flow writes it: votes and withdrawals go through ModificationVoteService,
  * which keeps the decision coherent with the quorum. The generic CRUD layer may read it but
  * never write it, since a plain save of the quorum would leave a reached decision unapplied.
+ *
+ * @property int $id
+ * @property int|null $modifiable_id The id of the modifiable model
+ * @property string|null $modifiable_type The type of the modifiable model
+ * @property int|null $modifier_id The id of the modifier model
+ * @property string|null $modifier_type The type of the modifier model
+ * @property bool $active Whether the modification is active
+ * @property Operation $operation The operation the modification carries
+ * @property int $approvers_required The number of approvers required
+ * @property int $disapprovers_required The number of disapprovers required
+ * @property string $md5 The md5 hash of the modifications
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property array<array-key, mixed> $modifications The modifications
  */
 final class Modification extends Model implements RestrictsCrudWrites
 {

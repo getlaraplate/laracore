@@ -17,6 +17,24 @@ use Modules\Core\Rules\CronExpression as CronExpressionRule;
 use Modules\Core\Rules\CronParametersList;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $name The name of the cron job
+ * @property string $command The command of the cron job
+ * @property \Cron\CronExpression $schedule The schedule of the cron job
+ * @property bool $is_active Is the cron job active
+ * @property bool $on_one_server Run on a single server when several share the scheduler
+ * @property bool $without_overlapping Skip a run while the previous one is still running
+ * @property string|null $description The description of the cron job
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property array<array-key, mixed> $parameters The parameters of the cron job
+ */
 final class CronJob extends Model implements IActivatableModel, ILockableModel
 {
     // region Traits

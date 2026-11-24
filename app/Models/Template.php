@@ -12,6 +12,15 @@ use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Model;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $name The name of the template
+ * @property string $content The blade template content
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ */
 #[ObservedBy(HierarchyOwnerObserver::class)]
 final class Template extends Model
 {

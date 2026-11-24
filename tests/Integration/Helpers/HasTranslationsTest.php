@@ -274,3 +274,16 @@ it('re-reads config after resetLocaleCache is called', function (): void {
 
     expect($reflection->getValue())->not->toBeNull();
 });
+
+it('returns the earliest translation as the original', function (): void {
+    $model = FakeTranslatableModel::query()->create([]);
+    $model->setTranslation('it', ['title' => 'Originale']);
+    $this->travel(1)->minutes();
+    $model->setTranslation('en', ['title' => 'Translated']);
+
+    expect($model->fresh()->getOriginalTranslation()?->getAttribute('locale'))->toBe('it');
+});
+
+it('returns no original translation for a model without translations', function (): void {
+    expect(FakeTranslatableModel::query()->create([])->getOriginalTranslation())->toBeNull();
+});

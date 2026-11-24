@@ -13,6 +13,21 @@ use Override;
 
 /**
  * Canonical postal / geographic payload shared across modules (e.g. Cms Location, Business Site).
+ *
+ * @property int $id
+ * @property string|null $address
+ * @property string|null $city
+ * @property string|null $province
+ * @property string|null $country
+ * @property string|null $postcode
+ * @property string|null $zone
+ * @property float|null $latitude
+ * @property float|null $longitude
+ * @property \MatanYadaev\EloquentSpatial\Objects\Geometry|null $geolocation The geolocation of the location
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
  */
 class Place extends Model
 {

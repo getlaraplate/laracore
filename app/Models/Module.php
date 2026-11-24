@@ -19,6 +19,13 @@ use Override;
  * {@see ModuleDatabaseActivator} reads this table while providers are still registering, and the
  * base class would pull in versioning and soft deletes, which are themselves driven by settings
  * and modules. {@see SeedRun} follows the same pattern for the same reason.
+ *
+ * @property int $id
+ * @property string $name The name of the module
+ * @property bool $is_active Is the module active
+ * @property string|null $url The url of the frontend app of the module
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class Module extends Model implements IActivatableModel
 {

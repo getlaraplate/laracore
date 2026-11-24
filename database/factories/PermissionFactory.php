@@ -27,7 +27,7 @@ final class PermissionFactory extends Factory
     /**
      * Define the model's default state.
      *
-     * @return array<string, mixed>
+     * @return array<model-property<Permission>, mixed>
      */
     #[Override]
     public function definition(): array

@@ -26,7 +26,7 @@ final class CronJobFactory extends Factory
     /**
      * Define the model's default state.
      *
-     * @return array<string, mixed>
+     * @return array<model-property<CronJob>, mixed>
      */
     #[Override]
     public function definition(): array

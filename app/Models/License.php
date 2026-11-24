@@ -18,6 +18,15 @@ use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\HasVersions;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $uuid Public license reference shown to customers
+ * @property int $is_deleted Soft delete flag (see SoftDeletes trait scope)
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable $valid_from
+ * @property \Carbon\CarbonImmutable|null $valid_to
+ */
 final class License extends Model implements IValidatableModel
 {
     use HasFactory;
