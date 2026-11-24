@@ -224,10 +224,8 @@ it('rebuilds the name index from the database when the cached payload is not an 
 });
 
 it('caches the groups and the name index through the label index under the settings table, for the long duration', function (): void {
-    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
-    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
-    $resolver = new PerModelSettingResolver();
-
+    // Saving a setting resolves the setting model's own version strategy, which reads the name index too;
+    // the spy is bound afterwards so it records only what the resolver under test stores.
     Setting::factory()->persistedWithoutApprovalCapture()->create([
         'name' => 'labelled_settings_test',
         'value' => 'v',
@@ -235,6 +233,10 @@ it('caches the groups and the name index through the label index under the setti
         'group_name' => 'base',
         'description' => 'test',
     ]);
+
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $resolver = new PerModelSettingResolver();
 
     $resolver->string('labelled_settings_test', 'missing');
 

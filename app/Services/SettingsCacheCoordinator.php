@@ -6,8 +6,8 @@ namespace Modules\Core\Services;
 
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Cache\CacheManager;
-use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Setting;
+use Modules\Core\Versioning\VersionStrategyCache;
 
 /**
  * Central invalidation for all settings-related caches.
@@ -112,7 +112,7 @@ final class SettingsCacheCoordinator
         // Legacy key used by older HasVersions builds; safe to forget until fully removed.
         Cache::forget(CacheManager::key('version_strategies'));
 
-        HasVersions::resetVersionStrategyCache();
+        VersionStrategyCache::flush();
     }
 
     private function flushDerivedSettingsCaches(): void
