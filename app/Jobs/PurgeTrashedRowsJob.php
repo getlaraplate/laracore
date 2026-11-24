@@ -25,7 +25,15 @@ final class PurgeTrashedRowsJob implements ShouldQueue
     use InteractsWithQueue;
     use Queueable;
 
-    public int $tries = 1;
+    /**
+     * Retried when a worker kills it at its timeout or a write fails: rows are deleted chunk by chunk, each for good, so
+     * an attempt resumes where the last one stopped, and the setting is read again first. The worker's own timeout is
+     * kept on purpose: a longer one than the queue's `retry_after` would let a second worker run the same purge at once
+     * and fire the events of a row twice.
+     */
+    public int $tries = 5;
+
+    public int $backoff = 30;
 
     public function __construct(
         public readonly string $table,

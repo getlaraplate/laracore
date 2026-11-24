@@ -136,3 +136,14 @@ it('warns and changes nothing when the refresh command is refused the alignment 
     expect((bool) $setting->fresh()->value)->toBe(! $switched);
     Bus::assertDispatchedTimes(PurgeTrashedRowsJob::class, $switched ? 1 : 0);
 })->with(['refused' => ['no', false], 'confirmed' => ['yes', true]]);
+
+it('purges nothing more when the job runs again, so a retry after a timeout resumes safely', function (): void {
+    softDeletesSwitchSetting(false);
+    $job = new PurgeTrashedRowsJob('soft_deletes_stub', 'soft_deletes.enabled.soft_deletes_stub');
+
+    app()->call([$job, 'handle']);
+    app()->call([$job, 'handle']);
+
+    expect(DB::table('soft_deletes_stub')->pluck('name')->all())->toBe(['live'])
+        ->and($job->tries)->toBeGreaterThan(1);
+});

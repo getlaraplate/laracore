@@ -24,7 +24,13 @@ final class ReleaseLocksJob implements ShouldQueue
     use InteractsWithQueue;
     use Queueable;
 
-    public int $tries = 1;
+    /**
+     * Retried when the write fails: releasing the locks is one statement that clears columns, so running it again
+     * changes nothing more, and the setting is read again first.
+     */
+    public int $tries = 3;
+
+    public int $backoff = 30;
 
     public function __construct(
         public readonly string $table,

@@ -167,3 +167,15 @@ it('unlocks the records of the table before model:locked-remove removes the colu
     expect(lockingSwitchLocked('lockable_test_models'))->toBe([])
         ->and(lockingSwitchLocked('lockable_other_models'))->toBe(['elsewhere']);
 });
+
+it('releases nothing more when the job runs again, so a retry is safe', function (): void {
+    lockingSwitchSetting(false);
+    $job = new ReleaseLocksJob('lockable_test_models', 'locking.enabled.lockable_test_models');
+
+    app()->call([$job, 'handle']);
+    app()->call([$job, 'handle']);
+
+    expect(lockingSwitchLocked('lockable_test_models'))->toBe([])
+        ->and(DB::table('lockable_test_models')->count())->toBe(3)
+        ->and($job->tries)->toBeGreaterThan(1);
+});
