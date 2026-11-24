@@ -95,6 +95,21 @@ final readonly class TrashedRowsPurger
     }
 
     /**
+     * Whether a model of the table pins soft deletes on in code ({@see SoftDeletes::softDeletesEnabledInCode()}): its
+     * setting then has no runtime effect, and switching the setting off must not empty its bin.
+     */
+    public function pinnedOn(string $table): bool
+    {
+        foreach (TableModels::for($table) as $model) {
+            if (method_exists($model, 'softDeletesEnabledInCode') && $model->softDeletesEnabledInCode() === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * {@see purge()} for a table: through its model when the application has one, with one plain delete otherwise.
      */
     public function purgeTable(string $table): int

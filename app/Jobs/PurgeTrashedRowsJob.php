@@ -16,7 +16,8 @@ use Modules\Core\SoftDeletes\TrashedRowsPurger;
 /**
  * Deletes for good the rows in the bin of a table whose soft deletes were switched off, dispatched after the commit
  * of the save that switched them off. It reads the setting again when it runs and does nothing unless soft deletes
- * are still off, so switching them back on while the job waits keeps the rows.
+ * are still off, so switching them back on while the job waits keeps the rows. A table whose model pins soft deletes
+ * on in code keeps its bin: the setting has no effect on it.
  */
 final class PurgeTrashedRowsJob implements ShouldQueue
 {
@@ -35,7 +36,7 @@ final class PurgeTrashedRowsJob implements ShouldQueue
     {
         $setting = Setting::query()->where('name', $this->settingName)->first();
 
-        if (! $setting instanceof Setting || ! SoftDeletesSettingConfirmation::isOff($setting->value)) {
+        if (! $setting instanceof Setting || ! SoftDeletesSettingConfirmation::isOff($setting->value) || $purger->pinnedOn($this->table)) {
             return;
         }
 

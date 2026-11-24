@@ -54,7 +54,7 @@ final readonly class SoftDeletesSettingConfirmation implements ISettingChangeCon
     {
         $table = self::tableOf($setting->name);
 
-        if ($table === null || ! self::isOff($newValue) || self::isOff($setting->value)) {
+        if ($table === null || ! self::isOff($newValue) || self::isOff($setting->value) || $this->purger->pinnedOn($table)) {
             return null;
         }
 

@@ -248,7 +248,9 @@ makes `SettingObserver` queue `PurgeTrashedRowsJob` after the commit; the job re
 when soft deletes are back on, so switching on before it runs keeps the rows. Otherwise `SoftDeletes\TrashedRowsPurger`
 deletes each row in the bin (`deleted_at` set or `is_deleted` true) on its own, through the table's model, in chunks of
 100: `forceDelete()`, so `forceDeleted` runs and the row's media and embeddings leave with it, and a versioned record
-keeps its snapshot set. Live rows and other tables are untouched; switching back on purges nothing. The settings page
+keeps its snapshot set. Live rows and other tables are untouched; switching back on purges nothing. A table whose
+model pins soft deletes on in code (`softDeletesEnabledInCode()`) keeps its bin: the setting has no effect on it, so
+neither the warning nor the purge applies. The settings page
 asks first through `SoftDeletesSettingConfirmation` (registered by `CoreServiceProvider`), which shows the number of
 rows in the bin; cancelling saves nothing. From the terminal, `model:soft-deletes-refresh` shows the same warning
 before it aligns the setting of a model without the trait to off, and a refusal changes nothing;
