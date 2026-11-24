@@ -97,7 +97,7 @@ final class DeclareModelColumnsCommand extends Command
                     $text = preg_replace('/^\s*\*\s?/', '', mb_rtrim($line)) ?? '';
                     $body[] = $text;
 
-                    if (preg_match('/^@property(?:-read|-write)?\s+\S+\s+\$(\w+)/', $text, $name) === 1) {
+                    if (preg_match('/^@property(?:-read|-write)?\s+[^\n$]+?\s\$(\w+)/', $text, $name) === 1) {
                         $declared[] = $name[1];
                     }
                 }
@@ -164,7 +164,7 @@ final class DeclareModelColumnsCommand extends Command
         preg_match_all('/namespace ([\w\\\\]+)\s*\{\s*\/\*\*(.*?)\*\/\s*(?:#\[[^\n]*\]\s*)*(?:(?:final|abstract|readonly)\s+)*class (\w+)/s', $helper, $blocks, PREG_SET_ORDER);
 
         foreach ($blocks as $block) {
-            preg_match_all('/^\s*\*\s*(@property(?:-read|-write)?\s+\S+\s+\$\w+.*)$/m', $block[2], $lines);
+            preg_match_all('/^\s*\*\s*(@property(?:-read|-write)?\s+[^\n$]+?\s\$\w+.*)$/m', $block[2], $lines);
 
             /** @var class-string $class */
             $class = $block[1] . '\\' . $block[3];

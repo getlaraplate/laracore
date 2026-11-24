@@ -238,3 +238,34 @@ it('leaves a model untouched when none of its lines is a column', function (): v
 
     expect((string) file_get_contents($model))->toBe($before);
 });
+
+it('reads a tag whose type has spaces in its generics', function (): void {
+    Schema::create(($this->tableFor)('Doc'), static function (Blueprint $table): void {
+        $table->id();
+        $table->json('meta')->nullable();
+    });
+    $model = declareColumnsProbeModel($this, 'Doc', "/**\n * @property array<string, int> \$meta\n */\n");
+    $helper = declareColumnsHelperFile($this, ['Doc' => ['@property int $id', '@property array<array-key, mixed>|null $meta']]);
+
+    $this->artisan('models:declare-columns', ['--module' => [$this->probe], '--from' => $helper])->assertSuccessful();
+
+    // The hand-written generic type counts as the tag of $meta, and $id, missing, is added with ide-helper's type.
+    $code = (string) file_get_contents($model);
+
+    expect($code)->toContain('@property array<string, int> $meta')
+        ->and($code)->not->toContain('@property array<array-key, mixed>|null $meta')
+        ->and($code)->toContain('@property int $id');
+});
+
+it('declares a column whose generated type has spaces in its generics', function (): void {
+    Schema::create(($this->tableFor)('Doc'), static function (Blueprint $table): void {
+        $table->id();
+        $table->json('meta')->nullable();
+    });
+    $model = declareColumnsProbeModel($this, 'Doc', '');
+    $helper = declareColumnsHelperFile($this, ['Doc' => ['@property int $id', '@property array<array-key, mixed>|null $meta']]);
+
+    $this->artisan('models:declare-columns', ['--module' => [$this->probe], '--from' => $helper])->assertSuccessful();
+
+    expect((string) file_get_contents($model))->toContain(" * @property int \$id\n * @property array<array-key, mixed>|null \$meta\n");
+});
