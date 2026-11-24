@@ -60,21 +60,25 @@ it('clearByUser and clearByGroup flush nothing when none of the entities uses th
     expect($index->flushes)->toBe([]);
 });
 
-it('resolves the threshold and the default ttl from the configuration', function (): void {
+it('remembers a value without a ttl flexibly under a configured threshold, plainly without one', function (): void {
     config()->set('cache.duration', 120);
     config()->set('cache.threshold', 10);
+    $flexible = new Repository(new ArrayStore());
 
-    $repository = new Repository(new ArrayStore());
-
-    $threshold_method = new ReflectionMethod(Repository::class, 'getThreshold');
-
-    expect($threshold_method->invoke($repository))->toBe(10)
-        ->and(Repository::resolveDefaultCacheSeconds())->toBe(120);
+    $flexible->remember('k', null, static fn (): string => 'flexible');
+    $seconds_of_a_number = Repository::resolveDefaultCacheSeconds();
 
     config()->set('cache.threshold', 0);
     config()->set('cache.duration', ['short' => 30, 'medium' => 90]);
+    $plain = new Repository(new ArrayStore());
 
-    expect($threshold_method->invoke($repository))->toBe(0)
+    $plain->remember('k', null, static fn (): string => 'plain');
+
+    expect($flexible->get('k'))->toBe('flexible')
+        ->and($flexible->has('illuminate:cache:flexible:created:k'))->toBeTrue()
+        ->and($plain->get('k'))->toBe('plain')
+        ->and($plain->has('illuminate:cache:flexible:created:k'))->toBeFalse()
+        ->and($seconds_of_a_number)->toBe(120)
         ->and(Repository::resolveDefaultCacheSeconds())->toBe(90);
 });
 

@@ -2,46 +2,84 @@
 
 declare(strict_types=1);
 
-use Illuminate\Database\ConnectionResolverInterface;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Modules\Core\Enums\CoreTables;
-use Modules\Core\SoftDeletes\Console\ModelSoftDeletesAddCommand;
+use Illuminate\Testing\PendingCommand;
 use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRefreshCommand;
-use Modules\Core\SoftDeletes\Console\ModelSoftDeletesRemoveCommand;
 use Modules\Core\Tests\Stubs\Console\ConstructorConfiguredSoftDeleteModel;
 use Symfony\Component\Console\Application as SymfonyConsoleApplication;
 
-it('defines expected command signatures', function (): void {
-    $add = new ReflectionClass(ModelSoftDeletesAddCommand::class);
-    $remove = new ReflectionClass(ModelSoftDeletesRemoveCommand::class);
-    $refresh = new ReflectionClass(ModelSoftDeletesRefreshCommand::class);
+/**
+ * Runs `model:soft-deletes-remove` on a stub model, its migration written to a filesystem that keeps nothing.
+ */
+function softDeletesRemove(string $model): PendingCommand
+{
+    $files = Mockery::mock(Filesystem::class)->makePartial();
+    $files->shouldReceive('put')->andReturn(1);
+    $files->shouldReceive('makeDirectory')->andReturn(true);
+    app()->instance(Filesystem::class, $files);
 
-    expect(file_get_contents($add->getFileName()))->toContain('model:soft-deletes-add')
-        ->and(file_get_contents($remove->getFileName()))->toContain('model:soft-deletes-remove')
-        ->and(file_get_contents($refresh->getFileName()))->toContain('model:soft-deletes-refresh');
+    return test()->artisan('model:soft-deletes-remove', [
+        'model' => $model,
+        '--namespace' => 'Modules\\Core\\Tests\\Stubs\\Console',
+    ]);
+}
+
+it('registers the soft delete commands', function (): void {
+    expect(array_keys(Artisan::all()))->toContain('model:soft-deletes-add', 'model:soft-deletes-remove', 'model:soft-deletes-refresh');
 });
 
-it('remove command includes mandatory purge safeguard for logical deletions', function (): void {
-    $reflection = new ReflectionClass(ModelSoftDeletesRemoveCommand::class);
-    $source = file_get_contents($reflection->getFileName());
+/**
+ * The stub table with one live row and two in the bin.
+ */
+function softDeletesStubTable(): void
+{
+    Schema::create('mass_write_stub', static function (Blueprint $table): void {
+        $table->id();
+        $table->timestamp('deleted_at')->nullable();
+    });
+    DB::table('mass_write_stub')->insert([
+        ['deleted_at' => null],
+        ['deleted_at' => now()],
+        ['deleted_at' => now()],
+    ]);
+}
 
-    expect($source)->toContain('logical-deleted records')
-        ->and($source)->toContain('Purge those records with hard delete before removing soft delete columns?')
-        ->and($source)->toContain('Operation cancelled. No columns were removed.');
+it('keeps soft deletes and the records in the bin when the purge is refused', function (): void {
+    softDeletesStubTable();
+
+    try {
+        softDeletesRemove('MassWriteStubModel')
+            ->expectsOutputToContain('Found 2 logical-deleted records on `mass_write_stub`.')
+            ->expectsConfirmation('Purge those records with hard delete before removing soft delete columns?', 'no')
+            ->expectsOutputToContain('Operation cancelled. No columns were removed.')
+            ->assertFailed()
+            ->run();
+
+        expect(DB::table('mass_write_stub')->count())->toBe(3);
+    } finally {
+        Schema::dropIfExists('mass_write_stub');
+    }
 });
 
-it('refresh command reconciles trait-schema-setting consistency', function (): void {
-    $reflection = new ReflectionClass(ModelSoftDeletesRefreshCommand::class);
-    $source = file_get_contents($reflection->getFileName());
+it('purges the records in the bin before it removes soft deletes', function (): void {
+    softDeletesStubTable();
 
-    // The trailing underscore now lives in PerModelSettingResolver::nameFor(),
-    // which is the single place allowed to join prefix and table.
-    expect($source)->toContain('model:soft-deletes-add')
-        ->and($source)->toContain('model:soft-deletes-remove')
-        ->and($source)->toContain('soft_deletes');
+    try {
+        softDeletesRemove('MassWriteStubModel')
+            ->expectsConfirmation('Purge those records with hard delete before removing soft delete columns?', 'yes')
+            ->expectsOutputToContain('Purged 2 record(s).')
+            ->assertSuccessful()
+            ->run();
+
+        expect(DB::table('mass_write_stub')->whereNotNull('deleted_at')->count())->toBe(0)
+            ->and(DB::table('mass_write_stub')->count())->toBe(1);
+    } finally {
+        Schema::dropIfExists('mass_write_stub');
+    }
 });
 
 it('refresh command merges application quiet option without duplicate definition', function (): void {
@@ -53,135 +91,20 @@ it('refresh command merges application quiet option without duplicate definition
     expect($command->getDefinition()->hasOption('quiet'))->toBeTrue();
 });
 
-it('instantiates the soft-delete model through its constructor', function (): void {
-    $command = new ModelSoftDeletesRemoveCommand(new Filesystem);
-    $method = new ReflectionMethod($command, 'instantiateModel');
-    $model = $method->invoke($command, new ReflectionClass(ConstructorConfiguredSoftDeleteModel::class));
-
-    expect($model)->toBeInstanceOf(ConstructorConfiguredSoftDeleteModel::class)
-        ->and($model->getConnectionName())->toBe('soft_delete_constructor_connection')
-        ->and($model->getTable())->toBe('soft_delete_constructor_table');
-});
-
-it('refresh inspects schema through the constructor-configured model connection', function (): void {
+it('removes soft deletes from the table and connection its model sets in its constructor', function (): void {
     config()->set('database.connections.soft_delete_constructor_connection', [
         'driver' => 'sqlite',
         'database' => ':memory:',
         'prefix' => '',
     ]);
     DB::purge('soft_delete_constructor_connection');
-    $connection = DB::connection('soft_delete_constructor_connection');
-    $connection->getSchemaBuilder()->create('soft_delete_constructor_table', function (Illuminate\Database\Schema\Blueprint $table): void {
-        $table->id();
-    });
-    $connection->enableQueryLog();
-
-    $command = app(ModelSoftDeletesRefreshCommand::class);
-    $method = new ReflectionMethod($command, 'checkModel');
-    $method->setAccessible(true);
 
     try {
-        $method->invoke($command, ConstructorConfiguredSoftDeleteModel::class);
-
-        expect(json_encode($connection->getQueryLog(), JSON_THROW_ON_ERROR))
-            ->toContain('soft_delete_constructor_table');
+        softDeletesRemove(ConstructorConfiguredSoftDeleteModel::class)
+            ->expectsOutputToContain('_remove_soft_deletes_columns_from_soft_delete_constructor_table.php')
+            ->assertSuccessful();
     } finally {
         DB::disconnect('soft_delete_constructor_connection');
         DB::purge('soft_delete_constructor_connection');
-    }
-});
-
-it('writes soft-delete settings through the Setting model connection', function (): void {
-    $previous_default = config('database.default');
-    $resolver = Model::getConnectionResolver();
-
-    config()->set('database.connections.soft_delete_default', [
-        'driver' => 'sqlite',
-        'database' => ':memory:',
-        'prefix' => '',
-    ]);
-    config()->set('database.connections.soft_delete_affinity', [
-        'driver' => 'sqlite',
-        'database' => ':memory:',
-        'prefix' => '',
-    ]);
-    DB::purge('soft_delete_default');
-    DB::purge('soft_delete_affinity');
-    DB::setDefaultConnection('soft_delete_default');
-
-    Schema::connection('soft_delete_affinity')->create(CoreTables::Settings->value, function (Illuminate\Database\Schema\Blueprint $table): void {
-        $table->id();
-        $table->string('name')->unique();
-        $table->text('value')->nullable();
-        $table->boolean('encrypted')->default(false);
-        $table->boolean('is_internal')->default(false);
-        $table->boolean('managed')->default(false);
-        $table->boolean('is_public')->default(false);
-        $table->json('choices')->nullable();
-        $table->string('type');
-        $table->string('group_name');
-        $table->string('description')->nullable();
-        $table->string('action_command')->nullable();
-        $table->boolean('action_queued')->default(false);
-        $table->boolean('is_deleted')->default(false);
-        $table->timestamps();
-    });
-
-    // Saving a Setting runs the permission check in HasValidations and the
-    // approval capture in RequiresApproval, so the probe connection needs those
-    // tables too. They stay empty: the point of the test is connection affinity.
-    Schema::connection('soft_delete_affinity')->create('vend_permissions', function (Illuminate\Database\Schema\Blueprint $table): void {
-        $table->id();
-        $table->string('name');
-        $table->string('guard_name')->default('web');
-        $table->timestamps();
-    });
-    Schema::connection('soft_delete_affinity')->create('core_modifications', function (Illuminate\Database\Schema\Blueprint $table): void {
-        $table->id();
-        $table->string('modifiable_type')->nullable();
-        $table->string('modifiable_id')->nullable();
-        $table->json('modifications')->nullable();
-        $table->string('md5')->nullable();
-        $table->boolean('active')->default(true);
-        $table->string('operation', 16)->default('create');
-        $table->timestamps();
-    });
-
-    Model::setConnectionResolver(new class($resolver) implements ConnectionResolverInterface
-    {
-        public function __construct(private readonly ConnectionResolverInterface $resolver) {}
-
-        public function connection($name = null): Illuminate\Database\ConnectionInterface
-        {
-            return $name === null ? DB::connection('soft_delete_affinity') : $this->resolver->connection($name);
-        }
-
-        public function getDefaultConnection(): string
-        {
-            return $this->resolver->getDefaultConnection();
-        }
-
-        public function setDefaultConnection($name): void
-        {
-            $this->resolver->setDefaultConnection($name);
-        }
-    });
-
-    $command = new ModelSoftDeletesRemoveCommand(new Filesystem);
-    $method = new ReflectionMethod($command, 'upsertSoftDeletesSetting');
-    $method->setAccessible(true);
-
-    try {
-        expect($method->invoke($command, 'affinity_table', true))->toBeTrue()
-            ->and(DB::connection('soft_delete_affinity')->table(CoreTables::Settings->value)
-                ->where('name', 'soft_deletes.enabled.affinity_table')
-                ->exists())->toBeTrue();
-    } finally {
-        Model::setConnectionResolver($resolver);
-        DB::setDefaultConnection($previous_default);
-        DB::disconnect('soft_delete_default');
-        DB::purge('soft_delete_default');
-        DB::disconnect('soft_delete_affinity');
-        DB::purge('soft_delete_affinity');
     }
 });

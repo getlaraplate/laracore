@@ -5,7 +5,6 @@ declare(strict_types=1);
 use App\Casts\EntityType;
 use App\Models\Entity;
 use Illuminate\Support\Facades\Cache;
-use Modules\Core\Models\Pivot\Presettable;
 use Modules\Core\Services\DynamicContentsService;
 
 beforeEach(function (): void {
@@ -22,14 +21,27 @@ it('clears all dynamic contents in-memory caches', function (): void {
     expect(DynamicContentsService::getInstance())->toBeInstanceOf(DynamicContentsService::class);
 });
 
-it('registers namespaced presettable memo keys for later invalidation', function (): void {
-    $service = DynamicContentsService::getInstance();
-    $reflection = new ReflectionMethod(DynamicContentsService::class, 'presettableMemoKey');
-    $reflection->setAccessible(true);
+it('keeps the presettable list across requests until clearPresettablesCache()', function (): void {
+    $preset = Modules\Core\Tests\Support\AppDynamicEntities::preset(EntityType::Pages);
+    $count = static function (): int {
+        DynamicContentsService::reset();
 
-    $key = $reflection->invoke($service, Presettable::class);
+        return DynamicContentsService::getInstance()->fetchAvailablePresettables(EntityType::Pages)->count();
+    };
+    $before = $count();
 
-    expect($key)->toBe('core.dynamic_contents.presettables:' . hash('sha256', Presettable::class) . ':g0');
+    // A write that fires no model event flushes nothing: the next request still reads the cached list.
+    $preset->getConnection()->table(Modules\Core\Enums\CoreTables::Presettables->value)->insert([
+        'preset_id' => $preset->id,
+        'entity_id' => $preset->entity_id,
+        'version' => 99,
+        'fields_snapshot' => '[]',
+    ]);
+    $cached = $count();
+    DynamicContentsService::getInstance()->clearPresettablesCache();
+
+    expect($cached)->toBe($before)
+        ->and($count())->toBe($before + 1);
 });
 
 it('keeps entity in-memory cache buckets isolated by dynamic content type', function (): void {

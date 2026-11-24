@@ -54,43 +54,23 @@ it('clearPresetsCache bumps metadata generation so typed keys miss after reset',
     expect(Cache::get($generation_key))->toBe(4);
 });
 
-it('metadataGeneration recovers when the generation key holds a Collection', function (): void {
+it('bumps the metadata generation from 0 when the generation key holds a Collection', function (): void {
     $generation_key = 'core.dynamic_contents.generation';
+    // Fork-poisoned Redis replies, or a failover array hit, can leave a collection under the key.
     Cache::forever($generation_key, new Illuminate\Database\Eloquent\Collection([(object) ['id' => 1]]));
 
-    $service = DynamicContentsService::getInstance();
-    $method = new ReflectionMethod(DynamicContentsService::class, 'metadataGeneration');
-    $method->setAccessible(true);
+    DynamicContentsService::getInstance()->clearPresetsCache();
 
-    expect($method->invoke($service))->toBe(0)
-        ->and(Cache::get($generation_key))->toBe(0);
+    expect(Cache::get($generation_key))->toBe(1);
 });
 
-it('rememberCollection reloads when the label index returns a plain array', function (): void {
-    $cache_key = 'core.dynamic_contents.test:array-rehydrate';
-    $index = resolve(Modules\Core\Contracts\ICacheLabelIndex::class);
-    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::dynamicContents()]);
-    $index->store($index->lookup($cache_key, $dependencies), ['not' => 'a-collection'], 60);
+it('reloads a list the label index answers as a plain array, and stores the reloaded collection over it', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\PlainArrayHitLabelIndex((new App\Models\Entity())->getCacheKey() . ':');
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
 
-    $service = DynamicContentsService::getInstance();
-    $method = new ReflectionMethod(DynamicContentsService::class, 'rememberCollection');
-    $method->setAccessible(true);
+    $entities = DynamicContentsService::getInstance()->fetchAvailableEntities(App\Casts\EntityType::Pages);
 
-    $fresh = new Illuminate\Database\Eloquent\Collection();
-    $result = $method->invoke($service, $cache_key, static fn (): Illuminate\Database\Eloquent\Collection => $fresh);
-
-    expect($result)->toBe($fresh)
-        ->and($result)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
-});
-
-it('rememberCollection keeps the reloaded collection in the label index over the plain array', function (): void {
-    $cache_key = 'core.dynamic_contents.test:array-overwrite';
-    $index = resolve(Modules\Core\Contracts\ICacheLabelIndex::class);
-    $dependencies = new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::dynamicContents()]);
-    $index->store($index->lookup($cache_key, $dependencies), ['not' => 'a-collection'], 60);
-
-    $method = new ReflectionMethod(DynamicContentsService::class, 'rememberCollection');
-    $method->invoke(DynamicContentsService::getInstance(), $cache_key, static fn (): Illuminate\Database\Eloquent\Collection => new Illuminate\Database\Eloquent\Collection());
-
-    expect($index->lookup($cache_key, $dependencies)->value)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
+    expect($entities)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class)
+        ->and($index->stored_values)->toHaveCount(1)
+        ->and($index->stored_values[0])->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
 });
