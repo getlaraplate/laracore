@@ -12,8 +12,8 @@ use Illuminate\Support\Collection;
  *
  * A node is any object carrying the closure-table columns: an Eloquent model of a
  * {@see \Modules\Core\Models\Concerns\HasClosureTable} hierarchy, wrapped here
- * explicitly, or a stdClass when it comes from a raw query. `children`, `total_articles_count`
- * and `path` are written here onto whichever object arrived, so no declared type
+ * explicitly, or a stdClass when it comes from a raw query. `children` and `total_articles_count`
+ * are written here onto whichever object arrived, so no declared type
  * describes a node and the members stay dynamic.
  */
 final class TreeCollection extends EloquentCollection
@@ -30,11 +30,6 @@ final class TreeCollection extends EloquentCollection
         return new self($built->all());
     }
 
-    public function withPaths(string $separator = ' > ', string $field = 'name'): Collection
-    {
-        return self::buildPaths($this, '', $separator, $field);
-    }
-
     /**
      * Build a tree structure from grouped items.
      *
@@ -48,26 +43,6 @@ final class TreeCollection extends EloquentCollection
 
             if (isset($item->articles_count)) {
                 $item->total_articles_count = $item->articles_count + $item->children->sum('total_articles_count');
-            }
-
-            return $item;
-        });
-    }
-
-    /**
-     * Build paths for tree items.
-     *
-     * @param  Collection<int, object>  $items
-     * @return Collection<int, object>
-     */
-    private static function buildPaths(Collection $items, string $prefix, string $separator, string $field): Collection
-    {
-        return $items->map(function (object $item) use ($prefix, $separator, $field): object {
-            $current = $prefix === '' ? $item->{$field} : $prefix . $separator . $item->{$field};
-            $item->path = $current;
-
-            if ($item->children->isNotEmpty()) {
-                $item->children = self::buildPaths($item->children, $current, $separator, $field);
             }
 
             return $item;

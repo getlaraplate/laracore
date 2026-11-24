@@ -28,22 +28,3 @@ it('builds a tree with children and aggregated article counts', function (): voi
     expect($child_a->children)->toHaveCount(1)
         ->and($child_a->total_articles_count)->toBe(2 + 4);
 });
-
-it('builds path strings for each node', function (): void {
-    $items = [
-        (object) ['id' => 1, 'parent_id' => null, 'name' => 'Root', 'articles_count' => 0],
-        (object) ['id' => 2, 'parent_id' => 1, 'name' => 'Child', 'articles_count' => 0],
-    ];
-
-    $tree_collection = new TreeCollection($items);
-    $tree = $tree_collection->tree();
-
-    // Ensure children collections exist so withPaths can recurse
-    $tree_with_paths = $tree->withPaths(' / ');
-
-    $root = $tree_with_paths->first();
-    $child = $root->children->first();
-
-    expect($root->path)->toBe('Root')
-        ->and($child->path)->toBe('Root / Child');
-});
