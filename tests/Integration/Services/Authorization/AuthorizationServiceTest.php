@@ -474,7 +474,7 @@ it('checkPermission returns false when the request user is not a Core User model
 });
 
 it('checkPermission returns false when there is no request user and anonymous user does not exist', function (): void {
-    Cache::forget('anonymous_user.anonymous');
+    resolve(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable((new (user_class())())->getTable());
 
     $entity = 'authz_no_anon_' . uniqid();
     $permission_name = 'default.' . $entity . '.select';
@@ -599,4 +599,30 @@ it('applyAclFiltersToQuery uses orWhereNull when OR group contains an equals-nul
     $service->applyAclFiltersToQuery($query, $permission_name);
 
     expect($query->toSql())->toContain('email" is null');
+});
+
+it('caches the anonymous user through the label index under the users table, for the long duration', function (): void {
+    config(['permission.users.guest' => 'anon_label_ttl_test']);
+    User::factory()->create(['username' => 'anon_label_ttl_test']);
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+
+    new AuthorizationService(new AclResolverService())->resolveAnonymousUser(Request::create('/'));
+
+    expect($index->stores)->toHaveCount(1)
+        ->and($index->stores[0]['lookup']->dependencies->labels)->toBe(['table:' . new User()->getTable()])
+        ->and($index->stores[0]['ttl'])->toBe((int) config('cache.duration.long'));
+});
+
+it('serves a change of the anonymous account at once, through the label of the users table', function (): void {
+    config(['permission.users.guest' => 'anon_label_change_test']);
+    $guest = User::factory()->create(['username' => 'anon_label_change_test', 'name' => 'Before']);
+    $service = new AuthorizationService(new AclResolverService());
+
+    expect($service->resolveAnonymousUser(Request::create('/'))?->name)->toBe('Before');
+
+    $guest->name = 'After';
+    $guest->save();
+
+    expect($service->resolveAnonymousUser(Request::create('/'))?->name)->toBe('After');
 });

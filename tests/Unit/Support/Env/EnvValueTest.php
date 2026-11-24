@@ -28,6 +28,8 @@ it('round-trips through Dotenv::parse', function (string $value): void {
     'backtick' => 'a`b',
     'unicode' => 'è日本',
     'line break' => "line1\nline2",
+    'crlf' => "line1\r\nline2",
+    'carriage return' => "a\rb",
     'mixed' => "a \"b\" 'c' \$d \\e #f",
 ]);
 
@@ -44,6 +46,9 @@ it('detects secret names', function (string $name, bool $secret): void {
     ['ACCESS_TOKEN', true],
     ['SOME_PASS', true],
     ['X_CREDENTIAL', true],
+    ['AWS_ACCESS_KEY_ID', true],
+    ['SECRET_KEY_BASE', true],
+    ['DB_PASSWORD_FILE', true],
     ['TOKEN', true],
     ['APP_NAME', false],
     ['KEYBOARD_LAYOUT', false],

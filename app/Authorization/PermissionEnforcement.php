@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Modules\Core\Authorization;
 
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Core\Casts\ActionEnum;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
+use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Support\TableModels;
 
 /**
  * What a granted permission actually does at this moment.
@@ -81,11 +85,42 @@ final readonly class PermissionEnforcement
         );
     }
 
+    /**
+     * Whether the capability is off for the table. The feature follows the model: a missing setting reads as on (the
+     * trait decides, the row is only an off switch), so a table whose models no longer declare the trait is off
+     * whatever the setting says, as after `model:soft-deletes-remove` or `model:locked-remove`. A table no model of
+     * the application reads is decided by the setting alone.
+     */
     private function isOff(string $prefix, string $table_name): bool
     {
-        return ! $this->settings->boolean(
-            PerModelSettingResolver::nameFor($prefix, $table_name),
-            default: true,
-        );
+        $models = TableModels::for($table_name);
+
+        if ($models === []) {
+            return ! $this->settings->boolean(
+                PerModelSettingResolver::nameFor($prefix, $table_name),
+                default: true,
+            );
+        }
+
+        foreach ($models as $model) {
+            if ($this->modelUses($prefix, $model)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether the model declares the capability and its setting (or the model itself) leaves it on.
+     */
+    private function modelUses(string $prefix, Model $model): bool
+    {
+        if ($prefix === CoreDatabaseSeeder::LOCK_NAME_PREFIX) {
+            return class_uses_trait($model, HasLocks::class) && $model->locksEnabledBySettings();
+        }
+
+        return class_uses_trait($model, SoftDeletes::class)
+            && (! method_exists($model, 'softDeletesEnabledBySettings') || $model->softDeletesEnabledBySettings());
     }
 }

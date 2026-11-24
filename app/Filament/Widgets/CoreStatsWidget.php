@@ -7,6 +7,7 @@ namespace Modules\Core\Filament\Widgets;
 use App\Models\User;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
@@ -55,7 +56,7 @@ final class CoreStatsWidget extends BaseWidget
             return [
                 'total' => $license->newQuery()->count(),
                 'active' => $license->newQuery()
-                    ->where(static fn ($query) => $query
+                    ->where(static fn (Builder $query): Builder => $query
                         ->whereNull('valid_to')
                         ->orWhere('valid_to', '>=', now()))
                     ->count(),

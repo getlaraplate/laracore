@@ -6,22 +6,24 @@ namespace Modules\Core\Helpers;
 
 use Closure;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Cache;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
+use Modules\Core\Contracts\ICacheLabelIndex;
 
 /**
  * Two-tier cache for expensive helper functions (models, connections).
  *
- * Model discovery is served from a per-request static layer backed by a
- * cross-request persistent cache, so the filesystem scan runs at most once per
- * deploy instead of once per request. Both layers are cleared automatically
- * after migrations via CommandListenerProvider.
+ * Model discovery is served from a per-request static layer backed by the label
+ * index (label {@see CacheLabel::models()}, `cache.duration.long`), so the
+ * filesystem scan runs at most once per hour instead of once per request. Both
+ * layers are cleared automatically after migrations via CommandListenerProvider.
  */
 final class HelpersCache
 {
     /**
      * Cache-key prefix for the cross-request persistent model discovery layer.
      */
-    private const MODELS_CACHE_PREFIX = 'core.helpers.models.';
+    private const string MODELS_CACHE_PREFIX = 'core.helpers.models.';
 
     /**
      * @var array<string, list<class-string<Model>>>
@@ -64,7 +66,13 @@ final class HelpersCache
         }
 
         $models = self::persistentCacheAvailable()
-            ? Cache::rememberForever(self::modelsCacheKey($key), $discover)
+            ? resolve(LabelledCache::class)->remember(
+                self::modelsCacheKey($key),
+                [CacheLabel::models()],
+                (int) config('cache.duration.long'),
+                $discover,
+                is_array(...),
+            )
             : $discover();
 
         self::$models[$key] = $models;
@@ -123,8 +131,8 @@ final class HelpersCache
     }
 
     /**
-     * Forget every persistent model discovery bucket so the next resolution
-     * rescans the filesystem. Leaves the in-memory layer untouched so test
+     * Forget every persistent model discovery bucket (a flush of their label)
+     * so the next resolution rescans the filesystem. Leaves the in-memory layer untouched so test
      * injections via {@see setModels()} keep working (e.g. permission:refresh).
      */
     public static function forgetPersistentModels(): void
@@ -133,12 +141,11 @@ final class HelpersCache
             return;
         }
 
-        Cache::forget(self::modelsCacheKey('active'));
-        Cache::forget(self::modelsCacheKey('all'));
+        resolve(ICacheLabelIndex::class)->flush(CacheLabel::models());
     }
 
     private static function persistentCacheAvailable(): bool
     {
-        return function_exists('app') && app()->bound('cache') && app()->bound('files');
+        return function_exists('app') && app()->bound('cache') && app()->bound('files') && app()->bound(ICacheLabelIndex::class);
     }
 }

@@ -51,7 +51,7 @@ trait HasValidity
             }
         }
 
-        return max(1, (int) config('core.validity.expiring_within_hours', 48));
+        return max(1, config()->integer('core.validity.expiring_within_hours', 48));
     }
 
     public function initializeHasValidity(): void

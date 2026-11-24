@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Models;
 
 use BackedEnum;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Collection;
@@ -21,12 +22,15 @@ use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Models\Pivot\ModelHasRole;
+use Modules\Core\Observers\RoleObserver;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Override;
 use Spatie\Permission\Exceptions\PermissionDoesNotExist;
 use Spatie\Permission\Models\Role as BaseRole;
 
+#[ObservedBy([RoleObserver::class])]
 final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
 {
     use HasCache;
@@ -37,6 +41,7 @@ final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
         getRules as private getRulesTrait;
     }
     use HasVersions;
+    use ReturnsVersionedRelations;
     use SoftDeletes {
         HasVersions::delete insteadof SoftDeletes;
         HasVersions::forceDelete insteadof SoftDeletes;

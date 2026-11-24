@@ -216,3 +216,31 @@ it('skips a model whose engine keeps no index', function (): void {
         ->expectsOutputToContain('Skipped ' . VectorMappingStubModel::class . ': its search engine keeps no index of its own.')
         ->assertExitCode(BaseCommand::SUCCESS);
 });
+
+it('reindexes a cached model without flushing its cache labels: indexing writes the search engine, not its rows', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $engine = new RebuildRecordingEngineStub(mismatches: ["sub-field 'title.it.exact' is missing"]);
+    bindRebuildEngines([Modules\Core\Tests\Stubs\Search\RebuildCachedArticleStubModel::class => $engine]);
+
+    $this->artisan('scout:rebuild')
+        ->doesntExpectOutputToContain('Cache has been invalidated')
+        ->assertExitCode(BaseCommand::SUCCESS);
+
+    expect($engine->calls)->toBe(['syncMapping', 'reindex'])
+        ->and($index->flushedLabels())->not->toContain('table:' . RebuildSearchStubModel::TABLE);
+});
+
+it('queues the reindex of a cached model without flushing its cache labels', function (): void {
+    Queue::fake();
+    $index = new Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    bindRebuildEngines([Modules\Core\Tests\Stubs\Search\RebuildCachedArticleStubModel::class => new RebuildRecordingEngineStub()]);
+
+    $this->artisan('scout:reindex', ['model' => Modules\Core\Tests\Stubs\Search\RebuildCachedArticleStubModel::class])
+        ->doesntExpectOutputToContain('Cache has been invalidated')
+        ->assertExitCode(BaseCommand::SUCCESS);
+
+    Queue::assertPushed(ReindexSearchJob::class);
+    expect($index->flushedLabels())->not->toContain('table:' . RebuildSearchStubModel::TABLE);
+});

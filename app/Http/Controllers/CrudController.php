@@ -8,7 +8,6 @@ use BadMethodCallException;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Container\BindingResolutionException;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\MultipleRecordsFoundException;
 use Illuminate\Database\QueryException;
@@ -21,6 +20,7 @@ use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use LogicException;
 use Modules\Core\Approvals\PendingDeletionLock;
+use Modules\Core\Casts\CrudRequestData;
 use Modules\Core\Enums\AggregateErrorCode;
 use Modules\Core\Exceptions\AggregateException;
 use Modules\Core\Exceptions\CrudWriteNotAllowedException;
@@ -42,6 +42,7 @@ use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Locking\Exceptions\MissingLockVersionException;
 use Modules\Core\Locking\Exceptions\StaleModelLockingException;
 use Modules\Core\Models\User;
+use Modules\Core\Services\Crud\Cache\CrudResponseCache;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\DomainActionDispatcher;
 use Modules\Core\Services\Crud\DTOs\CrudResult;
@@ -52,7 +53,10 @@ use UnexpectedValueException;
 
 class CrudController extends Controller
 {
-    public function __construct(private readonly CrudService $crudService) {}
+    public function __construct(
+        private readonly CrudService $crudService,
+        private readonly ?CrudResponseCache $responseCache = null,
+    ) {}
 
     final public function list(ListRequest $request): Response
     {
@@ -61,7 +65,7 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->list($requestData),
             $request,
-            $requestData->model,
+            $requestData,
         );
     }
 
@@ -87,7 +91,6 @@ class CrudController extends Controller
                 );
             },
             $request,
-            shouldCache: false,
         );
     }
 
@@ -155,8 +158,6 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->freshness($requestData),
             $request,
-            $requestData->model,
-            shouldCache: false,
         );
     }
 
@@ -174,10 +175,14 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->detail($requestData),
             $request,
-            $requestData->model,
+            $requestData,
         );
     }
 
+    /**
+     * Never cached: the rows come from a search index reindexed asynchronously, so a flush on write would let the
+     * cache refill from the index before the reindex reached it.
+     */
     public function search(SearchRequest $request): Response
     {
         $requestData = $request->parsed();
@@ -185,8 +190,6 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->search($requestData),
             $request,
-            $requestData->model,
-            shouldCache: false,
         );
     }
 
@@ -197,7 +200,7 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->history($requestData),
             $request,
-            $requestData->model,
+            $requestData,
         );
     }
 
@@ -208,7 +211,7 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->tree($requestData),
             $request,
-            $requestData->model,
+            $requestData,
         );
     }
 
@@ -219,12 +222,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->insert($requestData);
 
-            // Invalidate cache after insert
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -235,12 +235,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->update($requestData);
 
-            // Invalidate cache after update
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -251,12 +248,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->delete($requestData);
 
-            // Invalidate cache after delete
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -275,12 +269,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->doActivateOperation($requestData, $operation);
 
-            // Invalidate cache after activate/inactivate
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -301,12 +292,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->approve($requestData);
 
-            // Invalidate cache after approve
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -317,12 +305,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->disapprove($requestData);
 
-            // Invalidate cache after disapprove
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -350,9 +335,9 @@ class CrudController extends Controller
                 );
             }
 
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -366,8 +351,6 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->pendingApprovals($requestData),
             $request,
-            $requestData->model,
-            shouldCache: false,
         );
     }
 
@@ -384,7 +367,6 @@ class CrudController extends Controller
                 return $this->crudService->allPendingApprovals($user);
             },
             $request,
-            shouldCache: false,
         );
     }
 
@@ -398,8 +380,6 @@ class CrudController extends Controller
         return $this->handleServiceCall(
             fn (): CrudResult => $this->crudService->latestDisapproval($requestData),
             $request,
-            $requestData->model,
-            shouldCache: false,
         );
     }
 
@@ -410,12 +390,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->lock($requestData);
 
-            // Invalidate cache after lock
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -426,12 +403,9 @@ class CrudController extends Controller
         try {
             $result = $this->crudService->unlock($requestData);
 
-            // Invalidate cache after unlock
-            Cache::clearByEntity($requestData->model);
-
             return $this->buildResponse($result, $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $requestData->model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -471,11 +445,12 @@ class CrudController extends Controller
                 return $result;
             }
 
+            // The handler runs arbitrary code, so what it wrote is unknown: flush the whole table, not a row.
             Cache::clearByEntity($model);
 
             return $this->buildResponse(new CrudResult(data: $result), $request);
         } catch (Throwable $ex) {
-            return $this->handleServiceCall(fn () => throw $ex, $request, $model, shouldCache: false);
+            return $this->handleServiceCall(fn () => throw $ex, $request);
         }
     }
 
@@ -565,19 +540,24 @@ class CrudController extends Controller
     }
 
     /**
-     * Handle service call with error handling and optional caching.
+     * Run a service call and map its failures to responses. A read given its request data goes through the response
+     * cache, which looks the response up before the call runs, unless the request asks for `no_cache`.
+     *
+     * @param  callable(): CrudResult  $serviceCall
      */
-    private function handleServiceCall(callable $serviceCall, Request $request, ?Model $model = null, bool $shouldCache = true): Response
+    private function handleServiceCall(callable $serviceCall, Request $request, ?CrudRequestData $cachedRead = null): Response
     {
         try {
-            $result = $serviceCall();
-
-            // Handle cache for read operations
-            if ($model && $shouldCache && $this->shouldCache($request)) {
-                return Cache::tryByRequest($model, $request, fn (): Response => $this->buildResponse($result, $request));
+            if ($cachedRead instanceof CrudRequestData && $this->shouldCache($request)) {
+                return $this->responseCache()->remember(
+                    $cachedRead,
+                    $serviceCall(...),
+                    fn (CrudResult $result): Response => $this->buildResponse($result, $request),
+                    fn () => $this->crudService->authorizeCachedRead($cachedRead),
+                );
             }
 
-            return $this->buildResponse($result, $request);
+            return $this->buildResponse($serviceCall(), $request);
         } catch (QueryException $ex) {
             return $this->buildResponse(
                 new CrudResult(
@@ -725,6 +705,11 @@ class CrudController extends Controller
                 $request,
             );
         }
+    }
+
+    private function responseCache(): CrudResponseCache
+    {
+        return $this->responseCache ?? app(CrudResponseCache::class);
     }
 
     /**

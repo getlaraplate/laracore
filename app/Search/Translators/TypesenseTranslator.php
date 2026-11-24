@@ -50,7 +50,9 @@ class TypesenseTranslator implements ISchemaTranslator
     {
         $tsField = [
             'name' => $field->name,
-            'type' => $this->getTypesenseType($field->type, $field->options),
+            // A top-level date is a number on Typesense, which filters ranges on numbers only: TypesenseEngine indexes
+            // and filters it as seconds since the epoch. A date nested in an object stays a string.
+            'type' => $field->type === FieldType::Date ? 'int64' : $this->getTypesenseType($field->type, $field->options),
         ];
 
         // Add index-specific options
@@ -131,7 +133,7 @@ class TypesenseTranslator implements ISchemaTranslator
             FieldType::Integer => 'int32',
             FieldType::Float => 'float',
             FieldType::Boolean => 'bool',
-            FieldType::Date => 'string', // Typesense uses string for dates
+            FieldType::Date => 'string', // nested dates only: a top-level date is int64, see translateField()
             FieldType::Vector => 'float[]',
             FieldType::Array => isset($options['properties']) ? 'object[]' : 'string[]',
             FieldType::Object, FieldType::Geocode => 'object',

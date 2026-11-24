@@ -6,12 +6,17 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Helpers\MigrateUtils;
+use Modules\Core\SoftDeletes\TrashedRowsPurger;
 
 return new class extends Migration
 {
     public function up(): void
     {
         $table_name = '$ModelTable$';
+
+        // Rows a worker still running the model with soft deletes moved to the bin after the purge of the remove
+        // command would come back as live once the columns are gone: delete them for good first.
+        app(TrashedRowsPurger::class)->purgeTable($table_name);
 
         Schema::table($table_name, function (Blueprint $table): void {
             MigrateUtils::dropTimestamps($table, false, true, false, false);

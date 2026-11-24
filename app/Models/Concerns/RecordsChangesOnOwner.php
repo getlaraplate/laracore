@@ -42,23 +42,23 @@ trait RecordsChangesOnOwner
 
     public static function bootRecordsChangesOnOwner(): void
     {
-        static::created(static function (Model $part): void {
+        static::created(static function (self $part): void {
             $part->recordOnOwner(VersionChangeType::Created);
         });
 
-        static::updating(static function (Model $part): void {
+        static::updating(static function (self $part): void {
             $part->captureForOwner(array_keys($part->getDirty()));
         });
 
-        static::updated(static function (Model $part): void {
+        static::updated(static function (self $part): void {
             $part->recordOnOwner(VersionChangeType::Updated);
         });
 
-        static::deleting(static function (Model $part): void {
+        static::deleting(static function (self $part): void {
             $part->captureForOwner([]);
         });
 
-        static::deleted(static function (Model $part): void {
+        static::deleted(static function (self $part): void {
             $part->recordOnOwner(VersionChangeType::Deleted);
         });
     }

@@ -7,7 +7,7 @@ declare(strict_types=1);
 | All Core Pest tests use LaravelTestCase (full app + RefreshDatabase). A single
 | directory binding avoids duplicate Pest bindings when a file also calls uses().
 |
-| Speed: `composer run test:pest` (sequential) or `composer run test:pest:parallel` in Core.
+| Speed: `composer run test:pest` (parallel) or `composer run test:pest:serial` in Core.
 | `composer test` runs type coverage, unit coverage, PHPStan, Pint, etc., and is slower by design.
 | ParaTest (`--parallel`) can crash workers with coverage; use `test:unit:parallel` only when stable.
 |--------------------------------------------------------------------------

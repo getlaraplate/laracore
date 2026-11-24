@@ -43,3 +43,15 @@ it('preview toggles session flag', function (): void {
 
     preview(enablePreview: false);
 });
+
+it('user_class accepts Core User and the models extending it, and refuses a bare Laravel user', function (): void {
+    config(['auth.providers.users.model' => Modules\Core\Models\User::class]);
+    expect(user_class())->toBe(Modules\Core\Models\User::class);
+
+    config(['auth.providers.users.model' => App\Models\User::class]);
+    expect(user_class())->toBe(App\Models\User::class);
+
+    // Extends Laravel's User but not Core's: Core relies on what its User adds.
+    config(['auth.providers.users.model' => Modules\Core\Tests\Stubs\FakeAuthUser::class]);
+    expect(fn (): string => user_class())->toThrow(InvalidArgumentException::class);
+});

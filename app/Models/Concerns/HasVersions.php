@@ -33,6 +33,7 @@ use Modules\Core\Versioning\Data\VersionSetOptions;
 use Modules\Core\Versioning\Data\VersionSetRoot;
 use Modules\Core\Versioning\HardDeleteCoordinator;
 use Modules\Core\Versioning\NeverVersionedModels;
+use Modules\Core\Versioning\VersionStrategyCache;
 
 // use Illuminate\Database\Eloquent\Relations\Pivot;
 // use Illuminate\Database\Eloquent\Relations\MorphMany;
@@ -89,21 +90,12 @@ trait HasVersions
     private ?array $pending_version_delete = null;
 
     /**
-     * L1 in-memory cache for version strategy resolution.
-     * Keyed by model class name, value is the resolved VersionStrategy or false (disabled).
-     * Eliminates repeated deserialization of the persistent cache collection on every call.
-     *
-     * @var array<class-string, VersionStrategy|false>
-     */
-    private static array $version_strategy_cache = [];
-
-    /**
-     * Reset the L1 version strategy cache.
+     * Reset the L1 version strategy cache of every model, whichever class it is called on.
      * Used in tests and long-running processes to clear stale state.
      */
     public static function resetVersionStrategyCache(): void
     {
-        self::$version_strategy_cache = [];
+        VersionStrategyCache::flush();
     }
 
     public static function getVersioning(): bool
@@ -490,25 +482,12 @@ trait HasVersions
             }
         }
 
-        $model_class = static::class;
+        // L1: process-wide in-memory map, zero-cost after the first resolution of each class
+        return VersionStrategyCache::remember(static::class, function (): VersionStrategy|false {
+            $settings_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::VERSIONING_NAME_PREFIX, $this->getTable());
 
-        // L1: static in-memory map — zero-cost after first resolution per request
-        if (array_key_exists($model_class, self::$version_strategy_cache)) {
-            return self::$version_strategy_cache[$model_class];
-        }
-
-        $settings_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::VERSIONING_NAME_PREFIX, $this->getTable());
-
-        $raw = app(PerModelSettingResolver::class)->value($settings_name, false);
-
-        $strategy = $raw === false
-            ? false
-            : ($raw instanceof VersionStrategy ? $raw : VersionStrategy::from(is_scalar($raw) ? (string) $raw : ''));
-
-        // Store in L1 for subsequent calls within the same request
-        self::$version_strategy_cache[$model_class] = $strategy;
-
-        return $strategy;
+            return VersionStrategy::fromSetting(app(PerModelSettingResolver::class)->value($settings_name, false));
+        });
     }
 
     /**

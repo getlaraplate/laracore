@@ -10,7 +10,6 @@ use Exception;
 use Illuminate\Support\Facades\Log;
 use Laravel\Scout\EngineManager;
 use Laravel\Scout\Engines\Engine;
-use Modules\Core\Cache\HasCache;
 use Modules\Core\Console\Concerns\HasBenchmark;
 use Modules\Core\Search\Traits\SearchableCommandUtils;
 use Override;
@@ -42,12 +41,6 @@ final class IndexCommand extends \Laravel\Scout\Console\IndexCommand
             $this->addOption('key');
 
             parent::handle($manager);
-
-            // If the model uses the HasCache trait, invalidate the cache
-            if (in_array(HasCache::class, class_uses_recursive($model), true)) {
-                new $model()->invalidateCache();
-                $this->info('Cache has been invalidated for model ' . $model);
-            }
 
             return Command::SUCCESS;
         } catch (Exception $exception) {

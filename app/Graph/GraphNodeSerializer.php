@@ -14,7 +14,7 @@ final class GraphNodeSerializer
     /**
      * @var list<string>
      */
-    private const FALLBACK_SUMMARY_FIELDS = [
+    private const array FALLBACK_SUMMARY_FIELDS = [
         'title',
         'name',
         'label',

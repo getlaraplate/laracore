@@ -29,6 +29,7 @@ use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DeferredSearchIndexing;
 use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Exceptions\UnsupportedSearchEngineException;
+use Modules\Core\Search\Extensions\HidesExtendedRows;
 use Modules\Core\Search\Schema\FieldDefinition;
 use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Search\Schema\IndexType;
@@ -189,7 +190,9 @@ trait Searchable
      */
     public function makeAllSearchableUsing(Builder $query): Builder
     {
-        return $query->withoutGlobalScope(LocaleScope::class);
+        // A host of extenders indexes its extended rows too: the search keeps them out with the host's exclusion,
+        // and an opt-in search reads them. A no-op for a model that never registers the scope.
+        return $query->withoutGlobalScope(LocaleScope::class)->withoutGlobalScope(HidesExtendedRows::class);
     }
 
     /**

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Modules\Core\Cache;
 
-use Illuminate\Support\Facades\Cache;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 
 /**
+ * Opts a model into the CRUD response cache. Its writes are invalidated by the label listener like any other model's.
+ *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  *
  * @phpstan-type HasCacheType HasCache
@@ -25,29 +27,6 @@ trait HasCache
 
     public function invalidateCache(): void
     {
-        if (! Cache::supportsTags()) {
-            Cache::forget($this->getCacheKey());
-
-            return;
-        }
-
-        $repository = Cache::getFacadeRoot()->store();
-
-        if (method_exists($repository, 'getCacheTags')) {
-            Cache::tags($repository->getCacheTags($this->getTable()))->flush();
-        } else {
-            Cache::forget($this->getCacheKey());
-        }
-    }
-
-    protected static function bootHasCache(): void
-    {
-        static::saved(function (self $model): void {
-            $model->invalidateCache();
-        });
-
-        static::deleted(function (self $model): void {
-            $model->invalidateCache();
-        });
+        app(CacheLabelInvalidator::class)->flushTable($this->getTable(), $this);
     }
 }

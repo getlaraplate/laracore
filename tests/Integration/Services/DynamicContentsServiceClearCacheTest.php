@@ -54,29 +54,23 @@ it('clearPresetsCache bumps metadata generation so typed keys miss after reset',
     expect(Cache::get($generation_key))->toBe(4);
 });
 
-it('metadataGeneration recovers when the generation key holds a Collection', function (): void {
+it('bumps the metadata generation from 0 when the generation key holds a Collection', function (): void {
     $generation_key = 'core.dynamic_contents.generation';
+    // Fork-poisoned Redis replies, or a failover array hit, can leave a collection under the key.
     Cache::forever($generation_key, new Illuminate\Database\Eloquent\Collection([(object) ['id' => 1]]));
 
-    $service = DynamicContentsService::getInstance();
-    $method = new ReflectionMethod(DynamicContentsService::class, 'metadataGeneration');
-    $method->setAccessible(true);
+    DynamicContentsService::getInstance()->clearPresetsCache();
 
-    expect($method->invoke($service))->toBe(0)
-        ->and(Cache::get($generation_key))->toBe(0);
+    expect(Cache::get($generation_key))->toBe(1);
 });
 
-it('rememberForeverCollection reloads when the persistent cache returns a plain array', function (): void {
-    $cache_key = 'core.dynamic_contents.test:array-rehydrate';
-    Cache::forever($cache_key, ['not' => 'a-collection']);
+it('reloads a list the label index answers as a plain array, and stores the reloaded collection over it', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\PlainArrayHitLabelIndex((new App\Models\Entity())->getCacheKey() . ':');
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
 
-    $service = DynamicContentsService::getInstance();
-    $method = new ReflectionMethod(DynamicContentsService::class, 'rememberForeverCollection');
-    $method->setAccessible(true);
+    $entities = DynamicContentsService::getInstance()->fetchAvailableEntities(App\Casts\EntityType::Pages);
 
-    $fresh = new Illuminate\Database\Eloquent\Collection();
-    $result = $method->invoke($service, $cache_key, static fn (): Illuminate\Database\Eloquent\Collection => $fresh);
-
-    expect($result)->toBe($fresh)
-        ->and($result)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
+    expect($entities)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class)
+        ->and($index->stored_values)->toHaveCount(1)
+        ->and($index->stored_values[0])->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
 });

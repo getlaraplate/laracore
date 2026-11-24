@@ -245,6 +245,9 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
                         ],
                     ],
                 ];
+            } elseif ($value === null) {
+                // A term query takes no null: an empty field is one with no indexed value.
+                $esFilters[] = self::missingFilter((string) $field);
             } else {
                 // Simple exact match filter
                 $esFilters[] = ['term' => [$field => $value]];
@@ -1149,6 +1152,17 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
     }
 
     /**
+     * The documents with no indexed value in the field: `= null`. Elasticsearch refuses a `term` query on null, so the
+     * equality is read as the absence of a value, which is how a null is indexed.
+     *
+     * @return array<string, mixed>
+     */
+    private static function missingFilter(string $field): array
+    {
+        return ['bool' => ['must_not' => [['exists' => ['field' => $field]]]]];
+    }
+
+    /**
      * @param  array<string, mixed>  $filter
      * @return array<string, mixed>
      */
@@ -1209,6 +1223,10 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
             }
 
             return $nested;
+        }
+
+        if ($value === null && ($operator === '=' || $operator === '!=')) {
+            return $operator === '=' ? self::missingFilter($field) : ['exists' => ['field' => $field]];
         }
 
         return match ($operator) {

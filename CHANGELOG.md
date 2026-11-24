@@ -2,6 +2,468 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.83.0] - 2026-11-24
+
+### 🚀 Features
+
+- *(cache)* Cache CRUD responses through a morphTo on indexes with row labels
+- *(cache)* Warn when the Redis of the label index may evict its keys
+- *(soft-deletes)* Switching soft deletes off purges the bin, after a confirmation
+- *(locking)* Switching record locking off releases every lock, after a confirmation
+
+### 🐛 Bug Fixes
+
+- *(cache)* Keep Redis flush records for the largest store window in use
+- *(cache)* Store no value read inside an open transaction
+- *(cache)* Version counters degrade on memcached failures and never restart at 0
+- *(soft-deletes)* The feature follows the model after a remove
+- *(cache)* A smaller store window keeps a larger one recorded alive for its own window
+- *(soft-deletes)* Purge the bin with the lock guard lifted
+- *(cache)* Label an empty morphTo with the key name of its own target class
+- *(cache)* The eviction policy check never degrades the index, and ignores a Redis without a memory limit
+- *(cache)* A write memcached buffers is a served call for the version counters
+- *(soft-deletes)* Purge a table no model reads in one statement, whatever its key
+- *(soft-deletes)* Keep the bin of a model that pins soft deletes on in code
+- *(jobs)* Retry the bin purge and the lock release
+- *(jobs)* Never run two purges or two lock releases of one table at once
+
+### 📚 Documentation
+
+- *(soft-deletes)* Say what the remove migration purges at deploy
+
+### 🎨 Styling
+
+- *(core)* Type the search sync chunk closures and point at the renamed pest script
+
+### 🧪 Testing
+
+- *(core)* Rewrite the deferred tests through public behaviour
+- *(dynamic-contents)* Restore the same-module mapping cases
+
+### ⚙️ Miscellaneous Tasks
+
+- *(cache)* Drop the cleanup of the flush hash no release shipped
+
+## [1.82.0] - 2026-11-23
+
+### 🚀 Features
+
+- *(versioning)* Switching a table's versioning off purges its edit history
+
+### 🐛 Bug Fixes
+
+- *(versioning)* An empty versioning setting reads as off
+- *(settings)* A stored false shows as its choice in the JSON setting select
+- *(locking)* The optimistic lock command stores its setting row
+- *(cache)* No value cached forever outside the label index
+- *(cache)* A stats failure pauses counting for a minute, not for the process
+- *(search)* Reindexing no longer flushes the CRUD cache of the model
+- *(cache)* A lost database connection degrades a failover index too
+- *(cache)* A flush Redis answers with an error degrades the index instead of vanishing
+- *(cache)* A rolled back transaction flushes what it collected
+- *(cache)* A deferred flush waits for the commit of its own connection
+- *(cache)* Prune the legacy labelflush hash of the Redis index
+- *(cache)* Dynamic content lists go through the label index
+- *(cache)* Register a deferred flush on its own connection's transaction
+- *(cache)* Flush the dynamic content lists after the commit of the write
+- *(cache)* A flush a memcached store refuses degrades the index
+- *(cache)* No modules table flag kept for good, the CRUD doc names the rollback flush
+
+### 🚜 Refactor
+
+- *(cache)* One remember helper for values cached through the label index
+
+### 📚 Documentation
+
+- *(versioning)* Switching versioning off and on
+- *(cache)* The failover retry pacing is per process, the marker per host
+- *(cache)* The label cache docs follow the follow-up fixes
+- *(cache)* Store window agreement, uncounted refusals, script cost, primary clock
+- *(cache)* The lost connection detector also matches some non-outages
+
+### ⚡ Performance
+
+- *(cache)* LabelledCache::forget() computes the key without reading the value
+
+### 🧪 Testing
+
+- *(versioning)* Switched back on, versioning anchors each record at its first save
+- *(cache)* Label cache tests through public behaviour, with unconditional cleanup
+- *(cache)* The flush outside a transaction, the scope reset, members on Redis
+- *(crud)* A rolled back write misses the cached list once, as M4 flushes it
+
+## [1.81.0] - 2026-11-19
+
+### 🚀 Features
+
+- *(cache)* Label index contract with in-memory and version-counter indexes
+- *(cache)* Redis membership label index
+- *(cache)* Label index selection, failover degradation, prune and stats commands
+- *(crud)* Resolve cache labels of a CRUD read
+- *(cache)* Flush labels on model events and pivot writes after commit
+- *(crud)* Look up the response cache before computing a read
+- *(cache)* Flush user, role and ACL labels on permission changes
+
+### 🐛 Bug Fixes
+
+- *(crud)* History reads the record its key names
+- *(cache)* Order label flushes independently of the test clock
+- *(cache)* Bounded Redis prune and flush, redis test group
+- *(cache)* Shared outage marker, narrow outage exceptions, cheaper stats
+- *(crud)* History labels without rowLabels, default eager loads, role keys parameter
+- *(crud)* Label default withCount relations
+- *(cache)* Flush immediately outside a transaction, keep legacy tag hooks
+- *(cache)* Start a missing version counter on stores that do not increment one
+- *(cache)* Flush grant scope labels on every pivot write, and inherited roles on ACL writes
+- *(cache)* Close the final review findings on the label index
+- *(cache)* Flush the tables Core writes without model events
+- *(cache)* Keep row precision on CRUD API writes
+- *(cache)* Flush the modifiable record on approval writes
+- *(search)* Filter dates and nulls on Typesense
+
+### 🚜 Refactor
+
+- *(crud)* Split requested relation paths into display and membership
+- *(cache)* Move remaining tag users to labels
+- *(cache)* Share one active cron loader between warm and scheduler
+- *(cache)* Scope the pending label set to the request, typed script replies
+
+### 📚 Documentation
+
+- *(cache)* Membership labels and the response cache
+- *(cache)* Document recovery, degraded redis, stats buckets and limits
+- *(cache)* One flush per transaction, the store window and the write path cost
+- *(crud)* SearchHitsQuery describes XS5 before its parameters
+
+### ⚡ Performance
+
+- *(cache)* Flush the labels of a transaction once after its commit
+- *(cache)* Flush Redis labels in one script, keep flush records for the store window
+- *(cache)* Count label stats in one script on a Redis stats store
+
+### 🎨 Styling
+
+- *(core)* Declare the types pest type-coverage was missing
+
+### 🧪 Testing
+
+- *(core)* The media search answers on the generic search route, by POST and GET
+- *(search)* Check the header the Elasticsearch client sends, not the handler stack's text
+- *(cache)* Prove label flushes of clearByEntity, invalidateCache and morph pivots
+- *(crud)* Response cache invalidation by entity on both index kinds
+- *(crud)* Row-level invalidation of embedded records
+- *(crud)* Add tests for modify route to ensure it rejects multiple keys
+- *(core)* Purge check on batch seeder without a Redis server
+
+## [1.80.0] - 2026-11-18
+
+### 🚀 Features
+
+- *(core)* Permissions per guard and guard-aware checks
+- *(core)* Passkey login, social registration guard and per-method second factor
+- *(core)* One authentication and one switch for every api route
+- *(search)* Optional per-stage timings in the search meta
+- *(core)* Introduce RelationFilter for nested ACL conditions on related records
+- *(core)* Relation filters in ACLs
+- *(search)* Strategy resolver contract with a cheap default
+- *(search)* Resolve the search strategy per request
+- *(core)* Related records obey their own permission and ACL
+- *(core)* Every relation declares its return type
+- *(core)* Relation sync works only within what the writer can read
+- *(search)* Balanced mode, and a failing embedder no longer fails the search
+- *(search)* Quality-driven retries
+- Guest is empty on web and holds the public list on api
+- Hide attributes from anonymous callers and project media on the api guard
+- Preload the relations the appended attributes read, once per result set
+- *(core)* Personal API tokens and service accounts
+- *(core)* Edit pages refuse to overwrite a record that changed since the form was opened
+- *(core)* System reads lift the per-row select check for every class
+- *(search)* Cost and retry parameters with their cost controls
+- *(search)* Report the fallbacks inside a search as degraded_reason
+- *(core)* Cron jobs take parameters, placeholders and the scheduler flags from the table
+- *(core)* Scope filter node, FilterScope attribute and ScopeGuard
+- Declare the validity and activation scopes as filter scopes (scope filters task 6)
+- *(core)* Store and validate scope filter nodes in ACLs (scope filters task 2)
+- *(core)* Apply scope filter nodes in CRUD queries and ACL reads (scope filters task 3)
+- *(core)* Accept client scope filter nodes in CRUD requests (scope filters task 4)
+- *(crud)* Resolve translated and dynamic fields from a plain filter property
+- *(core)* Leave scope filters out of search engines, enforce them at rehydration (scope filters task 5)
+- *(filament)* Describe scope nodes in the ACL table and validate them in the ACL form
+- *(crud)* Filter on attributes a model mounts from a related record
+- *(core)* Let a writer that owns the order keep a new record's position
+- *(core)* Let the user pick the backoffice language from the user menu
+- *(core)* Attribute labels under app.fields, named like the database columns
+- *(core)* Auth:reset-password command
+- *(core)* Filament labels attributes from the owning module's fields keys
+- *(core)* Resources named from entities keys, navigation groups by key
+- *(core)* Backoffice strings from the app lang file
+- *(core)* Filament pages load and save the translated fields they edit
+- *(core)* Enhance user roles handling and service account management
+- *(core)* Remaining backoffice strings, label sections documented
+- *(core)* Backoffice content language apart from the interface; translation fixes
+- *(core)* The default_language setting sets the default locale
+- *(core)* Store modules in core_modules instead of a setting
+- *(core)* Move the owner's updated_at when a part of it changes
+- *(core)* Absorb the VersionStrategy enum (D14)
+- *(core)* Make Version a Core model without the library base (D14)
+- *(core)* Absorb the Versionable trait into HasVersions (D14)
+- *(core)* Rename the history tables to core_versions* (D15)
+- *(core)* Make the history tables append-only (D19)
+- *(core)* Record trashed and restored change types (D20)
+- *(core)* Add capture, baseline kind and SET NULL revert link (D52, D53, D58)
+- *(core)* Apps the user can open in the profile response
+- *(crud)* Aggregate error codes, limits and config
+- *(crud)* ColumnKinds and aggregate test kit
+- *(crud)* Time buckets, day truncation and aggregate periods
+- *(crud)* AggregateQuery and AggregateRequest
+- *(crud)* Aggregate engine totals and CrudService::aggregate
+- *(crud)* Aggregate grouping by column and relation
+- *(crud)* Decimal-safe roll-up of aggregate bucket partials
+- *(crud)* Aggregate time buckets, periods and comparison
+- *(crud)* Aggregate currency detection and mixed-currency warnings
+- *(crud)* Aggregate route, limiter and error mapping
+- *(crud)* Sort and select by a column of a to-one relation, and by mounted attributes
+- *(core)* Laraplate brand icon as the default app logo, new app favicon setting
+- *(core)* Welcome page shows the brand icons beside the module names, application version and description, no big logo
+- *(search)* Keep the report context of a reranker failure in its warning
+- *(core)* Rebuild the state at a revision from its nearest snapshot (C08, D61)
+- *(core)* Store the creation set of a root as a baseline (D53, D60)
+- *(core)* Never version comments, ratings and translations (D8, D10)
+- *(core)* Tell an application transaction from the test harness's (D52)
+- *(core)* Lock a root without dropping its relations or its lock version (D34)
+- *(core)* One version set per root in one transaction (D43)
+- *(core)* Record the capture quality of each version set (D47, D52)
+- *(core)* Translation changes are rows of the owner's history (D10, D11, D28)
+- *(core)* The save of a root with translations opens its revision scope (D28, D34)
+- *(core)* A translation saved on its own opens its owner's scope (D52)
+- Format and classify .env values
+- Read and extend .env files atomically
+- Add env:fill to align a .env with .env.example
+- *(core)* A translation-only revision raises the owner's lock version once (D23)
+- *(core)* WithinRevision() takes the options of its revision (D28)
+- *(core)* Relation coverage and refusal of symmetric relations (D24, D57)
+- *(core)* Membership rows from the events of the custom pivot (D41, D42)
+- *(core)* Relation subclasses open the revision scope on both sides (D42, D52)
+- *(core)* Validity, tab-count and media draft values are settings
+- *(crud)* Implement atomic updates for records and relations in CrudService
+- *(versioning)* Hard delete through the coordinator with one snapshot set (Slice 4 C1, C2)
+- *(versioning)* Model:clear-expired purges through the coordinator (Slice 4 C3)
+- *(core)* Style the embedded Horizon dashboard with the panel theme
+- *(core)* Mark text shown in another locale with a grey suffix on the same line
+- *(migrate-utils)* Unique index over live rows only
+- *(core)* Vector profile contract and context
+- *(versioning)* A whole-aggregate baseline after a best_effort set (D45, D52, D60)
+- *(versioning)* Only an atomic baseline anchors (D47); baselines need a locked root; history leaves the baseline image out
+- *(core)* Dates in the query become a filter
+- *(core)* Request words and an unstemmed field in keyword search
+- *(core)* Optional similarity floor carried by the vector profile
+- *(core)* Models can declare an embedding context header
+- *(core)* Scout:rebuild command
+- *(core)* Update table filters layout and refactor rebuild index command confirmation
+- *(versioning)* Schema epochs table and the epoch of each version row
+- *(versioning)* Schema epoch of a root class, read at its first write per process
+- *(versioning)* A schema epoch change makes a baseline due (D33)
+- *(health)* Show the cache store and the search engine version on the Cache page
+- *(welcome)* Trim the application card and lay the cards out as a masonry
+- *(search)* A testing hack to try the Elasticsearch 9 client against a server of major 8
+- *(core)* Plain text of an Editor field
+- *(core)* Declare an indexed relation once for document and mapping
+- *(core)* Host and extender contracts with a generic host implementation
+- *(core)* Refuse a preset field that would shadow an extender column
+- *(core)* Search an extender through the index of its host
+- *(core)* With_extended opens a host list to the extended rows the user may read
+
+### 🐛 Bug Fixes
+
+- *(core)* Register no view path for a module without views
+- *(core)* Repair guard-aware User::hasPermission and seeder default guard
+- *(core)* Type the default guard fallback of the permission uniqueness rule
+- *(core)* Self-authenticated api routes, token-only principals, 403 for authenticated denials
+- *(core)* Throttle only failed bearer authentications per client address
+- *(core)* Read a bearer claim the way Sanctum does and never resolve a token outside its checks
+- *(core)* Relation filters fail closed on a list-form group and on an unsafe relation name
+- *(core)* The filters cast refuses what it cannot read instead of skipping or guessing
+- *(core)* The filters cast fails closed on unreadable columns and empty relation groups
+- *(core)* The filters cast accepts only the exact keys of one node kind and refuses constraint-free groups
+- *(core)* A read request runs only the model methods declared for the CRUD
+- *(core)* Related reads fail closed outside the permission scheme, and group_by, facets and trees obey the related ACL
+- *(core)* Pending modifications are read only by who may update or approve the record
+- The history route needs update or approve and serializes the record through the model
+- *(core)* Token expiry timezone, guest identity and atomic token creation
+- *(core)* Final review fixes of the API access control
+- *(core)* Parts read with their parent's permission on hydration; keep dynamic contents in history
+- *(core)* A part hydrates with its own select or its owner's
+- *(core)* A part hydrates with the select of any model along its chain
+- *(core)* A Filament save writes the translated fields and the sort column that the form edits
+- *(core)* Treat a delete with soft deletes switched off as a force delete after authorization
+- *(core)* Refuse unknown filter nodes and after-query scopes (scope filters task 2 review)
+- *(core)* Take the stored property filter hunks out of the scope filter commit
+- *(core)* Gate client scope filters in the request parser (scope filters task 4 review)
+- *(crud)* Apply a filter group as one nested condition (scope filters task 5 review)
+- *(core)* Refuse scope filters that add no condition or reach rows through subqueries for clients
+- *(core)* Drop the is_deleted toggle from the field form
+- *(core)* Nest the list and relation filter groups, as applyFilters() does
+- *(crud)* Constrain the translation locale on the base query
+- *(core)* Send a valid link from the backoffice Reset Password action
+- *(core)* Let auth:reset-password save a locked user
+- *(core)* Read the default locale from app.default_locale, not app.locale
+- *(core)* Lang:check-translations writes Pint-formatted lang files
+- *(core)* Versions:compact refuses to run until compaction is redefined
+- *(core)* A revert on a record locked by somebody else is refused
+- *(core)* No generated permission on core_versions
+- *(core)* A record deleted for good takes its polymorphic children along
+- *(core)* A hard delete closes the pending modifications instead of removing them
+- *(core)* Ensure controllers directory exists before loading files
+- *(crud)* Tighten AggregateQuery and AggregateRequest validation
+- *(crud)* Omit aggregate other when no group is left out
+- *(crud)* Treat a blank currency like a null one in aggregate partials
+- *(crud)* Fail loudly on an unreadable aggregate day
+- *(crud)* Keep aggregate compare.series chronological
+- *(crud)* A temporal cast on a numeric column is not a date column
+- *(crud)* Sort the null aggregate group last on every driver
+- *(crud)* Refuse an unreadable aggregate filter with UNREADABLE_FIELD
+- *(crud)* Report aggregate deployment faults and log refused arguments
+- *(crud)* Refuse an unsupported bucket driver before any query
+- *(crud)* Report the aggregate refusals the action answers
+- *(core)* Recognise the official modules by the getlaraplate/lara* package names
+- *(core)* The Laraplate block of the Welcome page has no logo and no version
+- *(core)* The blueprint icon set everywhere, no plate
+- *(search)* Type the engine and the reranker keys of EnsembleSearchService
+- *(core)* A soft delete is a DIFF of deleted_at whatever the strategy
+- *(core)* The creation version is read back after the insert (C09)
+- *(search)* Clear the PHPStan errors of the search services, jobs and engines
+- *(core)* Keep the lock columns out of the version history (D21)
+- *(search)* Type the Searchable trait for PHPStan
+- *(media)* Clear the PHPStan errors of Media
+- Env:fill writes through symlinks, keeps edits and owner, never leaks a warning, keeps example text
+- *(core)* Media draft TTL of 0 keeps disabling pruning
+- *(benchmark)* Measure boot up to the end of provider boot
+- *(core)* The cache health page renders its widget again
+- *(core)* Swagger leaves out redirect and view routes
+- *(core)* The search engine health widget counts indexed documents
+- *(core)* The search engine health widget counts records as the import does
+- *(core)* Skip the self-read exemption for rows without a key
+- *(core)* The backoffice falls back to any locale where the default one is missing too
+- *(versioning)* Baseline policy reads the root by table; no baseline for a root whose row is gone
+- *(core)* Fill toggles on hidden attributes from the record being edited
+- *(versioning)* Epochs survive rollbacks and concurrent inserts; the anchor's epoch decides
+- *(versioning)* Epochs per table, declared types, relation keys, root connection
+- *(versioning)* Narrow the root key before locking it
+- *(aggregate)* Refuse an amount whose currency the caller cannot read
+- *(aggregate)* Refuse a relation filter node instead of applying it to the main record
+- *(aggregate)* Know the Oracle and SQL Server names of numeric and date types
+- *(aggregate)* Key the limiter by address for a user that is not a Core user
+- *(aggregate)* Refuse a relation group on the entity's own table
+- *(tests)* Give lightweight tests their own container before each test
+- *(authorization)* Resolve a part's chain without reading the instance
+- *(crud)* Read the filter operator in both spellings and refuse an unknown one
+- *(core)* Follow wotz/laravel-swagger-ui v2 moving the spec pipeline off the controller
+- *(core)* Register the route:list --internals option against Laravel 13
+- *(core)* Resolve the supportsVectorSearch collision with Scout 11
+- *(core)* Register the db:seed custom options against Laravel 13
+- *(core)* Read Scout builder wheres through ScoutWheres for Scout 11
+- *(core)* Make the Scout engine extend callbacks bindable
+- *(core)* Call addCommand, which is the name Symfony Console 8 kept
+- *(crud)* Refuse an unknown group operator and read filter operator names in any letter case
+- *(acl)* Cast the operators of a stored filter to the syntax of the builder
+- *(search)* Apply the compatibility header option to the client of ElasticsearchService too
+- *(search)* Apply default search filters on every search path
+- *(search)* Restrict the basic search path to the requested locale
+- *(search)* Translate the typed sub-fields of an Elasticsearch object field
+- *(approvals)* Hide a pending deletion from an anonymous HTTP visitor
+- *(cache)* Tag cached CRUD responses so their invalidation reaches them
+- *(core)* Extension filters and extended rows on every engine
+- *(search)* Filter on a null value on Elasticsearch and Typesense
+- *(search)* The Scout driver's Elasticsearch clients honour ELASTIC_COMPATIBLE_WITH
+- The minors of the env:fill review (multibyte write, CRLF, secret names, cache failure, read-only check)
+
+### 🚜 Refactor
+
+- *(core)* The placeholder resolver of the ACL filters is a shared helper
+- *(core)* Share the ACL scope walk between the save rule and the use-time check
+- *(crud)* Match translated properties on the request locale only
+- Seed the vector model under the openai_compatible provider
+- *(core)* Read the vector profile instead of core.search.vector
+- *(versioning)* Read the aggregate as rows once
+- *(core)* Rename the engine capability to offersVectorSearch
+- *(crud)* Name the operator conversions fromInput like the other enums
+- *(search)* The service and the reindex job resolve the Elasticsearch client of the container
+
+### 📚 Documentation
+
+- *(search)* Search modes, degradation and retries
+- API access control
+- *(core)* API access control after the final review fixes
+- Verbatim AGPL-3.0 licence text, copyright in the README
+- *(crud)* Translated and dynamic field filters
+- *(core)* Scope filters in ACLs, CRUD requests and search
+- *(core)* Scope filters date parameter types, real 422 text, HasValidity README pointer
+- *(core)* Scope filters that add no condition, client scopes without subqueries, review corrections
+- *(crud)* Attributes mounted from a related record
+- *(core)* Document the absorbed versioning (D14, D15, D19, D20)
+- Point the links to the getlaraplate organization
+- Fix a typo in the work in progress notice
+- Use the Laraplate brand logo in the README
+- *(crud)* Reflow the ColumnKinds class note
+- *(crud)* Say a consumer aligns compare.series by key when series is not chronological
+- *(crud)* Document the aggregate route
+- *(crud)* Correct the aggregate route documentation
+- *(core)* Document the reconstruction and the never-versioned models (Slice 2)
+- *(core)* Document the version-set manager of Slice 3
+- Document env:fill
+- *(core)* Document the save scope and the translation history (Slice 4 Part A)
+- *(core)* Draw the ACL and CRUD diagrams in Mermaid
+- *(core)* Document plan-status, its modules and git dates
+- *(core)* Complete the plan-status contract
+- *(CrudController)* Clarify method injection for dispatcher in module action
+- *(core)* Search pipeline names the AI Settings, not the removed env variables
+- *(core)* Describe relation capture from pivot events (Slice 4 Part B)
+- *(core)* Document the membership capture and the relation subclasses (Slice 4 Part B)
+- *(versioning)* The delete wrapper, the hard-delete coordinator and the snapshot set
+- *(core)* Vector search runs on a profile the AI module provides
+- *(versioning)* When a whole-aggregate baseline is written and what it holds
+- *(core)* Retrieval improvements
+- *(core)* Scout:rebuild
+- *(versioning)* Schema epochs, what the fingerprint covers and when workers restart
+- *(aggregate)* Max_objects_per_message is read by the AI show_widget tool
+- *(aggregate)* A mixed-currency amount ranks its groups by a hidden number
+- *(aggregate)* Currency readability, relation nodes and ACL notes
+- Require Laravel 13
+- *(core)* Document the Scout 11 wheres contract the engines read
+- *(rag)* A developer guide to read, list and restore the versions of a model
+- *(core)* Front matter for the user documentation index
+- *(core)* Evaluation dataset and report for the live user documentation index
+- *(core)* Extended entity search and list
+
+### 🧪 Testing
+
+- *(core)* Check the soft delete through deleted_at, apply Pint
+- *(core)* Give the soft delete probe settings table its managed column
+- *(crud)* Dynamic fields of a model with only a components column
+- *(core)* The MES machine ingest is no longer a self-authenticated route
+- *(core)* The creation set of each root is its own baseline (D53, D60)
+- *(core)* The default vector provider test holds when the AI module is installed
+- *(aggregate)* Spring-forward periods and a rate test without a dead clear
+- *(core)* Implement markEmailAsUnverified on the fallback user double
+- *(core)* The extension registry is a shared, empty-at-start singleton
+
+### ⚙️ Miscellaneous Tasks
+
+- Point repository links to the getlaraplate organization
+- Rename the Composer package to the getlaraplate vendor
+- Align the package description with the repository description
+- Align the module description with the repository description
+- *(core)* Drop overtrue/laravel-versionable (D14)
+- Call the organization CLA workflow
+- Rename the repository and package from laraplate-<module> to lara<module>
+- *(seeders)* Report every seeding step with one summary line
+- *(seeders)* Benchmark the whole seeding run once
+- Prefix perf:bench with test:
+- *(core)* Drop the search.vector settings
+- Drop the license-compliance-checker repository
+- Keep the third-party licenses in NOTICES/
+- *(deps)* Require Laravel 13 and its compatible package majors
+
 ## [1.79.0] - 2026-10-07
 
 ### 🚀 Features
@@ -940,10 +1402,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 - *(core)* Add materialized graph edge store
 - *(core)* Add orchestrated scout search
 
-### 🐛 Bug Fixes
-
-- *(core)* Encode array attributes before json validation rules
-
 ### 🚜 Refactor
 
 - *(core)* Update command descriptions, improve model checks, and enhance table widget functionality
@@ -956,6 +1414,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ### ◀️ Revert
 
 - *(core)* Defer materialized graph edge store
+
+## [1.58.8] - 2026-07-10
+
+### 🐛 Bug Fixes
+
+- *(core)* Encode array attributes before json validation rules
 
 ## [1.58.7] - 2026-07-10
 

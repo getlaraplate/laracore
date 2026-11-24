@@ -58,6 +58,7 @@ it('returns success and prints message when no tables to warm', function (): voi
     $connection->shouldReceive('getSchemaBuilder')->andReturn($schema_builder);
 
     DB::shouldReceive('connection')->withAnyArgs()->andReturn($connection);
+    DB::shouldReceive('getConnections')->zeroOrMoreTimes()->andReturn([]);
     Schema::shouldReceive('dropIfExists')
         ->zeroOrMoreTimes();
     Schema::shouldReceive('table')
@@ -82,6 +83,7 @@ it('warms inspector cache for discovered tables', function (): void {
     $connection->shouldReceive('getSchemaBuilder')->andReturn($schema_builder);
 
     DB::shouldReceive('connection')->withAnyArgs()->andReturn($connection);
+    DB::shouldReceive('getConnections')->zeroOrMoreTimes()->andReturn([]);
     Schema::shouldReceive('dropIfExists')
         ->zeroOrMoreTimes();
     Schema::shouldReceive('table')
@@ -105,6 +107,7 @@ it('returns success with no-tables message when getTables returns entries withou
     $connection->shouldReceive('getSchemaBuilder')->andReturn($schema_builder);
 
     DB::shouldReceive('connection')->withAnyArgs()->andReturn($connection);
+    DB::shouldReceive('getConnections')->zeroOrMoreTimes()->andReturn([]);
     Schema::shouldReceive('dropIfExists')
         ->zeroOrMoreTimes();
     Schema::shouldReceive('table')
@@ -129,6 +132,7 @@ it('uses provided connection option when warming inspector cache', function (): 
 
     DB::shouldReceive('connection')->with('inspector_secondary')->atLeast()->once()->andReturn($connection);
     DB::shouldReceive('connection')->withAnyArgs()->zeroOrMoreTimes()->andReturn($connection);
+    DB::shouldReceive('getConnections')->zeroOrMoreTimes()->andReturn([]);
     Schema::shouldReceive('dropIfExists')->zeroOrMoreTimes();
     Schema::shouldReceive('table')->zeroOrMoreTimes();
     Schema::shouldReceive('drop')->zeroOrMoreTimes();

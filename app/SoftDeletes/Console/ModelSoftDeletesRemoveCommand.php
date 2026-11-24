@@ -10,12 +10,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Str;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
-use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Services\PerModelSettingResolver;
-use Modules\Core\Support\Hierarchy\OwnerCascadeRegistry;
+use Modules\Core\SoftDeletes\TrashedRowsPurger;
 use Override;
 use ReflectionClass;
 use Symfony\Component\Console\Command\Command as BaseCommand;
@@ -28,10 +28,8 @@ final class ModelSoftDeletesRemoveCommand extends Command
     #[Override]
     protected $description = 'Remove SoftDeletes support (trait + migration + runtime setting) from a model. <fg=green>(⚡ Modules\Core)</fg=green>';
 
-    public function __construct(
-        private readonly Filesystem $files,
-        private readonly OwnerCascadeRegistry $ownerCascades,
-    ) {
+    public function __construct(private readonly Filesystem $files)
+    {
         parent::__construct();
     }
 
@@ -55,24 +53,24 @@ final class ModelSoftDeletesRemoveCommand extends Command
         }
 
         $table = $instance->getTable();
-        $soft_deleted_count = $this->countSoftDeletedRows($instance);
+        $purger = app(TrashedRowsPurger::class);
+        $soft_deleted_count = $purger->count($instance);
 
         if ($soft_deleted_count > 0) {
             $this->warn(sprintf('Found %d logical-deleted records on `%s`.', $soft_deleted_count, $table));
 
+            // A refusal changes nothing: no record, trait, migration or setting.
             if (! confirm('Purge those records with hard delete before removing soft delete columns?', false)) {
                 $this->warn('Operation cancelled. No columns were removed.');
 
                 return BaseCommand::FAILURE;
             }
 
-            $purged = $this->purgeSoftDeletedRows($instance);
-            $this->info(sprintf('Purged %d record(s).', $purged));
+            $this->info(sprintf('Purged %d record(s).', $purger->purge($instance)));
         }
 
         $trait_changed = $this->removeSoftDeletesTrait($reflection);
         $migration = $this->createMigration($table);
-        $setting_changed = $this->upsertSoftDeletesSetting($table, false);
 
         if (! $trait_changed) {
             $this->line('SoftDeletes trait not found on model (skipped trait removal).');
@@ -80,11 +78,9 @@ final class ModelSoftDeletesRemoveCommand extends Command
 
         $this->info(sprintf('Migration created: %s', $migration));
 
-        if ($setting_changed) {
-            $this->info(sprintf('Runtime setting soft_deletes_%s set to false.', $table));
+        if ($this->deleteSoftDeletesSetting($table)) {
+            $this->info(sprintf('Runtime setting %s deleted.', PerModelSettingResolver::nameFor(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table)));
         }
-
-        $this->updateSettingsTable($table);
 
         $this->info('Done. Review the generated migration and run `php artisan migrate`.');
 
@@ -92,33 +88,25 @@ final class ModelSoftDeletesRemoveCommand extends Command
     }
 
     /**
-     * Persist the runtime flag, bypassing the approval workflow: this runs from
-     * a maintenance command, so the change must apply immediately instead of
-     * queueing a modification nobody is going to approve.
+     * Deletes the runtime flag of the table: a flag left for a feature the model no longer has would let an
+     * administrator switch on something that does nothing. Returns whether a row was deleted.
      */
-    private function writeSoftDeletesSetting(Setting $prototype, string $table, bool $enabled): void
+    private function deleteSoftDeletesSetting(string $table): bool
     {
-        $setting = $prototype->newQuery()->firstOrNew([
-            'name' => PerModelSettingResolver::nameFor(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table),
-        ]);
+        $setting = new Setting;
 
-        $setting->setForcedApprovalUpdate(true);
-        $setting->setSkipValidation(true);
-        $setting->forceFill([
-            'value' => $enabled,
-            'encrypted' => false,
-            'choices' => [true, false],
-            'type' => 'boolean',
-            'group_name' => 'soft_deletes',
-            'description' => "Enable soft deletes for {$table}",
-        ])->save();
-    }
+        if (! $setting->getConnection()->getSchemaBuilder()->hasTable($setting->getTable())) {
+            $this->warn('Settings table not found; runtime flag was not deleted.');
 
-    private function updateSettingsTable(string $table): void
-    {
-        $key_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table);
+            return false;
+        }
 
-        Setting::query()->where('name', $key_name)->forceDelete();
+        $deleted = $setting->newQuery()->where('name', PerModelSettingResolver::nameFor(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table))->forceDelete();
+
+        // A mass delete fires no model event: flush the settings table after its commit.
+        app(CacheLabelInvalidator::class)->flushTable($setting->getTable(), $setting);
+
+        return $deleted > 0;
     }
 
     private function resolveModelClass(string $model): string
@@ -141,50 +129,6 @@ final class ModelSoftDeletesRemoveCommand extends Command
         $instance = $reflection->newInstance();
 
         return $instance instanceof Model ? $instance : null;
-    }
-
-    /**
-     * Hard delete the trashed rows. The delete bypasses model events, so a
-     * closure table would keep stale links and is rebuilt from parent_id: the
-     * model's own, and those of the hierarchies whose rows the purged owners
-     * took along by cascading foreign keys.
-     */
-    private function purgeSoftDeletedRows(Model $model): int
-    {
-        $purged = $model->getConnection()->table($model->getTable())->whereNotNull('deleted_at')->delete();
-
-        if ($purged === 0) {
-            return 0;
-        }
-
-        if (in_array(HasClosureTable::class, class_uses_recursive($model), true)) {
-            $model::rebuildClosure();
-        }
-
-        $rebuilt = [];
-
-        foreach ($this->ownerCascades->for($model::class) as $cascade) {
-            if (in_array($cascade->hierarchyTable, $rebuilt, true)) {
-                continue;
-            }
-
-            $cascade->maintainerFor($model)->rebuild();
-            $rebuilt[] = $cascade->hierarchyTable;
-        }
-
-        return $purged;
-    }
-
-    private function countSoftDeletedRows(Model $model): int
-    {
-        $table = $model->getTable();
-        $schema = $model->getConnection()->getSchemaBuilder();
-
-        if (! $schema->hasTable($table) || ! $schema->hasColumn($table, 'deleted_at')) {
-            return 0;
-        }
-
-        return (int) $model->getConnection()->table($table)->whereNotNull('deleted_at')->count();
     }
 
     private function removeSoftDeletesTrait(ReflectionClass $reflection): bool
@@ -240,21 +184,5 @@ final class ModelSoftDeletesRemoveCommand extends Command
     private function getStubPath(): string
     {
         return dirname(__DIR__) . '/Stubs/remove_soft_deletes_columns_from_table.stub';
-    }
-
-    private function upsertSoftDeletesSetting(string $table, bool $enabled): bool
-    {
-        $settings = new Setting;
-        $settings_table = $settings->getTable();
-
-        if (! $settings->getConnection()->getSchemaBuilder()->hasTable($settings_table)) {
-            $this->warn('Settings table not found; runtime flag was not updated.');
-
-            return false;
-        }
-
-        $this->writeSoftDeletesSetting($settings, $table, $enabled);
-
-        return true;
     }
 }

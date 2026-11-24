@@ -16,6 +16,7 @@ use InvalidArgumentException;
 use Modules\Core\Approvals\Operation;
 use Modules\Core\Approvals\PendingDeletionLock;
 use Modules\Core\Approvals\PendingDeletionStrategy;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Casts\CrudExecutor;
 use Modules\Core\Models\Approval;
 use Modules\Core\Models\Modification;
@@ -77,7 +78,7 @@ trait HasApprovals
      */
     public static function bootHasApprovals(): void
     {
-        static::saving(static function (Model $item): ?bool {
+        static::saving(static function (self $item): ?bool {
             if ($item->exists && ! $item->isForcedApprovalUpdate() && $item->pendingDeletionStrategy() === PendingDeletionStrategy::Block) {
                 $blocked = array_diff(array_keys($item->getDirty()), $item->attributesWritableWhilePendingDeletion(), [$item->getUpdatedAtColumn()]);
 
@@ -104,13 +105,16 @@ trait HasApprovals
         // A record deleted for good can no longer receive the changes still waiting for approval, so they are
         // closed. The rows stay, with their votes: they are the record of who asked and who approved, the
         // deletion itself included when it was approved. A move to the bin changes nothing.
-        static::deleted(static function (Model $item): void {
+        static::deleted(static function (self $item): void {
             if (! $item->exists) {
-                $item->modifications()->activeOnly()->toBase()->update(['active' => false]);
+                $modifications = $item->modifications();
+                $modifications->activeOnly()->toBase()->update(['active' => false]);
+                // A mass update fires no model event: flush the modifications table after its commit.
+                app(CacheLabelInvalidator::class)->flushTable($modifications->getRelated()->getTable(), $item);
             }
         });
 
-        static::deleting(static function (Model $item): ?bool {
+        static::deleting(static function (self $item): ?bool {
             $operation = $item->deletionOperation();
 
             return $item->shouldCapture($operation) && $item->requiresApprovalForOperation($operation)
@@ -150,7 +154,7 @@ trait HasApprovals
             return;
         }
 
-        static::restoring(static function (Model $item): ?bool {
+        static::restoring(static function (self $item): ?bool {
             if (! $item->trashed()) {
                 return null;
             }

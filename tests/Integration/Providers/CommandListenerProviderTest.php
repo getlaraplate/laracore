@@ -5,7 +5,9 @@ declare(strict_types=1);
 use Illuminate\Database\Events\MigrationsEnded;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Event;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Providers\CommandListenerProvider;
+use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
 
 beforeEach(function (): void {
     $this->provider = new CommandListenerProvider(app());
@@ -32,4 +34,14 @@ it('boot listens to MigrationsEnded and flushes caches', function (): void {
     Event::dispatch(new MigrationsEnded('run', []));
 
     expect($called)->toBeTrue();
+});
+
+it('boot flushes the inspector label after migrations', function (): void {
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+
+    $this->provider->boot();
+    Event::dispatch(new MigrationsEnded('run', []));
+
+    expect($index->flushes)->toContain(['inspector']);
 });

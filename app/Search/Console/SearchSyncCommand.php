@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Modules\Core\Search\Console;
 
 use Exception;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Laravel\Prompts\Progress;
-use Modules\Core\Cache\HasCache;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Search\Traits\Searchable;
 use Override;
@@ -70,11 +71,11 @@ final class SearchSyncCommand extends Command
             $total_chunks = ceil($total / 100);
             $chunk = 0;
             $use_soft_deletes = class_uses_trait($model_class, SoftDeletes::class);
-            $model->chunk(100, function ($records) use ($total_chunks, &$chunk, $use_soft_deletes): void {
+            $model->chunk(100, function (Collection $records) use ($total_chunks, &$chunk, $use_soft_deletes): void {
                 $chunk++;
                 $progress = new Progress(
                     'Syncing documents chunk ' . $chunk . ' of ' . $total_chunks,
-                    $records->map(static fn ($record): string => 'Record ' . $record->id)->toArray(),
+                    $records->map(static fn (Model $record): string => 'Record ' . $record->id)->toArray(),
                 );
 
                 foreach ($records as $record) {
@@ -90,12 +91,6 @@ final class SearchSyncCommand extends Command
                 gc_collect_cycles();
             });
             $this->info('Documents have been queued for indexing.');
-
-            // Se il modello usa il trait HasCache, invalida la cache
-            if (in_array(HasCache::class, class_uses_recursive($model_class), true)) {
-                new $model_class()->invalidateCache();
-                $this->info('Cache has been invalidated for model ' . $model_class);
-            }
 
             return 0;
         } catch (Exception $exception) {

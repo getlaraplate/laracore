@@ -7,6 +7,7 @@ namespace Modules\Core\Overrides;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Str;
+use Illuminate\Translation\Translator;
 use Modules\Core\Exceptions\ConfigurationException;
 use Nwidart\Modules\Facades\Module;
 use Nwidart\Modules\Traits\PathNamespace;
@@ -135,7 +136,7 @@ class ModuleServiceProvider extends ServiceProvider
 
     protected function registerDefaultTranslationPath(string $lang_path): void
     {
-        $this->callAfterResolving('translator', function ($translator) use ($lang_path): void {
+        $this->callAfterResolving('translator', function (Translator $translator) use ($lang_path): void {
             $translator->addPath($lang_path);
         });
     }

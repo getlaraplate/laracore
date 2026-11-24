@@ -8,10 +8,8 @@ use Barryvdh\LaravelIdeHelper\IdeHelperServiceProvider;
 use BladeUI\Icons\Factory as IconFactory;
 use Carbon\CarbonImmutable;
 use Closure;
-use Cron\CronExpression;
+use Elastic\Client\ClientBuilderInterface;
 use Elastic\Elasticsearch\Client as ElasticsearchClient;
-use Elastic\Elasticsearch\ClientBuilder;
-use Exception;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceCreateRecordPageClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceEditRecordPageClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceListRecordsPageClassGenerator;
@@ -53,13 +51,21 @@ use InvalidArgumentException;
 use Laravel\Fortify\Features;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Scout\EngineManager;
+use Modules\Core\Actions\Cron\LoadActiveCronJobsAction;
 use Modules\Core\ApplicationContent\ApplicationContentRetrievalProviderRegistry;
 use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProviderRegistryInterface;
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\CacheLabelIndexFactory;
+use Modules\Core\Cache\Labels\LabelledCache;
+use Modules\Core\Cache\Labels\MeasuredLabelIndex;
+use Modules\Core\Cache\Labels\PendingLabelFlushes;
+use Modules\Core\Console\PruneCacheLabelsCommand;
 use Modules\Core\Console\PruneMediaDraftsCommand;
 use Modules\Core\Console\WarmCacheCommand;
 use Modules\Core\Contracts\BootSampler;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Contracts\OutboxPublisher;
 use Modules\Core\Contracts\RefreshesConfigCache;
 use Modules\Core\Enums\CoreTables;
@@ -95,6 +101,7 @@ use Modules\Core\Listeners\SendImportFinishedNotification;
 use Modules\Core\Locking\Console\ModelLockSweepCommand;
 use Modules\Core\Locking\LockAwareUserProvider;
 use Modules\Core\Locking\Locked;
+use Modules\Core\Locking\LockingSettingConfirmation;
 use Modules\Core\Models\CronJob;
 use Modules\Core\Models\License;
 use Modules\Core\Models\User as CoreUser;
@@ -114,7 +121,7 @@ use Modules\Core\Search\Engines\ElasticsearchEngine;
 use Modules\Core\Search\Engines\TypesenseEngine;
 use Modules\Core\Search\OwnerAuthorizerRegistry;
 use Modules\Core\Search\SearchableContributorRegistry;
-use Modules\Core\Search\Support\ElasticsearchCompatibilityHeader;
+use Modules\Core\Search\Support\ElasticClientBuilder;
 use Modules\Core\Search\Support\PgvectorProfileIndex;
 use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\CronParameters;
@@ -129,6 +136,7 @@ use Modules\Core\Services\SettingChangeConfirmations;
 use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Services\StubOutboxPublisher;
 use Modules\Core\SoftDeletes\SoftDeletes;
+use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
 use Modules\Core\Support\Env\ConfigCacheRefresher;
 use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
 use Modules\Core\Support\Hierarchy\DynamicEntityCascade;
@@ -138,6 +146,7 @@ use Modules\Core\Support\OwnerTimestamp;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\VersionEpochs;
+use Modules\Core\Versioning\VersioningSettingConfirmation;
 use Modules\Core\Versioning\VersionSetManager;
 use Modules\Core\Versioning\VersionWriter;
 use Nwidart\Modules\Module as NwidartModule;
@@ -188,6 +197,13 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         $this->configureFortifyFeatures();
 
+        // Switching a table's versioning off deletes its edit history: the settings page asks first (D22).
+        $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(VersioningSettingConfirmation::class));
+        // Switching a table's soft deletes off deletes the rows in its bin for good: the settings page asks first.
+        $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(SoftDeletesSettingConfirmation::class));
+        // Switching a table's record locking off releases every lock of the table: the settings page asks first.
+        $this->app->make(SettingChangeConfirmations::class)->register($this->app->make(LockingSettingConfirmation::class));
+
         $this->registerAuths();
         $this->registerMiddlewares();
 
@@ -234,6 +250,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
         parent::register();
 
         $this->registerCacheManager();
+        $this->registerCacheLabelIndex();
 
         $this->registerPostgresConnection();
 
@@ -386,33 +403,18 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
             // Housekeeping only: expiry is evaluated on read, so a missed run changes nothing.
             $schedule->command(ModelLockSweepCommand::class)->everyFiveMinutes()->onOneServer();
+            $schedule->command(PruneCacheLabelsCommand::class)->hourly()->onOneServer();
 
-            $crons = [];
             $cache_key = new ReflectionClass(CronJob::class)->newInstanceWithoutConstructor()->getTable();
 
-            $cache = Cache::store();
-
-            if ($this->cacheSupportsTags($cache)) {
-                $cache_tags = $cache->getCacheTags();
-
-                if (Cache::tags($cache_tags)->has($cache_key)) {
-                    $crons = $this->normalizeCronJobs(Cache::tags($cache_tags)->get($cache_key));
-                } else {
-                    $crons = $this->loadCronJobsFromDatabase();
-
-                    if ($crons !== []) {
-                        Cache::tags($cache_tags)->put($cache_key, $crons);
-                    }
-                }
-            } elseif (Cache::has($cache_key)) {
-                $crons = $this->normalizeCronJobs(Cache::get($cache_key));
-            } else {
-                $crons = $this->loadCronJobsFromDatabase();
-
-                if ($crons !== []) {
-                    Cache::put($cache_key, $crons);
-                }
-            }
+            // An empty list is not stored: the next schedule run reads the table again.
+            $crons = $this->normalizeCronJobs($this->app->make(LabelledCache::class)->remember(
+                $cache_key,
+                [CacheLabel::table($cache_key)],
+                (int) config('cache.duration.long'),
+                fn (): array => $this->loadCronJobsFromDatabase(),
+                static fn (mixed $crons): bool => $crons !== [],
+            ));
 
             foreach ($crons as $cron) {
                 try {
@@ -485,67 +487,15 @@ final class CoreServiceProvider extends ModuleServiceProvider
      */
     private function loadCronJobsFromDatabase(): array
     {
-        try {
-            // Live connection check — do not use SchemaInspector here. Its process-level
-            // memoization survives across Pest tests while :memory: SQLite is wiped, which
-            // falsely reports the table as present and floods logs with QueryExceptions.
-            // Query the model's own connection (not the Schema facade default) to preserve
-            // connection affinity.
-            $cron_model = new CronJob;
-
-            if (! $cron_model->getConnection()->getSchemaBuilder()->hasTable($cron_model->getTable())) {
-                return [];
-            }
-
-            $cron_jobs = CronJob::query()
-                ->active()
-                ->select(['command', 'schedule', 'parameters', 'on_one_server', 'without_overlapping'])
-                ->get();
-
-            $normalized = [];
-
-            foreach ($cron_jobs as $cron_job) {
-                $command = $cron_job->getAttribute('command');
-                $schedule = $cron_job->getAttribute('schedule');
-
-                if ($schedule instanceof CronExpression) {
-                    $schedule = $schedule->getExpression();
-                }
-
-                if (! is_scalar($command) || ! is_scalar($schedule)) {
-                    continue;
-                }
-
-                $normalized[] = [
-                    'command' => (string) $command,
-                    'schedule' => (string) $schedule,
-                    'parameters' => $this->cronParameters($cron_job->getAttribute('parameters')),
-                    'on_one_server' => (bool) $cron_job->getAttribute('on_one_server'),
-                    'without_overlapping' => (bool) $cron_job->getAttribute('without_overlapping'),
-                ];
-            }
-
-            return $normalized;
-        } catch (Exception $e) {
-            report($e);
-
-            return [];
-        }
+        return $this->app->make(LoadActiveCronJobsAction::class)();
     }
 
     /**
-     * The parameters of a cron row as the array Laravel's scheduler takes: the column holds JSON, and a
-     * value written as a JSON string comes back as that string.
-     *
      * @return array<int|string, mixed>
      */
     private function cronParameters(mixed $parameters): array
     {
-        if (is_string($parameters)) {
-            $parameters = json_decode($parameters, true);
-        }
-
-        return is_array($parameters) ? $parameters : [];
+        return LoadActiveCronJobsAction::parameters($parameters);
     }
 
     /**
@@ -584,30 +534,21 @@ final class CoreServiceProvider extends ModuleServiceProvider
         return $normalized;
     }
 
-    private function cacheSupportsTags(mixed $cache): bool
-    {
-        return is_object($cache)
-            && method_exists($cache, 'supportsTags')
-            && $cache->supportsTags()
-            && method_exists($cache, 'getCacheTags');
-    }
-
     /**
      * Registers the search clients in the container.
      */
     private function registerSearchClients(): void
     {
+        // One builder for every Elasticsearch client, the Scout driver's included: the testing hack of
+        // ElasticsearchCompatibilityHeader reaches them all, and changes nothing unless its option is set.
+        $this->app->singleton(ClientBuilderInterface::class, ElasticClientBuilder::class);
+
         // Register Elasticsearch client
         $this->app->singleton(static function (Application $app): ElasticsearchClient {
             $default_connection = config('elastic.client.default', 'default');
             $default_connection = is_string($default_connection) ? $default_connection : 'default';
-            $config = config('elastic.client.connections.' . $default_connection);
-            $config = is_array($config) ? $config : [];
 
-            // Testing hack, see ElasticsearchCompatibilityHeader: nothing changes unless the option is set.
-            $config = ElasticsearchCompatibilityHeader::forConnection($config);
-
-            return ClientBuilder::fromConfig($config);
+            return $app->make(ClientBuilderInterface::class)->connection($default_connection);
         });
 
         // Register Typesense client
@@ -857,7 +798,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
     /**
      * Replace Laravel's cache manager so Cache:: resolves Core Repository
-     * (tryByRequest, clearByEntity, …) for every configured store including failover.
+     * (clearByEntity, clearByUser, …) for every configured store including failover.
      */
     /**
      * Register the platform's own Blade icon set.
@@ -904,6 +845,21 @@ final class CoreServiceProvider extends ModuleServiceProvider
                 $db->purge($name);
             }
         }
+    }
+
+    private function registerCacheLabelIndex(): void
+    {
+        // Scoped: labels left by a rolled back write do not outlive the request or job that collected them.
+        $this->app->scoped(PendingLabelFlushes::class, static fn (): PendingLabelFlushes => new PendingLabelFlushes());
+
+        $this->app->singleton(ICacheLabelIndex::class, static function (): ICacheLabelIndex {
+            $cache = Cache::store();
+
+            return new MeasuredLabelIndex(
+                CacheLabelIndexFactory::forStore($cache),
+                CacheLabelIndexFactory::statsRepository($cache),
+            );
+        });
     }
 
     private function registerCacheManager(): void

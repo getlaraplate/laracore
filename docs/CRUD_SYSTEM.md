@@ -428,6 +428,26 @@ group-by key may not name a method.
 }
 ```
 
+#### Extended rows: `with_extended`
+
+A model can be extended by models of other modules (CMS `contents` by Shop `products`, see
+`Modules/CMS/docs/CONTENT_EXTENSION.md`). The rows an extender owns are left out of every list and search of the
+host. `with_extended=true` on `/select` and `/search` of the host includes them (spec
+`docs/superpowers/specs/2026-11-17-extended-entity-search-design.md`, XS3 to XS6, XS12):
+
+- only the extenders whose table the caller may `select`; the others are left out without an error;
+- each extended row passes the ACL of the host and the ACL of its own entity (a user restricted to the products of a
+  company sees only those, in the content list too);
+- each extended row is returned as its extender (a product, with the content merged in); `extended_type` tells which
+  shape a row has: `null` for a plain row, the alias (`shop.product`) for an extended one;
+- requested `columns` and `relations` apply to the host row, which the extender carries; the extender's own row is
+  returned whole;
+- the parameter is ignored on a model that no module extends, an extender included.
+
+`/search` of an extender (`/search/shop/products`) runs on the index of its host with the extender's permission and
+ACL: a filter on an attribute the extender reads from its host, or on one of its own columns it indexes, is accepted;
+any other filter on an own column answers 400. `/select` of an extender reads its own table as any model.
+
 ### Detail Request
 
 ```json
@@ -696,18 +716,91 @@ permission and ACL; see [Related records](#related-records).
 
 ### Response cache
 
-A read response of an entity whose model uses `HasCache` is cached by `Cache::tryByRequest()`, keyed by the path,
-the query, the user, the roles and the token. It is tagged with the entity's table and with the user (`U{id}`) and
-role (`R{id}`) tags, each namespaced with the app name (`{app}:{tag}`), deduplicated and sorted so the order in which
-they are composed never changes the key. So:
+A read response is cached by `CrudResponseCache`, through the cache label index (`ICacheLabelIndex`). The value is
+stored under a plain key and carries membership labels used only to invalidate it: no Laravel cache tags are involved,
+so the key never depends on the tags. How labels, drivers and flushes work is described in
+`docs/rag/CACHE_LABELS_DEVELOPER.md`.
 
-- saving or deleting a record of the entity flushes its table tag (`HasCache::invalidateCache()`, `Cache::clearByEntity()`);
-- `Cache::clearByUser()` and `Cache::clearByGroup()` flush every response cached for that user or role, whatever the
-  entity: a flush invalidates every entry carrying any one of the tags, never only those carrying all of them;
-- `Cache::clearByRequest()` forgets one response and must receive the same entities, in any order, for a request of
-  the same user, because the tags of an entry are part of its key.
+**Key.** `crud:` plus a hash of the path, the input with keys sorted (so parameter order never changes the key), the
+user (anonymous for no user), the user's roles (sorted, groups included), the personal access token that authenticated
+the request (two tokens carry different abilities) and the locale of the request.
 
-On a store without tag support (`file`, `database`) the response is cached untagged and expires by its TTL only.
+**Lookup before compute.** The controller looks the response up first and runs the service only on a miss. A hit
+answers without querying.
+
+**Permission check on a hit.** A hit still runs `CrudService::authorizeCachedRead()`: the `select` permission on the
+entity, the right to see pending changes for a history read, and the permission on every relation the request names.
+A caller who lost a permission is refused even when no invalidation reached the entry.
+
+**Opting a model in.** Before a model gets `HasCache`, check what its ACL filters can name. ACL filters are runtime
+data written by an administrator, so the relation paths they name are not in the request and the response does not
+carry the labels of those relations' tables. Either no ACL filter on the model names a relation whose changes should
+change the response, or the model declares those tables through `IDeclaresCacheDependencies`. Otherwise a change of the
+related rows leaves a filtered response stale until its TTL.
+
+**What is stored.** A response is stored only when all of these hold:
+
+- the request is a read of the entity through `list`, `detail`, `tree` or `history`;
+- the main model uses `HasCache` (`usesCache()`);
+- the dependencies of the request are complete. A `morphTo` names no table before the query: on an index with row
+  labels (Redis, the array index) its labels are added after the query and checked by the store like the others; on
+  a version counter index, whose key is fixed at the lookup, a request through a `morphTo` is never stored, nor is a
+  history read that displays one (its payload holds no model to label);
+- the response status is 200;
+- the connection of the model has no transaction open (the `RefreshDatabase` wrapper of a test aside): a read inside a
+  transaction may come from a snapshot older than the lookup, which a flush committed in between could not refuse;
+- no label it carries was flushed while it was being computed (a reader that computed from old rows stores nothing).
+
+The entry lives for the default duration (`Repository::resolveDefaultCacheSeconds()`, from `cache.duration`). It is
+never stored without an expiry. Responses whose ACL filters resolve a time placeholder (such as the guest filter on
+`valid_from <= @now`) change with the clock and no write, so the default TTL is their staleness bound.
+
+**Not cached.** `search` is never cached: its rows come from a search index that is reindexed asynchronously, so a flush
+on write would let the cache refill from the index before the reindex reached it. Facets, aggregates and writes are not
+cached either. Add `no_cache=1` to a request to skip the cache for it, on lookup and on store.
+
+**Labels of a response.** `crud` and the labels of the caller (`user:{id}`, `role:{id}` for each role) always. The main
+table is a set label (`table:{table}`) for a read of many rows, and a row label (`row:{table}:{id}`) for each record of
+a read of one record. Every relation the request names adds its table: the records of a loaded `belongsTo` get row
+labels, every other relation (`hasOne`, `hasMany`, many-to-many with its pivot, through relations, and any relation used
+only to filter, sort, group or aggregate) a set label of the related table. The translations table of a translated
+model and the tables a model declares through `IDeclaresCacheDependencies` are included. A displayed `morphTo` adds,
+after the query, the row label of each loaded target and, per class loaded, what reaching that class brings (its
+translations, declared tables, default eager loads and counts); a `morphTo` used only to filter or sort adds the
+table of every type its column holds, read after the query (a new type is a write of that table, which the response
+carries, so a store racing it is refused). On an index with row labels,
+a response holding rows of a table also carries `rows:{table}`, which a whole-table flush uses to reach it.
+
+**Invalidation.**
+
+- Saving, deleting, restoring or force deleting any model flushes its table label, and for an update, delete,
+  restore or force delete its row label too (one listener on the Eloquent events, so a model needs no trait for it). A
+  creation flushes only the table label.
+- Pivot writes (`attach`, `detach`, `sync`, `toggle`, `updateExistingPivot`) flush the pivot and both side tables, once
+  per call: a `sync` of many keys flushes once.
+- An ACL write and a change of the role hierarchy flush the scope labels they change, see `ACL_SYSTEM.md` ("Caching").
+- The CRUD write endpoints (insert, update, delete, activate, inactivate, approve, disapprove, lock, unlock) call no
+  flush of their own: they write through model instances, so the model events above flush the table and the row they
+  touched and the cached details of the other rows stay. A write held for approval (HTTP 202), a disapproval and a
+  withdrawal change no record row, only a pending request: every create, change or removal of a `Modification` flushes
+  the table and the row of its record too (a preview embeds the request, and a model that hides pending deletions
+  drops the record from the lists of whoever cannot approve). A pending create has no record yet, so its request
+  flushes no record labels, only those of the modifications table. The lock writes its columns with a query that fires no event,
+  so `HasLocks` flushes the row and table labels itself. A module action (`domainAction`) runs arbitrary code and
+  flushes the whole table of the entity afterwards, as does the `clearModelCache` operation.
+- `Cache::clearByEntity()` flushes the whole table of a `HasCache` entity (its table label and `rows:{table}`, so
+  details are reached too), `Cache::clearByUser()` and `Cache::clearByGroup()` the `user:{id}` and `role:{id}` labels
+  (a flush of a label deletes every entry carrying it).
+- Every flush made inside a transaction runs after the commit, or after the rollback when the transaction rolls back
+  (a read inside it may have cached rows the rollback removed). The dynamic content lists are flushed the same way.
+- A write that fires no Eloquent event must flush the labels itself, see `CACHE_LABELS_DEVELOPER.md`.
+
+**Degraded behaviour.** With a `redis` store, alone or as the first store of `failover`, while Redis is down the index
+reads nothing and stores nothing: every read is computed and every write succeeds. Each process tries Redis again at
+most once a second (the outage marker is shared by the processes of a host, the retry pacing is per process). Invalidations issued meanwhile cannot reach Redis, so after recovery every entry stored through the
+index (label `stored`) is flushed before any entry is read or stored. On `database`, `file`, `memcached` and similar stores, version counters replace row labels
+and a record change flushes the whole table label (over-invalidation, never staleness). With the `null` store nothing
+is cached.
 
 ## Dynamic Entity Resolution
 

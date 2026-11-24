@@ -97,6 +97,9 @@ connection:
   reachable, and a trashed role between a user's role and its grandparent still lets the grandparent's permissions
   flow. `Modules\Core\SoftDeletes\RowRemoval::inDelete()` tells a delete that removes the row from one that only
   moves it to the bin.
+- Emptying the bin (`Modules\Core\SoftDeletes\TrashedRowsPurger`, behind `model:soft-deletes-remove`, its
+  migration and the soft deletes setting switched off) force deletes each row through its model, so these events
+  keep the closure, and the closures an owner's cascade reaches, in step without a rebuild.
 
 The maintenance works through the query builder, ignoring model scopes: trashed, inactive and expired rows stay in
 the closure.

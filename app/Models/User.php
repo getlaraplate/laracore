@@ -47,6 +47,7 @@ use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Models\Pivot\ModelHasRole;
 use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Observers\UserObserver;
@@ -81,6 +82,7 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
     }
     use Notifiable;
     use PasskeyAuthenticatable;
+    use ReturnsVersionedRelations;
     use SoftDeletes {
         HasVersions::delete insteadof SoftDeletes;
         HasVersions::forceDelete insteadof SoftDeletes;

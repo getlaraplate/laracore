@@ -15,7 +15,7 @@ final readonly class EnvValue
     private const string BARE_PATTERN = '/^[A-Za-z0-9_.:\/@%+,-]*$/';
 
     /**
-     * The last underscore-separated word of a name that marks it as holding a secret.
+     * The underscore-separated words of a name that mark it as holding a secret.
      *
      * @var list<string>
      */
@@ -31,19 +31,19 @@ final readonly class EnvValue
             return $value;
         }
 
-        $escaped = str_replace(['\\', '"', '$', "\r\n", "\n", "\r"], ['\\\\', '\\"', '\\$', '\\n', '\\n', '\\r'], $value);
+        $escaped = str_replace(['\\', '"', '$', "\r\n", "\n", "\r"], ['\\\\', '\\"', '\\$', '\\r\\n', '\\n', '\\r'], $value);
 
         return '"' . $escaped . '"';
     }
 
     /**
-     * Whether a variable of this name holds a secret (`API_KEY`, `DB_PASSWORD`, `GITHUB_CLIENT_SECRET`):
-     * its last underscore-separated word is one of the secret words.
+     * Whether a variable of this name holds a secret (`API_KEY`, `DB_PASSWORD`, `GITHUB_CLIENT_SECRET`,
+     * `AWS_ACCESS_KEY_ID`): one of its underscore-separated words is a secret word.
      */
     public static function isSecretName(string $name): bool
     {
         $words = explode('_', mb_strtoupper($name));
 
-        return in_array(end($words), self::SECRET_WORDS, true);
+        return array_intersect($words, self::SECRET_WORDS) !== [];
     }
 }
