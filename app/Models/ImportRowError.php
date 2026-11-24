@@ -16,6 +16,12 @@ use Override;
  * One row that could not be imported: its 1-based position, the field → messages
  * that explain why, and the raw mapped row. Together these back the downloadable
  * per-row failure report and let a user fix the source and re-import.
+ *
+ * @property int $id
+ * @property int $import_session_id
+ * @property int $row_number 1-based data row number in the source (header excluded)
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class ImportRowError extends Model implements IsPartOfParent
 {

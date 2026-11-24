@@ -13,6 +13,17 @@ use Modules\Core\Services\Translation\Definitions\ITranslated;
 use Modules\Core\Support\OwnerTimestamp;
 use Override;
 
+/**
+ * @property int $id
+ * @property int $taxonomy_id
+ * @property string $locale The locale of the translation
+ * @property string $name The translated name of the taxonomy
+ * @property string|null $slug The translated slug of the taxonomy
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ */
 final class TaxonomyTranslation extends Model implements ITranslated
 {
     use HasSlug;

@@ -16,6 +16,14 @@ use Override;
  * One vote against a captured write.
  *
  * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md.
+ *
+ * @property int $id
+ * @property int $modification_id The id of the modification
+ * @property int $disapprover_id The id of the disapprover
+ * @property string $disapprover_type The type of the disapprover
+ * @property string|null $reason The reason for the disapproval
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class Disapproval extends Model implements IsPartOfParent
 {

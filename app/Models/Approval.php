@@ -16,6 +16,14 @@ use Override;
  * One vote in favour of a captured write.
  *
  * Derived from cloudcake/laravel-approval (MIT), see NOTICES/laravel-approval.md.
+ *
+ * @property int $id
+ * @property int $modification_id The id of the modification
+ * @property int $approver_id The id of the approver
+ * @property string $approver_type The type of the approver
+ * @property string|null $reason The reason for the approval
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class Approval extends Model implements IsPartOfParent
 {

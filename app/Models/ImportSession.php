@@ -19,6 +19,25 @@ use Override;
  * chosen target entity and column mapping, the run status and the per-outcome
  * counters. It is the durable record a preview reads from, the queued job advances,
  * and the UI polls for progress.
+ *
+ * @property int $id
+ * @property int|null $user_id
+ * @property string $entity_key The registered import entity, e.g. core.user or sao.ticket
+ * @property ImportSourceFormat $source_format
+ * @property string $file_disk
+ * @property string $file_path
+ * @property string $original_filename
+ * @property ImportSessionStatus $status
+ * @property int|null $total_rows
+ * @property int $processed_rows
+ * @property int $created_rows
+ * @property int $updated_rows
+ * @property int $skipped_rows
+ * @property int $failed_rows
+ * @property \Carbon\CarbonImmutable|null $started_at
+ * @property \Carbon\CarbonImmutable|null $finished_at
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class ImportSession extends Model
 {

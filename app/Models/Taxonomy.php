@@ -29,6 +29,25 @@ use Modules\Core\Overrides\Model;
 use Override;
 use Spatie\EloquentSortable\Sortable;
 
+/**
+ * @property int $id
+ * @property int $entity_id
+ * @property int $presettable_id
+ * @property int|null $parent_id
+ * @property string|null $logo The logo of the taxonomy
+ * @property string|null $logo_full The full logo of the taxonomy
+ * @property bool $is_active Whether the taxonomy is active
+ * @property int $order_column The order of the taxonomy
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property \Carbon\CarbonImmutable $valid_from
+ * @property \Carbon\CarbonImmutable|null $valid_to
+ */
 abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, IValidatableModel, Sortable
 {
     // region Traits

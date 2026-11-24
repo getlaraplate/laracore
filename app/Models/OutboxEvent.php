@@ -10,6 +10,18 @@ use Override;
 
 /**
  * Transactional integration event awaiting publication to an external transport.
+ *
+ * @property int $id
+ * @property string $event_id
+ * @property string $event_type
+ * @property string $aggregate_type
+ * @property string $aggregate_id
+ * @property \Carbon\CarbonImmutable $occurred_at
+ * @property \Carbon\CarbonImmutable|null $published_at
+ * @property int $publish_attempts
+ * @property string|null $last_error
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class OutboxEvent extends Model
 {

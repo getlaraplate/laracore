@@ -16,6 +16,17 @@ use Modules\Core\Overrides\Pivot;
 use Override;
 use Spatie\EloquentSortable\Sortable;
 
+/**
+ * @property int $id
+ * @property int $preset_id
+ * @property int $field_id
+ * @property bool $is_required Whether the field is required
+ * @property int $order_column The order of the field
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property string|null $deleted_at
+ * @property int|null $is_deleted Whether the entity is deleted
+ */
 #[ObservedBy([FieldableObserver::class, DynamicContentMetadataObserver::class])]
 final class Fieldable extends Pivot implements Sortable
 {

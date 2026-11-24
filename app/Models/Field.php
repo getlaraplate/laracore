@@ -18,6 +18,19 @@ use Modules\Core\Observers\FieldObserver;
 use Modules\Core\Overrides\Model;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $name The name of the field
+ * @property FieldType $type The type of the field
+ * @property object $options The options of the field
+ * @property int $is_slug Whether the field takes part in the slug
+ * @property bool $is_active Whether the field is active
+ * @property bool $is_translatable Whether the field is translatable
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ */
 #[ObservedBy(FieldObserver::class)]
 final class Field extends Model implements IActivatableModel
 {

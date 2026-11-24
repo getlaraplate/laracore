@@ -14,6 +14,15 @@ use Illuminate\Notifications\DatabaseNotification;
  * mirrors the `data->scope` key so a module-scoped tray can filter at the database
  * level. The mirror is maintained here — on save — rather than in every producer,
  * and stays portable across PostgreSQL and SQLite (no DB-specific generated column).
+ *
+ * @property string $id
+ * @property string $type
+ * @property string $notifiable_type
+ * @property int $notifiable_id
+ * @property string|null $module_name
+ * @property \Carbon\CarbonImmutable|null $read_at
+ * @property \Carbon\CarbonImmutable|null $created_at
+ * @property \Carbon\CarbonImmutable|null $updated_at
  */
 final class Notification extends DatabaseNotification
 {
