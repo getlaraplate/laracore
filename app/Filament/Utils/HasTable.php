@@ -335,7 +335,7 @@ trait HasTable
             );
         }
 
-        if ($model_instance instanceof IActivatableModel) {
+        if ($hasActivation && $model_instance instanceof IActivatableModel) {
             $default_columns->add(
                 IconColumn::make($model_instance::activationColumn())
                     ->boolean()
@@ -795,7 +795,7 @@ trait HasTable
             );
         }
 
-        if ($model_instance instanceof ILockableModel) {
+        if ($hasLocks && $model_instance instanceof ILockableModel) {
             $locked_at_column = $model_instance->getLockedAtColumn();
             $default_filters->push(
                 // TernaryFilter::make('is_locked')
@@ -834,7 +834,7 @@ trait HasTable
             );
         }
 
-        if ($model_instance instanceof IActivatableModel) {
+        if ($hasActivation && $model_instance instanceof IActivatableModel) {
             $default_filters->add(
                 TernaryFilter::make($model_instance::activationColumn())
                     ->label(__('app.fields.active'))
@@ -1006,6 +1006,9 @@ trait HasTable
         }
     }
 
+    /**
+     * @return list<string>
+     */
     private static function translationFlagUrls(Model $record, FlagCDNService $flag_cdn_service): array
     {
         $translations = $record->getRelationValue('translations');

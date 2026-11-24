@@ -9,7 +9,7 @@ use Modules\Core\Filament\FilamentTraitResolver;
 /**
  * Strips computed/appended attributes from Filament form state before Livewire hydration.
  *
- * @phpstan-require-extends \Filament\Resources\Pages\CreateRecord|\Filament\Resources\Pages\EditRecord
+ * @phpstan-require-extends \Filament\Resources\Pages\Page
  */
 trait HasFilamentFormDataSanitizer
 {
