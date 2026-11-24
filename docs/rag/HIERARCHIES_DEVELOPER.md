@@ -87,8 +87,9 @@ first, then its own (`Taxonomy::getPath()`), wrapped by `getFullPath()`. Read on
 ancestors of each. `Taxonomy::assignPaths($taxonomies)` gives the whole collection that value at once: one query
 joins the closure rows of all of them (500 per query) to their ancestors, through the model's global scopes as the
 `ancestors` relation reads them, each distinct ancestor is hydrated once, and their translations come in one more. `getPath()` returns the assigned value when there is
-one and builds it from the ancestors otherwise. The value belongs to that load: a taxonomy moved afterwards keeps it
-until it is loaded again. The search indexing of contents uses it (`Content::makeSearchableUsing()`).
+one and builds it from the ancestors otherwise. The assigned value is used only while the locale, the node's parent
+and its own slug are the ones it was built from, and `refresh()` drops it; a change to an ancestor made through
+another instance is not seen until the node is loaded again or `assignPaths()` runs again. The search indexing of contents uses it (`Content::makeSearchableUsing()`).
 
 ## What the trait maintains
 

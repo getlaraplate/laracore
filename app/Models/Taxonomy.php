@@ -86,10 +86,12 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     ];
 
     /**
-     * The value of {@see self::getPath()} given by {@see self::assignPaths()} for this load; null builds it from the
-     * ancestors.
+     * The value of {@see self::getPath()} given by {@see self::assignPaths()}, with what it was built from on this
+     * node: the locale, the parent and the node's own slug. Null builds it from the ancestors.
+     *
+     * @var array{path: string, locale: string, parent: mixed, slug: mixed}|null
      */
-    private ?string $assignedPath = null;
+    private ?array $assignedPath = null;
 
     /**
      * @return class-string<Entity>
@@ -106,7 +108,8 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
      * ancestor per (taxonomy, ancestor) pair. The ancestors are read as the `ancestors` relation reads them: the
      * model's global scopes apply, and an ancestor they hide gives no segment.
      *
-     * The value belongs to this load: a taxonomy moved afterwards keeps it until it is loaded again.
+     * The value lasts while the locale, the parent and the node's own slug stay those it was built from, see
+     * {@see self::getPath()}.
      *
      * @param  iterable<array-key, mixed>  $taxonomies
      */
@@ -138,7 +141,13 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
                 }
 
                 foreach ($same_node as $taxonomy) {
-                    $taxonomy->assignedPath = self::joinChain($slugs, $taxonomy->slug ?? null, '/');
+                    $own_slug = $taxonomy->slug ?? null;
+                    $taxonomy->assignedPath = [
+                        'path' => self::joinChain($slugs, $own_slug, '/'),
+                        'locale' => LocaleContext::get(),
+                        'parent' => $taxonomy->getAttribute($taxonomy->getParentKeyName()),
+                        'slug' => $own_slug,
+                    ];
                 }
             }
         }
@@ -209,11 +218,38 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         return $relation;
     }
 
+    /**
+     * The translated slugs of the ancestors, root first, then the node's own. The value {@see self::assignPaths()}
+     * gave is used while the locale, the parent and the node's own slug are still the ones it was built from;
+     * otherwise, and after {@see self::refresh()}, the path is built again from the ancestors as they are now. A change
+     * to an ancestor made through another instance is not seen by a given value.
+     */
     #[Override]
     public function getPath(): string
     {
-        // Use slug from translation and build a stable ancestor chain
-        return $this->assignedPath ?? $this->buildAncestorChain('slug', '/');
+        $assigned = $this->assignedPath;
+
+        if ($assigned !== null
+            && $assigned['locale'] === LocaleContext::get()
+            && $assigned['parent'] === $this->getAttribute($this->getParentKeyName())
+            && $assigned['slug'] === ($this->slug ?? null)) {
+            return $assigned['path'];
+        }
+
+        $this->assignedPath = null;
+
+        return $this->buildAncestorChain('slug', '/');
+    }
+
+    /**
+     * Reload the row and forget the path {@see self::assignPaths()} gave.
+     */
+    #[Override]
+    public function refresh(): static
+    {
+        $this->assignedPath = null;
+
+        return parent::refresh();
     }
 
     public function appendPaths(): self
