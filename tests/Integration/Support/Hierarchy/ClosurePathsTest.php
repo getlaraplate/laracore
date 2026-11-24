@@ -77,15 +77,66 @@ it('keeps a hidden middle node in the path of the nodes beyond it', function ():
         ->and($paths[4])->toBe([[4, 0, '4'], [3, -1, '4.3'], [1, -3, '4.3.2.1']]);
 });
 
-it('reads the chains of every starting node in one query', function (): void {
-    $starting_nodes = ClosureTreeStubModel::query()->with('bloodline')->get();
+it('reads no closure rows when the loaded rows give every path above and below the starting nodes', function (): void {
+    $starting_nodes = ClosureTreeStubModel::query()->with('bloodline')->orderBy('id')->get();
 
     DB::enableQueryLog();
     ClosurePaths::forModel(new ClosureTreeStubModel)->assign($starting_nodes, 'bloodline');
     $queries = count(DB::getQueryLog());
     DB::disableQueryLog();
 
-    expect($queries)->toBe(1);
+    expect($queries)->toBe(0)
+        ->and($starting_nodes[2]->bloodline->map(static fn (ClosureTreeStubModel $node): array => [$node->id, $node->depth, $node->path])->all())
+        ->toBe([[3, 0, '3'], [4, 1, '3.4'], [2, -1, '3.2'], [1, -2, '3.2.1']]);
+});
+
+it('reads no closure rows for a tree with children, nothing hidden', function (): void {
+    $starting_nodes = ClosureTreeStubModel::query()->with('descendantsAndSelf')->orderBy('id')->get();
+
+    DB::enableQueryLog();
+    ClosurePaths::forModel(new ClosureTreeStubModel)->assign($starting_nodes, 'descendantsAndSelf');
+    $queries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    expect($queries)->toBe(0)
+        ->and($starting_nodes->mapWithKeys(static fn (ClosureTreeStubModel $node): array => [
+            $node->id => $node->descendantsAndSelf->map(static fn (ClosureTreeStubModel $related): array => [$related->id, $related->depth, $related->path])->all(),
+        ])->all())
+        ->toBe([
+            1 => [[1, 0, '1'], [2, 1, '1.2'], [5, 1, '1.5'], [3, 2, '1.2.3'], [4, 3, '1.2.3.4']],
+            2 => [[2, 0, '2'], [3, 1, '2.3'], [4, 2, '2.3.4']],
+            3 => [[3, 0, '3'], [4, 1, '3.4']],
+            4 => [[4, 0, '4']],
+            5 => [[5, 0, '5']],
+        ]);
+});
+
+it('reads the closure rows of the nodes below a hidden one and keeps the hidden one in their paths', function (): void {
+    DB::enableQueryLog();
+    $paths = closure_paths_of('descendantsAndSelf', hidden: [2]);
+    $closure_reads = collect(DB::getQueryLog())->filter(static fn (array $query): bool => str_contains($query['query'], 'closure_tree_nodes_closure') && ! str_contains($query['query'], 'inner join'))->count();
+    DB::disableQueryLog();
+
+    expect($paths[1])->toBe([[1, 0, '1'], [5, 1, '1.5'], [3, 2, '1.2.3'], [4, 3, '1.2.3.4']])
+        ->and($closure_reads)->toBe(1);
+});
+
+it('reads the closure rows when the loaded nodes lack the parent column', function (): void {
+    $starting_nodes = ClosureTreeStubModel::query()
+        ->with(['descendantsAndSelf' => static function (Relation $nodes): void {
+            $nodes->getQuery()->select($nodes->getRelated()->getQualifiedKeyName());
+        }])
+        ->whereKey(1)
+        ->get();
+
+    DB::enableQueryLog();
+    ClosurePaths::forModel(new ClosureTreeStubModel)->assign($starting_nodes, 'descendantsAndSelf');
+    $queries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    expect($starting_nodes[0]->descendantsAndSelf->map(static fn (ClosureTreeStubModel $node): array => [$node->id, $node->depth, $node->path])->all())
+        ->toBe([[1, 0, '1'], [2, 1, '1.2'], [5, 1, '1.5'], [3, 2, '1.2.3'], [4, 3, '1.2.3.4']])
+        ->and($queries)->toBe(1);
 });
 
 it('reads no closure rows when the loaded ancestors already give every path above the starting nodes', function (): void {
@@ -121,10 +172,22 @@ it('reads the closure rows of a starting node whose loaded ancestors miss a hidd
         ->and($closure_reads)->toBe(1);
 });
 
-it('falls back to the two ends when the closure lacks a link', function (): void {
+it('follows the parent column below the starting node when the closure lacks a link', function (): void {
     DB::table('closure_tree_nodes_closure')->where('ancestor_id', 2)->where('descendant_id', 4)->delete();
 
-    expect(closure_paths_of('descendantsAndSelf')[1])->toContain([4, 3, '1.4']);
+    expect(closure_paths_of('descendantsAndSelf')[1])->toContain([4, 3, '1.2.3.4']);
+});
+
+it('reads the closure rows when the parent column disagrees with the closure depths', function (): void {
+    DB::table('closure_tree_nodes')->where('id', 4)->update(['parent_id' => 5]);
+
+    expect(closure_paths_of('descendantsAndSelf')[1])->toContain([4, 3, '1.2.3.4']);
+});
+
+it('falls back to the two ends when the closure lacks a link the walk needs', function (): void {
+    DB::table('closure_tree_nodes_closure')->where('ancestor_id', 2)->where('descendant_id', 4)->delete();
+
+    expect(closure_paths_of('descendantsAndSelf', hidden: [3])[1])->toContain([4, 3, '1.4']);
 });
 
 it('leaves alone the starting nodes that did not load the relation', function (): void {

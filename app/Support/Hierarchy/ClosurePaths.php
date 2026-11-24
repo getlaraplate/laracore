@@ -14,11 +14,15 @@ use LogicException;
  * grandparent reads `4.2.1`; the node itself reads its own key. The tree payload of
  * {@see \Modules\Core\Services\Crud\CrudService::tree()} carries it next to the signed `depth` of each node.
  *
- * The path is read from the closure rows: a node a scope or the caller's ACL hides still stands in the path of the
- * nodes beyond it. Above a starting node, the rows the relation itself loaded give the path when they hold a node at
- * every distance up to the one reached, so the ancestors of a node, nothing hidden, read nothing more. The other paths
- * take one query per {@see self::KEY_CHUNK_SIZE} nodes, whatever the number of starting nodes; it reads the ancestors
- * of each node, at most its depth.
+ * The rows the relation itself loaded give the path when they hold every node on it, so a tree with nothing hidden
+ * reads nothing more. Above a starting node they do when they hold a node at every distance up to the one reached.
+ * Below it, each node links to its parent through the raw parent column, and the chain counts only when every step
+ * lands on a node the same starting node loaded, one level closer, and the last on the starting node itself: under
+ * closure drift that the depths do not expose, the path follows the parent column, which the closure is built from.
+ * Any gap, a node a scope or the caller's ACL hides or a selection without the parent column, reads the path from the
+ * closure rows, so a hidden node still stands in the path of the nodes beyond it: one query per
+ * {@see self::KEY_CHUNK_SIZE} such nodes, whatever the number of starting nodes; it reads the ancestors of each node,
+ * at most its depth.
  */
 final readonly class ClosurePaths
 {
@@ -27,9 +31,14 @@ final readonly class ClosurePaths
      */
     public const int KEY_CHUNK_SIZE = 500;
 
+    /**
+     * @param  string|null  $parentKeyName  The parent column linking the loaded nodes below a starting node; without it
+     *                                      every path below reads the closure rows
+     */
     public function __construct(
         private ConnectionInterface $connection,
         private string $closureTable,
+        private ?string $parentKeyName = null,
     ) {}
 
     /**
@@ -49,7 +58,9 @@ final readonly class ClosurePaths
             throw new LogicException(sprintf('Model [%s] names no closure table.', $model::class));
         }
 
-        return new self($model->getConnection(), $closure_table);
+        $parent_key_name = method_exists($model, 'getParentKeyName') ? $model->getParentKeyName() : null;
+
+        return new self($model->getConnection(), $closure_table, is_string($parent_key_name) ? $parent_key_name : null);
     }
 
     /**
@@ -66,6 +77,9 @@ final readonly class ClosurePaths
 
         /** @var array<string, array<int, string>> $above */
         $above = [];
+
+        /** @var array<string, array<string, array{depth: int, parent: string|null}>> $below */
+        $below = [];
 
         foreach ($startingNodes as $starting_node) {
             $from = self::keyOf($starting_node->getKey());
@@ -97,6 +111,12 @@ final readonly class ClosurePaths
 
                 if ($depth <= 0) {
                     $above[$from][-$depth] = $to;
+                } else {
+                    // Raw, not getAttribute(): no accessor runs per node.
+                    $below[$from][$to] = [
+                        'depth' => $depth,
+                        'parent' => $this->parentKeyName === null ? null : self::keyOf($node->getAttributes()[$this->parentKeyName] ?? null),
+                    ];
                 }
             }
         }
@@ -105,29 +125,44 @@ final readonly class ClosurePaths
             return;
         }
 
-        // Above the starting node the path climbs its own chain, which the relation has loaded when it holds a node
-        // at every distance up to the one reached; below it, the path is the chain of the node reached, read here.
-        $chains = [];
+        // Each walk's chain from the rows its starting node loaded: above, the starting node's own chain; below, the
+        // chain of the node reached. A walk whose loaded rows leave a gap reads that chain from the closure rows.
+        /** @var array<int, array<int, string>> $loaded */
+        $loaded = [];
 
-        foreach ($walks as $walk) {
-            $distance = -$walk['depth'];
+        /** @var array<string, array<int, string>> $chains_above */
+        $chains_above = [];
 
-            if ($distance >= 0 && self::holdsEveryDistance($above[$walk['from']] ?? [], $distance)) {
-                $chains[$walk['from']] ??= [0 => $walk['from']] + ($above[$walk['from']] ?? []);
+        foreach ($walks as $index => $walk) {
+            $from = $walk['from'];
+
+            if ($walk['depth'] <= 0) {
+                if (self::holdsEveryDistance($above[$from] ?? [], -$walk['depth'])) {
+                    $loaded[$index] = $chains_above[$from] ??= [0 => $from] + ($above[$from] ?? []);
+                } else {
+                    $keys[$from] = true;
+                }
+
+                continue;
+            }
+
+            $chain = self::chainBelow($from, $walk['to'], $walk['depth'], $below[$from] ?? []);
+
+            if ($chain === null) {
+                $keys[$walk['to']] = true;
             } else {
-                $keys[$walk['depth'] < 0 ? $walk['from'] : $walk['to']] = true;
+                $loaded[$index] = $chain;
             }
         }
 
-        // Keyed by node keys, numeric: merged key by key, never renumbered.
-        foreach ($keys === [] ? [] : $this->chainsOf(array_map(strval(...), array_keys($keys))) as $key => $chain) {
-            $chains[$key] = $chain;
-        }
+        // Keyed by node keys, numeric: never renumbered.
+        $chains = $keys === [] ? [] : $this->chainsOf(array_map(strval(...), array_keys($keys)));
 
-        foreach ($walks as $walk) {
+        foreach ($walks as $index => $walk) {
             $node = $walk['node'];
+            $chain = $loaded[$index] ?? $chains[$walk['depth'] < 0 ? $walk['from'] : $walk['to']] ?? [];
             // Raw, not setAttribute(): a model's mutators may do work per node (Taxonomy's dynamic-field lookup).
-            $node->setRawAttributes([...$node->getAttributes(), 'path' => implode('.', self::pathOf($walk['from'], $walk['to'], $walk['depth'], $chains))]);
+            $node->setRawAttributes([...$node->getAttributes(), 'path' => implode('.', self::pathOf($walk['from'], $walk['to'], $walk['depth'], $chain))]);
             $node->syncOriginalAttribute('path');
         }
     }
@@ -165,15 +200,14 @@ final readonly class ClosurePaths
     }
 
     /**
-     * The keys from the starting node to the node reached. A chain the closure table lacks, which only drift
-     * leaves, falls back to the two ends.
+     * The keys from the starting node to the node reached, from the chain by distance of the lower of the two. A
+     * chain that lacks a link, which only drift leaves, falls back to the two ends.
      *
-     * @param  array<string, array<int, string>>  $chains
+     * @param  array<int, string>  $chain
      * @return list<string>
      */
-    private static function pathOf(string $from, string $to, int $depth, array $chains): array
+    private static function pathOf(string $from, string $to, int $depth, array $chain): array
     {
-        $chain = $chains[$depth < 0 ? $from : $to] ?? [];
         $distance = abs($depth);
         $path = [];
 
@@ -186,6 +220,42 @@ final readonly class ClosurePaths
         }
 
         return $depth < 0 ? $path : array_reverse($path);
+    }
+
+    /**
+     * The chain by distance of a node a starting node reached below itself, from the nodes that starting node loaded
+     * below itself linked by their parent column: index 0 is the node, the last the starting node. Null when a step
+     * leaves the loaded nodes, lands on one whose depth is not one less, or the last step misses the starting node.
+     *
+     * @param  array<string, array{depth: int, parent: string|null}>  $loaded  The loaded nodes below the starting node, by key
+     * @return array<int, string>|null
+     */
+    private static function chainBelow(string $from, string $to, int $depth, array $loaded): ?array
+    {
+        // The closure row at depth 1 is the link itself.
+        if ($depth === 1) {
+            return [0 => $to, 1 => $from];
+        }
+
+        $chain = [0 => $to];
+        $current = $to;
+
+        for ($step = 1; $step <= $depth; $step++) {
+            $parent = $loaded[$current]['parent'] ?? null;
+
+            if ($parent === null) {
+                return null;
+            }
+
+            if ($step === $depth ? $parent !== $from : ($loaded[$parent]['depth'] ?? null) !== $depth - $step) {
+                return null;
+            }
+
+            $chain[$step] = $parent;
+            $current = $parent;
+        }
+
+        return $chain;
     }
 
     /**

@@ -845,7 +845,8 @@ class CrudService
 
         if (is_string($tree_relation_type)) {
             // Each node carries its signed `depth` from the relation and the `path` of keys from the node the
-            // walk starts at, read from the closure rows so that a node the ACL hides still stands in the path.
+            // walk starts at: from the loaded rows, or from the closure rows when the ACL hides a node on it, so that
+            // the hidden node still stands in the path.
             ClosurePaths::forModel($model)->assign($data instanceof Model ? [$data] : $data, $tree_relation_type);
         }
 

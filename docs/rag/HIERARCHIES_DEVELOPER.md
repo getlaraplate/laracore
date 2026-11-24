@@ -75,12 +75,16 @@ Helpers: `getDepth()`, `isRoot()`, `isLeaf()`, `isDescendantOf()`, `isAncestorOf
 `moveTo(self $newParent): bool`, which saves the new parent in a transaction and returns false, with nothing
 changed, for a move under the node itself or one of its descendants.
 
-`Modules\Core\Support\Hierarchy\ClosurePaths` reads the dotted `path` (`1.2.4`, from the node the walk started at)
-that `CrudService::tree()` returns next to the signed `depth`: one query per 500 nodes on the closure table. The
-path comes from the closure rows, so a node a scope or an ACL hides still stands in the path of the nodes beyond it.
-Above a starting node the rows the relation already loaded are enough when no ancestor is missing from them, so a
-tree with parents only, nothing hidden, reads no further row.
-Its `chainsOf()` gives each node's ancestors by distance from the same rows.
+`Modules\Core\Support\Hierarchy\ClosurePaths` sets the dotted `path` (`1.2.4`, from the node the walk started at)
+that `CrudService::tree()` returns next to the signed `depth`. The rows the relation already loaded give it when they
+hold every node on the path, so a tree with parents, children or both, nothing hidden, reads no further row. Above a
+starting node, that means a loaded ancestor at every distance. Below it, each loaded node links to its parent through
+the raw parent column, and the chain counts only when every step lands on a node the same starting node loaded, one
+level closer, and the last on the starting node: under closure drift the path follows the parent column, which the
+closure is rebuilt from. Any gap (a node a scope or an ACL hides, a selection without the parent column, a parent
+column that disagrees with the closure depths) reads the path from the closure rows instead, one query per 500 such
+nodes, so a hidden node still stands in the path of the nodes beyond it.
+Its `chainsOf()` gives each node's ancestors by distance from the closure rows.
 
 A taxonomy's own `path` accessor (`HasPath`) is a different value: the translated slugs of its ancestors, root
 first, then its own (`Taxonomy::getPath()`), wrapped by `getFullPath()`. Read on taxonomies one by one, it loads the
