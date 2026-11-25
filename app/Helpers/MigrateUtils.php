@@ -9,6 +9,7 @@ use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use InvalidArgumentException;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Locked;
 use Modules\Core\Models\Concerns\HasValidity;
 
@@ -168,6 +169,29 @@ final class MigrateUtils
     }
 
     /**
+     * Create, when missing, the table of the hierarchy locks on the connection: one row per closure table, keyed by
+     * its name, that {@see \Modules\Core\Support\Hierarchy\ClosureTableMaintainer::lock()} locks and bumps before
+     * any closure write, so writers of one hierarchy run one at a time. Rows are created on the first write.
+     *
+     * Every connection that holds a closure table needs it; Core's own migration creates it on the default one.
+     */
+    public static function hierarchyLocksTable(?ConnectionInterface $connection = null): void
+    {
+        $schema = self::connection($connection)->getSchemaBuilder();
+        $locks_table = CoreTables::HierarchyLocks->value;
+
+        if ($schema->hasTable($locks_table)) {
+            return;
+        }
+
+        $schema->create($locks_table, static function (Blueprint $table) use ($locks_table): void {
+            $table->string('name', 128)->comment('The closure table the lock serializes');
+            $table->unsignedBigInteger('version')->default(0)->comment('Bumped by every closure write, to detect a stale snapshot');
+            $table->primary('name', "{$locks_table}_PK");
+        });
+    }
+
+    /**
      * Create the closure table `{modelTable}_closure` of a hierarchical model.
      *
      * One row per ancestor and descendant pair, the node itself included at depth 0. Both keys reference the
@@ -179,7 +203,8 @@ final class MigrateUtils
      * are derived from the model table's parent column and rebuilt from it.
      *
      * Assumes the model table's key is a big-integer `id` (as created by `$table->id()`): both keys are
-     * `foreignId()` columns referencing it.
+     * `foreignId()` columns referencing it. Creates the hierarchy locks table on the same connection when missing
+     * (see {@see self::hierarchyLocksTable()}).
      */
     public static function closureTable(string $modelTable, ?ConnectionInterface $connection = null): void
     {
@@ -188,6 +213,7 @@ final class MigrateUtils
         $closure_table = $modelTable . '_closure';
         $depth_index_name = $closure_table . '_descendant_depth_idx';
         self::assertIdentifier($depth_index_name);
+        self::hierarchyLocksTable($connection);
 
         $connection->getSchemaBuilder()->create($closure_table, static function (Blueprint $table) use ($modelTable, $depth_index_name): void {
             $table->foreignId('ancestor_id')->constrained($modelTable)->cascadeOnDelete();

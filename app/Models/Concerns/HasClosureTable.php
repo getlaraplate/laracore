@@ -29,12 +29,13 @@ use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
  * written only here: the relations refuse pivot writes.
  *
  * Maintenance, each write in a transaction on the model connection:
- * - created: the node's closure rows;
+ * - created: the node's closure rows (a parent the closure does not know is linked first from the parent column);
  * - updating with a new parent: refused with {@see HierarchyCycleException} when the parent is the node or one of
  *   its descendants, before anything is saved;
  * - updated with a new parent: the whole subtree moves;
  * - deleting, when the row really goes: the node's children and strict ancestors are read, nothing is written, so
- *   a listener that cancels the delete leaves the closure as it was;
+ *   a listener that cancels the delete leaves the closure as it was; inside a caller's transaction the hierarchy
+ *   lock is taken first ({@see ClosureTableMaintainer::lock()}), so the read cannot go stale before `deleted`;
  * - deleted, once the row is gone: the subtree of each child still orphaned by the delete is unlinked from those
  *   ancestors (a child a `deleting` listener re-parented was moved by its own save). The node's own rows go
  *   with the cascading foreign keys, and the children's parent column with the parent foreign key.
@@ -43,12 +44,18 @@ use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
  * A plain `save()` or `delete()` opens no transaction around the model write, so the write and the closure step
  * are atomic only inside the caller's own transaction (`saveOrFail()`, `DB::transaction()`). Writes that fail
  * between the two, and writes that bypass model events, leave the closure behind; {@see self::rebuildClosure()}
- * repairs it.
+ * repairs it. Every closure write takes the hierarchy lock, so concurrent writers of one hierarchy run one at a time.
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  */
 trait HasClosureTable
 {
+    /**
+     * Keys bound per statement when a delete reads its children back, under the 1000 of an Oracle IN list and the
+     * 2100 parameters of SQL Server.
+     */
+    private const int CLOSURE_KEYS_PER_STATEMENT = 400;
+
     /**
      * What a delete under way read for the closure in `deleting`, written in `deleted`: the node's children and
      * strict ancestors. Null when no delete of the row is under way.
@@ -287,7 +294,17 @@ trait HasClosureTable
         });
 
         static::deleting(static function (self $node): void {
-            $node->closureDetachment = $node->deleteRemovesRow() ? $node->readClosureDetachment() : null;
+            if (! $node->deleteRemovesRow()) {
+                $node->closureDetachment = null;
+
+                return;
+            }
+
+            if ($node->getConnection()->transactionLevel() > 0) {
+                ClosureTableMaintainer::forModel($node)->lock();
+            }
+
+            $node->closureDetachment = $node->readClosureDetachment();
         });
 
         static::deleted(static function (self $node): void {
@@ -322,16 +339,21 @@ trait HasClosureTable
         }
 
         $parent_column = $this->getParentKeyName();
+        $left = [];
 
-        return self::closureKeys(
-            $this->getConnection()->table($this->getTable())
-                ->whereIn($this->getKeyName(), $childIds)
-                ->where(function (QueryBuilder $orphaned) use ($parent_column): void {
-                    $orphaned->whereNull($parent_column)->orWhere($parent_column, $this->closureKey());
-                })
-                ->pluck($this->getKeyName())
-                ->all(),
-        );
+        foreach (array_chunk($childIds, self::CLOSURE_KEYS_PER_STATEMENT) as $chunk) {
+            $left = [...$left, ...self::closureKeys(
+                $this->getConnection()->table($this->getTable())
+                    ->whereIn($this->getKeyName(), $chunk)
+                    ->where(function (QueryBuilder $orphaned) use ($parent_column): void {
+                        $orphaned->whereNull($parent_column)->orWhere($parent_column, $this->closureKey());
+                    })
+                    ->pluck($this->getKeyName())
+                    ->all(),
+            )];
+        }
+
+        return $left;
     }
 
     /**

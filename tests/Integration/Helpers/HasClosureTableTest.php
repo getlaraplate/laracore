@@ -824,3 +824,51 @@ it('reads the closure row of each node without building a pivot model for it', f
         ->and($ancestor->isDirty())->toBeFalse()
         ->and($ancestor->relationLoaded('pivot'))->toBeFalse();
 });
+
+it('links a parent a bulk insert left out of the closure when a child is created under it', function (): void {
+    $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $bulk_parent = (int) DB::table('closure_tree_nodes')->insertGetId(['parent_id' => $root->id]);
+
+    $child = ClosureTreeStubModel::query()->create(['parent_id' => $bulk_parent]);
+
+    $rows = closureTreeRows();
+    ClosureTreeStubModel::rebuildClosure();
+
+    expect($rows)->toBe(closureTreeRows())
+        ->and($child->ancestors->modelKeys())->toBe([$bulk_parent, $root->id]);
+});
+
+it('takes the hierarchy lock before reading what a delete inside a transaction detaches', function (): void {
+    $forest = closureTreeForest();
+    $statements = [];
+    DB::listen(static function ($query) use (&$statements): void {
+        $statements[] = $query->sql;
+    });
+
+    DB::transaction(fn (): ?bool => $forest['a']->fresh()->delete());
+
+    $touching = array_values(array_filter(
+        $statements,
+        static fn (string $sql): bool => str_contains($sql, 'closure_tree_nodes_closure') || str_contains($sql, CoreTables::HierarchyLocks->value),
+    ));
+
+    expect($touching[0] ?? '')->toContain(CoreTables::HierarchyLocks->value)
+        ->and($forest['a1']->fresh()->parent_id)->toBeNull();
+});
+
+it('reads back more children of a deleted node than one statement binds', function (): void {
+    $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
+    $doomed = ClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
+    $now = now();
+    DB::table('closure_tree_nodes')->insert(array_fill(0, 450, ['parent_id' => $doomed->id, 'created_at' => $now, 'updated_at' => $now]));
+    ClosureTreeStubModel::rebuildClosure();
+
+    $doomed->fresh()->delete();
+
+    $rows = closureTreeRows();
+    ClosureTreeStubModel::rebuildClosure();
+
+    expect($rows)->toBe(closureTreeRows())
+        ->and(DB::table('closure_tree_nodes_closure')->where('ancestor_id', $root->id)->count())->toBe(1)
+        ->and(DB::table('closure_tree_nodes')->whereNull('parent_id')->count())->toBe(451);
+});

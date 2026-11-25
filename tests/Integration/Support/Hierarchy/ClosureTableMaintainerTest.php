@@ -2,15 +2,20 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\ConcurrencyErrorDetector;
+use Illuminate\Database\DeadlockException;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Exceptions\HierarchyCycleException;
+use Modules\Core\Exceptions\HierarchyWriteConflictException;
 use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
 use Modules\Core\Tests\Stubs\ClosureTreeStubModel;
+use Modules\Core\Tests\Stubs\Hierarchy\StaleSnapshotConnection;
 
 const MAINTAINER_NODES = 'closure_maintainer_nodes';
 const MAINTAINER_CLOSURE = 'closure_maintainer_nodes_closure';
@@ -60,6 +65,24 @@ function maintainerClosureRows(string $table = MAINTAINER_CLOSURE, ?string $conn
     sort($rows);
 
     return $rows;
+}
+
+/**
+ * The version of a closure table's hierarchy lock; null before its first write.
+ */
+function maintainerLockVersion(string $closureTable = MAINTAINER_CLOSURE, ?string $connection = null): ?int
+{
+    $version = DB::connection($connection)->table(CoreTables::HierarchyLocks->value)->where('name', $closureTable)->value('version');
+
+    return $version === null ? null : (int) $version;
+}
+
+/**
+ * Inserts a node row without its closure rows, as a bulk write does, returning its key.
+ */
+function maintainerBulkNode(?int $parentId): int
+{
+    return (int) DB::table(MAINTAINER_NODES)->insertGetId(['parent_id' => $parentId]);
 }
 
 /**
@@ -197,15 +220,74 @@ it('detaches the subtrees of nested doomed nodes without touching surviving link
     ]));
 });
 
-it('refuses to move a node under a parent missing from the closure', function (): void {
+it('links a new parent missing from the closure from the parent column before moving under it', function (): void {
     $root = ($this->addNode)(null);
     $moved = ($this->addNode)($root);
-    $unlinked_parent = (int) DB::table(MAINTAINER_NODES)->insertGetId(['parent_id' => null]);
+    ($this->addNode)($moved);
+    $unlinked_root = maintainerBulkNode(null);
+    $unlinked_parent = maintainerBulkNode($unlinked_root);
+
+    ($this->moveNode)($moved, $unlinked_parent);
+    $incremental = maintainerClosureRows();
+    $this->maintainer->rebuild();
+
+    expect($incremental)->toBe(maintainerClosureRows())
+        ->and($incremental)->toContain(sprintf('%d>%d:2', $unlinked_root, $moved));
+});
+
+it('refuses to move a node under a parent missing from the closure that sits in its own subtree', function (): void {
+    $root = ($this->addNode)(null);
+    $moved = ($this->addNode)($root);
+    $child = ($this->addNode)($moved);
+    $unlinked_below = maintainerBulkNode($child);
     $before = maintainerClosureRows();
 
-    expect(fn () => $this->maintainer->moveSubtree($moved, $unlinked_parent))
-        ->toThrow(LogicException::class, 'has no self row')
+    expect(fn () => $this->maintainer->moveSubtree($moved, $unlinked_below))
+        ->toThrow(HierarchyCycleException::class)
         ->and(maintainerClosureRows())->toBe($before);
+});
+
+it('links a parent missing from the closure, with its unlinked ancestors, before inserting under it', function (): void {
+    $root = ($this->addNode)(null);
+    $unlinked_middle = maintainerBulkNode($root);
+    $unlinked_parent = maintainerBulkNode($unlinked_middle);
+    DB::table(MAINTAINER_CLOSURE)->insert(['ancestor_id' => $root, 'descendant_id' => $unlinked_parent, 'depth' => 2]);
+
+    $leaf = ($this->addNode)($unlinked_parent);
+    $incremental = maintainerClosureRows();
+    $this->maintainer->rebuild();
+
+    expect($incremental)->toBe(maintainerClosureRows())
+        ->and($incremental)->toHaveCount(10)
+        ->and($incremental)->toContain(sprintf('%d>%d:3', $root, $leaf));
+});
+
+it('links a whole chain the closure does not know, up to its root, before inserting under it', function (): void {
+    $unlinked_root = maintainerBulkNode(null);
+    $unlinked_parent = maintainerBulkNode($unlinked_root);
+    $unrelated = maintainerBulkNode(null);
+
+    $leaf = ($this->addNode)($unlinked_parent);
+
+    expect(maintainerClosureRows())->toBe(maintainerExpectedRows([
+        [$unlinked_root, $unlinked_root, 0],
+        [$unlinked_parent, $unlinked_parent, 0],
+        [$unlinked_root, $unlinked_parent, 1],
+        [$leaf, $leaf, 0],
+        [$unlinked_parent, $leaf, 1],
+        [$unlinked_root, $leaf, 2],
+    ]))->and(maintainerClosureRows())->not->toContain(sprintf('%d>%d:0', $unrelated, $unrelated));
+});
+
+it('refuses to link a parent column that loops and writes nothing', function (): void {
+    $first = maintainerBulkNode(null);
+    $second = maintainerBulkNode($first);
+    DB::table(MAINTAINER_NODES)->where('id', $first)->update(['parent_id' => $second]);
+    $leaf = maintainerBulkNode($second);
+
+    expect(fn () => $this->maintainer->insertNode($leaf, $second))
+        ->toThrow(LogicException::class, 'loops')
+        ->and(maintainerClosureRows())->toBe([]);
 });
 
 it('detaches only the nodes selected by a query the closure returns instead', function (): void {
@@ -448,4 +530,130 @@ it('reads and roots more children than one statement binds', function (): void {
     $this->maintainer->rebuild();
 
     expect(maintainerClosureRows())->toBe($maintained);
+});
+
+it('takes the hierarchy lock before any closure statement of every write', function (): void {
+    $root = ($this->addNode)(null);
+    $middle = ($this->addNode)($root);
+    $leaf = ($this->addNode)($middle);
+    $other_root = ($this->addNode)(null);
+
+    $writes = [
+        'insertNode' => fn () => $this->maintainer->insertNode(maintainerBulkNode($root), $root),
+        'moveSubtree' => fn () => $this->maintainer->moveSubtree($middle, $other_root),
+        'detachChildren' => fn () => $this->maintainer->detachChildren([$leaf], [$other_root]),
+        'detachSubtreesOf' => fn () => $this->maintainer->detachSubtreesOf(fn (Builder $query): Builder => $query->where('id', $root)),
+        'rootParentless' => fn () => $this->maintainer->rootParentless([$leaf]),
+        'rebuild' => fn () => $this->maintainer->rebuild(),
+    ];
+
+    foreach ($writes as $name => $write) {
+        $statements = [];
+        DB::listen(static function ($query) use (&$statements): void {
+            $statements[] = $query->sql;
+        });
+        $version = maintainerLockVersion();
+
+        $write();
+
+        $touching = array_values(array_filter(
+            $statements,
+            static fn (string $sql): bool => str_contains($sql, MAINTAINER_CLOSURE) || str_contains($sql, CoreTables::HierarchyLocks->value),
+        ));
+
+        expect(str_contains($touching[0] ?? '', CoreTables::HierarchyLocks->value))->toBeTrue($name . ' wrote before the lock')
+            ->and(maintainerLockVersion())->toBe($version + 1, $name . ' did not bump the lock once');
+
+        DB::getEventDispatcher()->forget(Illuminate\Database\Events\QueryExecuted::class);
+    }
+});
+
+it('creates the lock row on the first write of a hierarchy and bumps it on every write', function (): void {
+    expect(maintainerLockVersion())->toBeNull();
+
+    $root = ($this->addNode)(null);
+    ($this->addNode)($root);
+
+    expect(maintainerLockVersion())->toBe(2);
+});
+
+it('takes the lock with one bump when the write opens the outermost transaction', function (): void {
+    config()->set('database.connections.lockless', [
+        'driver' => 'sqlite',
+        'database' => ':memory:',
+        'prefix' => '',
+        'foreign_key_constraints' => true,
+    ]);
+    DB::purge('lockless');
+    Schema::connection('lockless')->create(MAINTAINER_NODES, function (Blueprint $table): void {
+        $table->id();
+        $table->unsignedBigInteger('parent_id')->nullable();
+    });
+    MigrateUtils::closureTable(MAINTAINER_NODES, DB::connection('lockless'));
+    $maintainer = new ClosureTableMaintainer(DB::connection('lockless'), MAINTAINER_NODES, MAINTAINER_CLOSURE);
+    $root = (int) DB::connection('lockless')->table(MAINTAINER_NODES)->insertGetId(['parent_id' => null]);
+    $child = (int) DB::connection('lockless')->table(MAINTAINER_NODES)->insertGetId(['parent_id' => $root]);
+
+    $maintainer->insertNode($root, null);
+    $maintainer->insertNode($child, $root);
+
+    expect(maintainerLockVersion(MAINTAINER_CLOSURE, 'lockless'))->toBe(2)
+        ->and(maintainerClosureRows(MAINTAINER_CLOSURE, 'lockless'))->toHaveCount(3)
+        ->and(fn () => $maintainer->lock())->toThrow(LogicException::class, 'inside a transaction');
+
+    DB::disconnect('lockless');
+    DB::purge('lockless');
+});
+
+it('writes nothing and asks for a retry when the transaction snapshot predates the last write', function (): void {
+    $root = ($this->addNode)(null);
+    $leaf = maintainerBulkNode($root);
+    $connection = new StaleSnapshotConnection(DB::connection());
+    $connection->readLockVersionsAs([0], repeatLast: true);
+    $before = maintainerClosureRows();
+
+    try {
+        (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode($leaf, $root);
+        $thrown = null;
+    } catch (DeadlockException $exception) {
+        $thrown = $exception;
+    }
+
+    // Inside the test's own transaction Laravel rethrows a concurrency error as a plain DeadlockException.
+    expect($thrown?->getPrevious())->toBeInstanceOf(HierarchyWriteConflictException::class)
+        ->and((new ConcurrencyErrorDetector)->causedByConcurrencyError($thrown->getPrevious()))->toBeTrue()
+        ->and(maintainerClosureRows())->toBe($before)
+        ->and(maintainerLockVersion())->toBe(1);
+});
+
+it('asks for a retry when another writer created the lock row after the transaction snapshot', function (): void {
+    $root = ($this->addNode)(null);
+    $connection = new StaleSnapshotConnection(DB::connection());
+    $connection->readLockVersionsAs([null], repeatLast: true);
+
+    expect(fn () => (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode(maintainerBulkNode($root), $root))
+        ->toThrow(DeadlockException::class, 'created the hierarchy lock')
+        ->and(maintainerLockVersion())->toBe(1);
+});
+
+it('takes the lock on the next round when a statement saw the commit it waited for', function (): void {
+    $root = ($this->addNode)(null);
+    $leaf = maintainerBulkNode($root);
+    $connection = new StaleSnapshotConnection(DB::connection());
+    $connection->readLockVersionsAs([0]);
+
+    (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode($leaf, $root);
+
+    expect(maintainerLockVersion())->toBe(2)
+        ->and(maintainerClosureRows())->toContain(sprintf('%d>%d:1', $root, $leaf));
+});
+
+it('gives up with a retryable conflict when the lock keeps changing hands', function (): void {
+    $root = ($this->addNode)(null);
+    $connection = new StaleSnapshotConnection(DB::connection());
+    $connection->readLockVersionsAs(range(10, 21));
+
+    expect(fn () => (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode(maintainerBulkNode($root), $root))
+        ->toThrow(DeadlockException::class, 'changed hands 10 times')
+        ->and(maintainerLockVersion())->toBe(1);
 });

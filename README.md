@@ -726,7 +726,7 @@ The Core Module utilizes several packages to enhance its functionality. Below is
     -   [laravel/fortify](https://github.com/laravel/fortify): Authentication scaffolding.
     -   Model versioning is part of Core (`HasVersions`, `Version`), derived from overtrue/laravel-versionable, which is no longer a dependency (see Third-party code).
     -   [spatie/laravel-permission](https://github.com/spatie/laravel-permission): Roles and permissions.
-    -   Hierarchies (roles, taxonomies, comments) use Core's own closure tables (`HasClosureTable`, `MigrateUtils::closureTable()`, `ClosureTableMaintainer`), which replaced staudenmeir/laravel-adjacency-list; see [docs/rag/HIERARCHIES_DEVELOPER.md](docs/rag/HIERARCHIES_DEVELOPER.md).
+    -   Hierarchies (roles, taxonomies, comments) use Core's own closure tables (`HasClosureTable`, `MigrateUtils::closureTable()`, `ClosureTableMaintainer`), which replaced staudenmeir/laravel-adjacency-list; their writers take a per-hierarchy lock in `core_hierarchy_locks`; see [docs/rag/HIERARCHIES_DEVELOPER.md](docs/rag/HIERARCHIES_DEVELOPER.md).
     -   [spatie/eloquent-sortable](https://github.com/spatie/eloquent-sortable): Ordering helpers for Eloquent.
 
 -   **UI / Admin:**
