@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Modules\Core\Http\Controllers;
 
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Foundation\Auth\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -20,6 +19,7 @@ use Modules\Core\Helpers\ResponseBuilder;
 use Modules\Core\Http\Requests\ImpersonationRequest;
 use Modules\Core\Http\Requests\UpdatePreferencesRequest;
 use Modules\Core\Http\Resources\UserInfoResponse;
+use Modules\Core\Models\User;
 use Modules\Core\Rules\PreferencesBag;
 
 final class UserController extends Controller
@@ -118,7 +118,9 @@ final class UserController extends Controller
 
         $bag = $user->preferences ?? [];
 
-        foreach ($request->validated()['preferences'] as $namespace => $value) {
+        $preferences = $request->validated('preferences');
+
+        foreach (is_array($preferences) ? $preferences : [] as $namespace => $value) {
             if ($value === null) {
                 unset($bag[$namespace]);
             } else {

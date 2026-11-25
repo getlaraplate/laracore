@@ -299,7 +299,7 @@ trait HasDynamicContents
         foreach ($this->fields() as $field) {
             $rule = $field->type->getRule();
 
-            if ($field->pivot->is_required) {
+            if ($field->presetPivot()->is_required) {
                 $rule .= '|required';
 
                 if ($field->type === FieldType::Array) {
@@ -496,7 +496,7 @@ trait HasDynamicContents
                 return $only_translatable ? ($is_translatable === true) : ($is_translatable !== true);
             })
             ->mapWithKeys(function (Field $field) use ($components): array {
-                $value = data_get($components, $field->name, $field->pivot->default);
+                $value = data_get($components, $field->name, $field->presetPivot()->default);
 
                 // Ensure ARRAY fields always have an array value (even if empty) to pass validation
                 if ($field->type === FieldType::Array && $value === null) {

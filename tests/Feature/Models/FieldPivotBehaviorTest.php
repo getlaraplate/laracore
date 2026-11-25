@@ -54,3 +54,31 @@ it('extends validation rules for create and update operations', function (): voi
         ->and($rules[Model::DEFAULT_RULE])->toHaveKey('type')
         ->and($rules['update'])->toHaveKey('name');
 });
+
+it('returns the preset pivot it was loaded through', function (): void {
+    $preset = AppDynamicEntities::preset();
+    $field = Field::query()->create([
+        'name' => 'preset_pivot_field_' . uniqid(),
+        'type' => FieldType::Text,
+        'options' => new stdClass(),
+    ]);
+    $preset->fields()->attach($field->id, ['order_column' => 7, 'is_required' => true, 'default' => ['a' => 1]]);
+
+    $loaded = $preset->fields()->where((new Field())->qualifyColumn('id'), $field->id)->firstOrFail();
+
+    expect($loaded->presetPivot())->toBeInstanceOf(Fieldable::class)
+        ->and($loaded->presetPivot()->preset_id)->toBe($preset->id)
+        ->and($loaded->presetPivot()->is_required)->toBeTrue()
+        ->and($loaded->presetPivot()->default)->toBe(['a' => 1]);
+});
+
+it('refuses to read a preset pivot it was not loaded with', function (): void {
+    $field = Field::query()->create([
+        'name' => 'no_pivot_field_' . uniqid(),
+        'type' => FieldType::Text,
+        'options' => new stdClass(),
+    ]);
+
+    expect(fn (): Fieldable => Field::query()->findOrFail($field->id)->presetPivot())
+        ->toThrow(LogicException::class, 'was loaded without its preset pivot');
+});

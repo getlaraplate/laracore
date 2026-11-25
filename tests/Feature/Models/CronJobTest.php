@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Carbon\CarbonImmutable;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\CronJob;
 
@@ -256,4 +257,19 @@ it('can be permanently deleted', function (): void {
     $cronJob->forceDelete();
 
     expect(CronJob::withTrashed()->find($cronJobId))->toBeNull();
+});
+
+it('reports the previous and next due times of its schedule', function (): void {
+    $this->travelTo(CarbonImmutable::parse('2026-11-25 10:30:00'));
+    $cron_job = CronJob::factory()->create(['schedule' => '0 * * * *', 'is_active' => true]);
+
+    expect($cron_job->previousRunAt()?->format('Y-m-d H:i'))->toBe('2026-11-25 10:00')
+        ->and($cron_job->nextRunAt()?->format('Y-m-d H:i'))->toBe('2026-11-25 11:00');
+});
+
+it('has no due times while inactive', function (): void {
+    $cron_job = CronJob::factory()->create(['schedule' => '0 * * * *', 'is_active' => false]);
+
+    expect($cron_job->previousRunAt())->toBeNull()
+        ->and($cron_job->nextRunAt())->toBeNull();
 });

@@ -86,6 +86,11 @@ use UnexpectedValueException;
  * @property \Carbon\CarbonImmutable $valid_from
  * @property \Carbon\CarbonImmutable|null $valid_to
  * @property array<array-key, mixed>|null $preferences Server-persisted UI preferences (theme, density, layout) synced from the SPA
+ * @property string|null $social_id The id of the user at the social login provider
+ * @property string|null $social_service The social login provider the user signed in with
+ * @property string|null $social_token The access token of the social login, encrypted
+ * @property string|null $social_refresh_token The refresh token of the social login, encrypted
+ * @property string|null $social_token_secret The token secret of an OAuth 1 social login, encrypted
  */
 #[ObservedBy([UserObserver::class, HierarchyOwnerObserver::class])]
 class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, IVersionedModel, MustVerifyEmail, PasskeyUser
@@ -175,6 +180,9 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
         'two_factor_recovery_codes',
         'last_login_at',
         'email_verified_at',
+        'social_token',
+        'social_refresh_token',
+        'social_token_secret',
     ];
 
     public function __construct(array $attributes = [])
@@ -664,6 +672,9 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
             'is_first_login' => 'boolean',
             'is_service_account' => 'boolean',
             'preferences' => 'array',
+            'social_token' => 'encrypted',
+            'social_refresh_token' => 'encrypted',
+            'social_token_secret' => 'encrypted',
         ];
     }
 

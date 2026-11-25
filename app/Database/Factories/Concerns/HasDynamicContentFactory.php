@@ -20,6 +20,11 @@ use stdClass;
  */
 trait HasDynamicContentFactory
 {
+    /**
+     * The entity and presettable a new record of the factory's model gets, picked at random among those available.
+     *
+     * @return array{entity_id: int, presettable_id: int}
+     */
     public function dynamicContentDefinition(): array
     {
         $model_name = $this->modelName();
@@ -87,9 +92,9 @@ trait HasDynamicContentFactory
         $fields = $this->resolvePresetFields($model);
 
         $components_array = $fields->mapWithKeys(function (Field $field) use ($forcedValues): array {
-            $value = $field->pivot->default;
+            $value = $field->presetPivot()->default;
 
-            if ($field->pivot->is_required || fake()->boolean()) {
+            if ($field->presetPivot()->is_required || fake()->boolean()) {
                 if (isset($forcedValues[$field->name])) {
                     $value = $forcedValues[$field->name];
                 } else {
@@ -122,11 +127,12 @@ trait HasDynamicContentFactory
         // Non-translatable fields are written directly to the shared_components JSON attribute,
         // bypassing setAttribute → isDynamicField → getFieldsFromSnapshot() which would fail
         // when fields_snapshot is not yet populated, causing raw attributes to land in the INSERT.
-        $shared = json_decode((string) ($model->attributes['shared_components'] ?? '{}'), true) ?? [];
+        $shared = json_decode((string) ($model->attributes['shared_components'] ?? '{}'), true);
+        $shared = is_array($shared) ? $shared : [];
         $translatable = [];
 
         foreach ($fields as $field) {
-            $value = $components_array[$field->name] ?? $field->pivot->default;
+            $value = $components_array[$field->name] ?? $field->presetPivot()->default;
 
             if ($field->is_translatable ?? false) {
                 $translatable[$field->name] = $value;

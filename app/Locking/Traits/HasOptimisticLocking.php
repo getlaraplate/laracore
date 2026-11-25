@@ -115,8 +115,8 @@ trait HasOptimisticLocking
                 $query->where($versionColumn, '=', $beforeUpdateVersion);
             }
 
-            $this->setAttribute($versionColumn, $newVersion = $beforeUpdateVersion + 1);
-            $dirty[$versionColumn] = $newVersion;
+            $this->setAttribute($versionColumn, $beforeUpdateVersion + 1);
+            $dirty = $this->getDirty();
 
             // If there is no record affected by our update query,
             // It means that the record has been updated by another process,
