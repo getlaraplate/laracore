@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Engines\DatabaseEngine;
 use Laravel\Scout\Engines\TypesenseEngine;
 use Modules\Core\Contracts\IEmbeddableModel;
+use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Events\ModelRequiresIndexing;
 use Modules\Core\Events\ModelsRequireIndexing;
 use Modules\Core\Helpers\LocaleContext;
@@ -49,6 +50,7 @@ use Throwable;
  * @phpstan-require-extends Model
  *
  * @phpstan-require-implements IEmbeddableModel
+ * @phpstan-require-implements ISearchableModel
  */
 trait Searchable
 {
@@ -203,8 +205,10 @@ trait Searchable
      * pass already loaded. A model without toSearchableWith(), or a plain
      * (non-Eloquent) collection, is returned untouched.
      *
-     * @param  Collection<int, covariant Model>  $models
-     * @return Collection<int, covariant Model>
+     * @template TCollection of Collection<int, covariant Model>
+     *
+     * @param  TCollection  $models
+     * @return TCollection
      */
     public function makeSearchableUsing(Collection $models): Collection
     {

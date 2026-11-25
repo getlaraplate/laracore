@@ -7,6 +7,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Setting;
@@ -75,7 +76,7 @@ it('reads version users from the user model connection independently of the vers
             $queried_connections[] = $query->connectionName;
         });
 
-        $model = new class extends Model
+        $model = new class extends Model implements IVersionedModel
         {
             use HasVersions;
 
@@ -97,7 +98,7 @@ it('reads version users from the user model connection independently of the vers
 });
 
 it('treats empty versionStrategy string as unset and resolves from settings', function (): void {
-    $model = new class extends Model
+    $model = new class extends Model implements IVersionedModel
     {
         use HasVersions;
 
@@ -127,7 +128,7 @@ it('exposes resetVersionStrategyCache static method', function (): void {
 it('does not query DB or persistent cache on second call for same model class', function (): void {
     HasVersions::resetVersionStrategyCache();
 
-    $model = new class extends Model
+    $model = new class extends Model implements IVersionedModel
     {
         use HasVersions;
 
@@ -161,7 +162,7 @@ it('does not query DB or persistent cache on second call for same model class', 
 it('resets L1 cache so next call re-resolves from persistent cache', function (): void {
     HasVersions::resetVersionStrategyCache();
 
-    $model = new class extends Model
+    $model = new class extends Model implements IVersionedModel
     {
         use HasVersions;
 
@@ -207,7 +208,7 @@ it('uses prefixed grouped settings cache key when resolving version strategy', f
             'value' => 'DIFF',
         ]);
 
-    $model = new class extends Model
+    $model = new class extends Model implements IVersionedModel
     {
         use HasVersions;
 
@@ -317,7 +318,7 @@ it('does not query DB or access persistent cache on second call for any model cl
     // Use a unique table name per iteration to ensure a fresh anonymous class each time
     $table = 'users_' . fake()->unique()->lexify('????????');
 
-    $model = new class extends Model
+    $model = new class extends Model implements IVersionedModel
     {
         use HasVersions;
 

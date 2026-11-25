@@ -9,6 +9,7 @@ use Modules\Core\Cache\Repository as CacheRepository;
 use Modules\Core\Casts\Column;
 use Modules\Core\Casts\ColumnType;
 use Modules\Core\Casts\SelectRequestData;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Services\Authorization\AuthorizationService;
@@ -49,7 +50,7 @@ it('detects models using recursive, approval, and history traits', function (): 
         use HasApprovals;
     };
 
-    $versioned = new class extends Model
+    $versioned = new class extends Model implements IVersionedModel
     {
         use HasVersions;
     };

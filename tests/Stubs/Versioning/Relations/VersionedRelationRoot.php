@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Versioning\Relations;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Contracts\ProvidesSyncableRelations;
 use Modules\Core\Enums\RelationOwnership;
 use Modules\Core\Enums\VersionStrategy;
@@ -14,7 +15,7 @@ use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Versioning\Data\RelationDescriptor;
 
-final class VersionedRelationRoot extends Model implements ProvidesSyncableRelations
+final class VersionedRelationRoot extends Model implements IVersionedModel, ProvidesSyncableRelations
 {
     use HasVersionedRelations;
     use HasVersions;

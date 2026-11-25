@@ -41,6 +41,7 @@ use Modules\Core\Casts\ActionEnum;
 use Modules\Core\Contracts\ILockableModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
 use Modules\Core\Contracts\IValidatableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\UserFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
@@ -87,7 +88,7 @@ use UnexpectedValueException;
  * @property array<array-key, mixed>|null $preferences Server-persisted UI preferences (theme, density, layout) synced from the SPA
  */
 #[ObservedBy([UserObserver::class, HierarchyOwnerObserver::class])]
-class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, MustVerifyEmail, PasskeyUser
+class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, IVersionedModel, MustVerifyEmail, PasskeyUser
 {
     use HasApiTokens;
 

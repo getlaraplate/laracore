@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Modules\Core\Contracts\IsPartOfParent;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
@@ -135,7 +136,7 @@ trait RecordsChangesOnOwner
         $owner = $this->versionedOwner();
 
         // A part removed by its owner's hard delete is in the owner's snapshot set already (D54).
-        if (! $owner instanceof Model || resolve(VersionSetManagerInterface::class)->isBeingHardDeleted($owner)) {
+        if ($owner === null || resolve(VersionSetManagerInterface::class)->isBeingHardDeleted($owner)) {
             return;
         }
 
@@ -168,11 +169,11 @@ trait RecordsChangesOnOwner
     /**
      * The owner whose history records this part, or null when it has none or its history is off.
      */
-    private function versionedOwner(): ?Model
+    private function versionedOwner(): (Model&IVersionedModel)|null
     {
         $owner = $this->history_owner ?? $this->parentOwner();
 
-        if (! $owner instanceof Model || ! method_exists($owner, 'getVersionStrategy') || ! $owner::getVersioning()) {
+        if (! $owner instanceof IVersionedModel || ! $owner::getVersioning()) {
             return null;
         }
 
@@ -190,7 +191,7 @@ trait RecordsChangesOnOwner
         $manager = app(VersionSetManagerInterface::class);
         $owner = $manager->current() === null ? $this->versionedOwner() : null;
 
-        if (! $owner instanceof Model || ! $owner->exists) {
+        if ($owner === null || ! $owner->exists) {
             return $operation();
         }
 
@@ -214,7 +215,7 @@ trait RecordsChangesOnOwner
 
             // Decided on the class before any query: a part saved on its own must not read its owner when the
             // owner's history is off.
-            if (! method_exists($related, 'getVersionStrategy') || ! $related::getVersioning() || $related->getVersionStrategy() === false) {
+            if (! $related instanceof IVersionedModel || ! $related::getVersioning() || $related->getVersionStrategy() === false) {
                 return null;
             }
 

@@ -83,7 +83,12 @@ $post->revertToVersion($version->id);
 
 ## Turn versioning on for a model
 
-1. Add the `HasVersions` trait to the model.
+1. Add the `HasVersions` trait to the model and declare `implements IVersionedModel`
+   (`Modules\Core\Contracts\IVersionedModel`). A model extending `Modules\Core\Overrides\Model` already does both.
+   The contract is how a translation, a part or a pivot finds out that the record it belongs to keeps a history: a
+   model with the trait and without the contract has those changes left out of its versions. PHPStan reports the
+   missing contract (`@phpstan-require-implements` on the trait), and the app test
+   `VersionedModelsImplementTheContractTest` fails on it.
 2. Choose the strategy. Either declare `protected $versionStrategy = VersionStrategy::DIFF;` on the model, or set
    the `versioning.strategy.{table}` setting (group `versioning`), which is read through a per-request map and a
    persistent cache. No value, `false` or an empty string means the model is not versioned. Some models are never versioned

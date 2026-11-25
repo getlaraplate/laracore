@@ -16,6 +16,7 @@ use Illuminate\Validation\ValidationException;
 use Modules\Core\Cache\HasCache;
 use Modules\Core\Contracts\ILockableModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\RoleFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
@@ -45,7 +46,7 @@ use Spatie\Permission\Models\Role as BaseRole;
  * @property int|null $parent_id The parent id of the role
  */
 #[ObservedBy([RoleObserver::class])]
-final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
+final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel, IVersionedModel
 {
     use HasCache;
     use HasClosureTable;

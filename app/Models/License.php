@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Validation\Rule;
 use Modules\Core\Contracts\IValidatableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\LicenseFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Concerns\HasValidations;
@@ -27,7 +28,7 @@ use Override;
  * @property \Carbon\CarbonImmutable $valid_from
  * @property \Carbon\CarbonImmutable|null $valid_to
  */
-final class License extends Model implements IValidatableModel
+final class License extends Model implements IValidatableModel, IVersionedModel
 {
     use HasFactory;
     use HasValidations {

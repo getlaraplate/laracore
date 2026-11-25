@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Contracts\ILockableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -14,7 +15,7 @@ use Modules\Core\Models\Concerns\HasVersions;
  * A lockable versioned record with no `$versionable` list, so its lock columns would reach the history unless
  * they are excluded (D21).
  */
-final class VersionedLockableDocument extends Model implements ILockableModel
+final class VersionedLockableDocument extends Model implements ILockableModel, IVersionedModel
 {
     use HasLocks;
     use HasVersions;
