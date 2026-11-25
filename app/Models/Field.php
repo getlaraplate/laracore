@@ -7,6 +7,7 @@ namespace Modules\Core\Models;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Validation\Rule;
+use LogicException;
 use Modules\Core\Casts\FieldType;
 use Modules\Core\Casts\ObjectCast;
 use Modules\Core\Contracts\IActivatableModel;
@@ -84,6 +85,23 @@ final class Field extends Model implements IActivatableModel
     public function presets(): BelongsToMany
     {
         return $this->belongsToMany(Preset::class, CoreTables::Fieldables->value)->using(Fieldable::class)->withTimestamps()->withPivot(['order_column', 'is_required', 'default']);
+    }
+
+    /**
+     * The preset link the field was loaded through (`Preset::fields()`, or a presettable's frozen snapshot): the
+     * required flag, the order and the default value the preset gives the field.
+     *
+     * @throws LogicException when the field was loaded without it
+     */
+    public function presetPivot(): Fieldable
+    {
+        $pivot = $this->relationLoaded('pivot') ? $this->getRelation('pivot') : null;
+
+        if (! $pivot instanceof Fieldable) {
+            throw new LogicException("Field {$this->name} was loaded without its preset pivot.");
+        }
+
+        return $pivot;
     }
 
     #[Override]

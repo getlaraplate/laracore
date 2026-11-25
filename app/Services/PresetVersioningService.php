@@ -69,9 +69,9 @@ final class PresetVersioningService
                 'is_translatable' => (bool) $field->is_translatable,
                 'is_slug' => (bool) $field->is_slug,
                 'pivot' => [
-                    'is_required' => (bool) $field->pivot->is_required,
-                    'order_column' => (int) $field->pivot->order_column,
-                    'default' => $field->pivot->default,
+                    'is_required' => (bool) $field->presetPivot()->is_required,
+                    'order_column' => (int) $field->presetPivot()->order_column,
+                    'default' => $field->presetPivot()->default,
                 ],
             ])
             ->all());

@@ -6,6 +6,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Search\Contracts\ISearchEngine;
+use Modules\Core\Tests\Stubs\Search\PlainSearchStubModel;
 use Modules\Core\Tests\Stubs\Search\SoftDeletableSearchStubModel;
 
 /**
@@ -40,4 +41,13 @@ it('emits is_deleted as the boolean true for a soft-deleted row', function (): v
     $model = SoftDeletableSearchStubModel::withoutGlobalScopes()->findOrFail($id)->withEngine($engine);
 
     expect($model->toSearchableArray()['is_deleted'])->toBeTrue();
+});
+
+it('emits no is_deleted for a model that cannot be soft-deleted', function (): void {
+    $engine = Mockery::mock(ISearchEngine::class);
+    $engine->shouldReceive('offersVectorSearch')->andReturn(false);
+
+    $model = new PlainSearchStubModel()->forceFill(['id' => 1])->withEngine($engine);
+
+    expect($model->toSearchableArray())->not->toHaveKey('is_deleted');
 });

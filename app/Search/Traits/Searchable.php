@@ -263,7 +263,7 @@ trait Searchable
             $array['valid_to'] = $this->{HasValidity::validToKey()};
         }
 
-        if (class_uses_trait($this, SoftDeletes::class) || $this->softDeletesEnabled ?? true) {
+        if (class_uses_trait($this, SoftDeletes::class)) {
             $array['is_deleted'] = $this->{self::getIsDeletedColumn()};
         }
 
@@ -768,7 +768,7 @@ trait Searchable
     {
         $data = '';
 
-        foreach ($this->embed as $attribute) {
+        foreach ($this->getEmbedFields() as $attribute) {
             $value = $get($attribute);
 
             if ($this->isValidEmbedValue($value)) {

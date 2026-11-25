@@ -8,12 +8,12 @@ use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\search;
 use function Laravel\Prompts\select;
 
-use Illuminate\Foundation\Auth\User;
 use Illuminate\Support\Facades\Password as PasswordBroker;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 use Modules\Core\Console\Concerns\PromptsForPassword;
 use Modules\Core\Locking\Locked;
+use Modules\Core\Models\User;
 use Modules\Core\Overrides\Command;
 use Override;
 use Symfony\Component\Console\Command\Command as BaseCommand;
@@ -67,7 +67,7 @@ final class ResetUserPasswordCommand extends Command
                 return BaseCommand::FAILURE;
             }
 
-            if (method_exists($user, 'isServiceAccount') && $user->isServiceAccount()) {
+            if ($user->isServiceAccount()) {
                 $this->error('Service accounts have no usable password: they authenticate with API tokens only');
 
                 return BaseCommand::FAILURE;

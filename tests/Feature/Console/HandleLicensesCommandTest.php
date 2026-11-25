@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Carbon\CarbonImmutable;
 use Illuminate\Console\OutputStyle;
 use Laravel\Prompts\ConfirmPrompt;
 use Laravel\Prompts\SelectPrompt;
@@ -344,4 +345,12 @@ it('handles renew and close actions through handle flow', function (): void {
     $command = licensesCommandWithOutput();
     expect($command->handle())->toBe(0);
     expect($command->handle())->toBe(0);
+});
+
+it('reports a group of licenses as perpetual, active or expired by its expiry', function (): void {
+    $this->travelTo(CarbonImmutable::parse('2026-11-25 12:00:00'));
+
+    expect(HandleLicensesCommand::statusOf(null))->toBe('perpetual')
+        ->and(HandleLicensesCommand::statusOf(CarbonImmutable::parse('2026-11-01')))->toBe('expired')
+        ->and(HandleLicensesCommand::statusOf(CarbonImmutable::parse('2027-01-01')))->toBe('active');
 });

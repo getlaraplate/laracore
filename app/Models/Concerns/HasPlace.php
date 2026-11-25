@@ -16,6 +16,18 @@ use TypeError;
  * ({@see getAttribute}, {@see setAttribute}, {@see toArray}): bridged keys never persist on the host table;
  * pending values are flushed into a new {@see Place} on {@see creating} when {@see place_id} is empty.
  *
+ * The geography read and written through the place:
+ *
+ * @property Point|null $geolocation
+ * @property string|null $address
+ * @property string|null $city
+ * @property string|null $province
+ * @property string|null $country
+ * @property string|null $postcode
+ * @property string|null $zone
+ * @property float|null $latitude
+ * @property float|null $longitude
+ *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  */
 trait HasPlace

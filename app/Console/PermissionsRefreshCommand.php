@@ -23,13 +23,13 @@ use Modules\Core\Models\DynamicEntity;
 use Modules\Core\Models\License;
 use Modules\Core\Models\ModelEmbedding;
 use Modules\Core\Models\Modification;
+use Modules\Core\Models\Permission;
 use Modules\Core\Models\Version;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Services\Translation\Definitions\ITranslated;
 use Modules\Core\Support\PermissionName;
 use Override;
 use ReflectionClass;
-use Spatie\Permission\Models\Permission;
 use Throwable;
 
 final class PermissionsRefreshCommand extends Command

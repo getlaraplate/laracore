@@ -17,6 +17,7 @@ use Modules\Core\Casts\WhereClause;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\ACL;
 use Modules\Core\Models\CronJob;
+use Modules\Core\Models\Permission;
 use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Seeder;
 use Modules\Core\Seeding\Contracts\DeclaresSeedDependencies;
@@ -28,7 +29,6 @@ use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Support\PermissionName;
 use Override;
 use ReflectionClass;
-use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role as BaseRole;
 
 final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencies
