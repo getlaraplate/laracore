@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Laravel\Scout\Engines\Engine as ScoutEngine;
 use Modules\Core\Approvals\Operation;
+use Modules\Core\Authorization\RetrievedSelectGuard;
 use Modules\Core\Casts\Column;
 use Modules\Core\Casts\ColumnType;
 use Modules\Core\Casts\DetailRequestData;
@@ -23,6 +24,7 @@ use Modules\Core\Casts\ModifyRequestData;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\TreeRequestData;
+use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Modification;
@@ -40,8 +42,9 @@ use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\QueryBuilder;
 use Modules\Core\Tests\Stubs\ActivationStubModel;
+use Modules\Core\Tests\Stubs\Crud\AncestorTreeStubModel;
+use Modules\Core\Tests\Stubs\Crud\TreeStubModel;
 use Modules\Core\Tests\Stubs\Search\FixedSearchStrategyResolver;
-use Staudenmeir\LaravelAdjacencyList\Eloquent\HasRecursiveRelationships;
 use Symfony\Component\HttpFoundation\Response;
 
 function crud_cov_set(object $obj, string $prop, mixed $value): void
@@ -496,16 +499,10 @@ it('tree selects relation type and switches between sole and get modes', functio
             $table->string('name');
             $table->timestamps();
         });
+        MigrateUtils::closureTable('crud_cov_tree');
     }
 
-    $tree_model = new class extends Model
-    {
-        use HasRecursiveRelationships;
-
-        protected $table = 'crud_cov_tree';
-
-        protected $guarded = [];
-    };
+    $tree_model = new TreeStubModel;
 
     $root = $tree_model->newQuery()->create(['name' => 'root']);
 
@@ -534,6 +531,45 @@ it('tree selects relation type and switches between sole and get modes', functio
     crud_cov_set($data_many, 'children', true);
     $many_result = $service->tree($data_many);
     expect($many_result->data)->toBeInstanceOf(Illuminate\Database\Eloquent\Collection::class);
+});
+
+it('tree suppresses the redundant per-row select check for the roots and the nodes of the walk', function (): void {
+    Schema::dropIfExists('crud_cov_tree');
+    Schema::create('crud_cov_tree', function (Illuminate\Database\Schema\Blueprint $table): void {
+        $table->id();
+        $table->unsignedBigInteger('parent_id')->nullable();
+        $table->string('name');
+        $table->timestamps();
+    });
+    MigrateUtils::closureTable('crud_cov_tree');
+
+    $tree_model = new TreeStubModel;
+    $root = $tree_model->newQuery()->create(['name' => 'root']);
+    $tree_model->newQuery()->create(['name' => 'child', 'parent_id' => $root->getKey()]);
+
+    // Whether the guard is engaged for each node hydrated by the tree: the roots and the nodes of the walk.
+    $captured = [];
+    TreeStubModel::retrieved(function () use (&$captured): void {
+        $captured[] = RetrievedSelectGuard::isSuppressed(TreeStubModel::class);
+    });
+
+    $superadmin = crud_cov_login_superadmin();
+    $service = new CrudService(app(AuthorizationService::class), app(QueryBuilder::class));
+    $request = Request::create('/tree', 'GET');
+    $request->setUserResolver(fn () => $superadmin);
+    $data = crud_cov_make_request_data(TreeRequestData::class, $tree_model, $request, 'id', [
+        new Column('crud_cov_tree.id', ColumnType::Column),
+    ]);
+    crud_cov_set($data, 'parents', true);
+    crud_cov_set($data, 'children', true);
+
+    $result = $service->tree($data);
+
+    // Two roots, each with a bloodline of two nodes; the suppression is released once the tree returns.
+    expect($result->data)->toHaveCount(2)
+        ->and($captured)->toHaveCount(6)
+        ->and(array_unique($captured))->toBe([true])
+        ->and(RetrievedSelectGuard::isSuppressed(TreeStubModel::class))->toBeFalse();
 });
 
 it('activate and inactivate use doActivateOperation path', function (): void {
@@ -960,6 +996,7 @@ it('history returns record and version history for versionable models', function
 });
 
 it('tree uses ancestorsAndSelf when only parents are requested', function (): void {
+    Schema::dropIfExists('crud_cov_tree_anc_closure');
     Schema::dropIfExists('crud_cov_tree_anc');
     Schema::create('crud_cov_tree_anc', function (Illuminate\Database\Schema\Blueprint $table): void {
         $table->id();
@@ -967,15 +1004,9 @@ it('tree uses ancestorsAndSelf when only parents are requested', function (): vo
         $table->string('name');
         $table->timestamps();
     });
+    MigrateUtils::closureTable('crud_cov_tree_anc');
 
-    $tree_model = new class extends Model
-    {
-        use HasRecursiveRelationships;
-
-        protected $table = 'crud_cov_tree_anc';
-
-        protected $guarded = [];
-    };
+    $tree_model = new AncestorTreeStubModel;
 
     $solo = $tree_model->newQuery()->create(['name' => 'solo-node', 'parent_id' => null]);
 

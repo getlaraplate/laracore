@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Modules\Core\Models;
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use MatanYadaev\EloquentSpatial\Objects\Point;
 use MatanYadaev\EloquentSpatial\Traits\HasSpatial;
 use Modules\Core\Enums\CoreTables;
@@ -99,14 +98,6 @@ class Place extends Model
                 (float) ($this->longitude ?? 0.0),
             ],
         ];
-    }
-
-    /**
-     * Slug segment derived from country (e.g. for hierarchical paths in consuming modules).
-     */
-    public function countryPathSegment(): string
-    {
-        return Str::slug((string) ($this->country ?? ''));
     }
 
     /**

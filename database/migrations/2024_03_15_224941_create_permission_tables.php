@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\MigrateUtils;
 
 return new class() extends Migration
@@ -204,6 +205,8 @@ return new class() extends Migration
             MigrateUtils::prefixIndex($table, 'parent_id');
         });
 
+        MigrateUtils::closureTable(CoreTables::Roles->value, $connection);
+
         $schema->create($model_has_permissions_table, function (Blueprint $table) use ($connection, $model_has_permissions_table, $columnNames, $pivotPermission, $teams, $permissions_table): void {
             $table->unsignedBigInteger($pivotPermission);
 
@@ -313,6 +316,7 @@ return new class() extends Migration
         }
 
         $schema = app('db')->connection()->getSchemaBuilder();
+        $schema->dropIfExists(CoreTables::RolesClosure->value);
         $schema->drop($tableNames['role_has_permissions']);
         $schema->drop($tableNames['model_has_roles']);
         $schema->drop($tableNames['model_has_permissions']);

@@ -29,6 +29,7 @@ use Illuminate\Database\Console\Migrations\StatusCommand as LaravelStatusCommand
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as BaseSoftDeletes;
 use Illuminate\Database\Migrations\Migrator as LaravelMigrator;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Console\RouteListCommand as LaravelRouteListCommand;
 use Illuminate\Http\Request;
@@ -67,6 +68,7 @@ use Modules\Core\Contracts\BootSampler;
 use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Contracts\OutboxPublisher;
 use Modules\Core\Contracts\RefreshesConfigCache;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Exceptions\ConfigurationException;
 use Modules\Core\Filament\Generators\LaraplateResourceClassGenerator;
 use Modules\Core\Filament\Generators\LaraplateResourceCreateRecordPageClassGenerator;
@@ -136,6 +138,10 @@ use Modules\Core\Services\StubOutboxPublisher;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
 use Modules\Core\Support\Env\ConfigCacheRefresher;
+use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
+use Modules\Core\Support\Hierarchy\DynamicEntityCascade;
+use Modules\Core\Support\Hierarchy\OwnerCascade;
+use Modules\Core\Support\Hierarchy\OwnerCascadeRegistry;
 use Modules\Core\Support\OwnerTimestamp;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
@@ -225,6 +231,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
         $this->registerCacheWarmOnBoot();
         $this->registerImportEntities();
         $this->registerImportListeners();
+        $this->registerTaxonomyOwnerCascades();
     }
 
     /**
@@ -291,6 +298,10 @@ final class CoreServiceProvider extends ModuleServiceProvider
         // at boot writes into the same registry the Searchable trait resolves from.
         $this->app->singleton(SearchableContributorRegistry::class);
         $this->app->singleton(OwnerAuthorizerRegistry::class);
+
+        // Singleton so every module registering an owner cascade into its hierarchy at boot writes into the
+        // registry the owners' observer reads, and the pending reads of a delete outlive one observer call.
+        $this->app->singleton(OwnerCascadeRegistry::class);
 
         // Singleton so every module registering a setting-change confirmation at boot
         // writes into the registry the settings edit page reads.
@@ -436,6 +447,29 @@ final class CoreServiceProvider extends ModuleServiceProvider
     {
         $this->app->make(EntityImporterRegistry::class)
             ->register($this->app->make(UserImporter::class));
+    }
+
+    /**
+     * The hard delete of an entity, preset, presettable or template removes taxonomies by cascading foreign keys,
+     * with no event on them: the registry keeps their closure in step.
+     */
+    private function registerTaxonomyOwnerCascades(): void
+    {
+        $cascades = $this->app->make(OwnerCascadeRegistry::class);
+
+        foreach (DynamicEntityCascade::OWNERS as $owner => $owner_table) {
+            $cascades->register(new OwnerCascade(
+                $owner,
+                $owner_table,
+                CoreTables::Taxonomies->value,
+                static fn (Model $deleted): ClosureTableMaintainer => new ClosureTableMaintainer(
+                    $deleted->getConnection(),
+                    CoreTables::Taxonomies->value,
+                    CoreTables::TaxonomiesClosure->value,
+                ),
+                static fn (Builder $taxonomies, Model $deleted): Builder => DynamicEntityCascade::rowsTakenBy($taxonomies, $deleted),
+            ));
+        }
     }
 
     /**

@@ -29,22 +29,20 @@ it('maps a relation with the default shape', function (): void {
                 'name' => FieldType::Text,
                 'id' => ['type' => FieldType::Integer, 'filterable' => true],
                 'slug' => ['type' => FieldType::Keyword, 'filterable' => true],
-                'path' => ['type' => FieldType::Keyword, 'filterable' => true],
             ],
         ]);
 });
 
 it('adds extra properties after the default shape and overrides a default in place', function (): void {
     $relation = new IndexedRelation('locations', properties: [
-        'path' => FieldType::Keyword,
+        'slug' => FieldType::Keyword,
         'city' => ['type' => FieldType::Keyword, 'filterable' => true],
     ]);
 
     expect($relation->properties())->toBe([
         'name' => FieldType::Text,
         'id' => ['type' => FieldType::Integer, 'filterable' => true],
-        'slug' => ['type' => FieldType::Keyword, 'filterable' => true],
-        'path' => FieldType::Keyword,
+        'slug' => FieldType::Keyword,
         'city' => ['type' => FieldType::Keyword, 'filterable' => true],
     ]);
 });
@@ -66,8 +64,8 @@ it('writes each related record with exactly the declared properties', function (
     ]);
 
     expect($document)->toBe([
-        ['name' => 'News', 'id' => 1, 'slug' => 'news', 'path' => 'news'],
-        ['name' => 'Sport', 'id' => 2, 'slug' => 'sport', 'path' => null],
+        ['name' => 'News', 'id' => 1, 'slug' => 'news'],
+        ['name' => 'Sport', 'id' => 2, 'slug' => 'sport'],
     ])->and($relation->document([]))->toBe([]);
 });
 

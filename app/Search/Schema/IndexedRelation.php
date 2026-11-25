@@ -10,9 +10,10 @@ use Illuminate\Database\Eloquent\Model;
  * A relation indexed in a search document, declared once: the same declaration yields the mapping field
  * ({@see self::field()}) and the document entry ({@see self::document()}), so the two always carry the same keys.
  *
- * The default shape is the one taxonomy-like relations share: `name` (text), `id` (integer, filterable), `slug` and
- * `path` (keyword, filterable). Extra properties are added after it, and a property of the same name replaces the
- * default in place. Spec `docs/superpowers/specs/2026-11-17-extended-entity-search-design.md`, XS14.
+ * The default shape is the one taxonomy-like relations share: `name` (text), `id` (integer, filterable) and `slug`
+ * (keyword, filterable). No hierarchy path: Laraplate computes none, a client builds it from the ancestors. Extra
+ * properties are added after it, and a property of the same name replaces the default in place. Spec
+ * `docs/superpowers/specs/2026-11-17-extended-entity-search-design.md`, XS14.
  */
 final readonly class IndexedRelation
 {
@@ -23,7 +24,6 @@ final readonly class IndexedRelation
         'name' => FieldType::Text,
         'id' => ['type' => FieldType::Integer, 'filterable' => true],
         'slug' => ['type' => FieldType::Keyword, 'filterable' => true],
-        'path' => ['type' => FieldType::Keyword, 'filterable' => true],
     ];
 
     /**

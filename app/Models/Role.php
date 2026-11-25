@@ -19,7 +19,7 @@ use Modules\Core\Contracts\ISoftDeletableModel;
 use Modules\Core\Database\Factories\RoleFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
-use Modules\Core\Models\Concerns\HasTypedRecursiveRelationships;
+use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
@@ -48,9 +48,9 @@ use Spatie\Permission\Models\Role as BaseRole;
 final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
 {
     use HasCache;
+    use HasClosureTable;
     use HasFactory;
     use HasLocks;
-    use HasTypedRecursiveRelationships;
     use HasValidations {
         getRules as private getRulesTrait;
     }

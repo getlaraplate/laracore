@@ -32,7 +32,6 @@
     "lab404/laravel-impersonate": "^1.7.8",
     "mtrajano/laravel-swagger": "^0.6.4",
     "spatie/laravel-permission": "^8.3",
-    "staudenmeir/laravel-adjacency-list": "^1.26.2",
     "laravel/socialite": "^5.27",
     "wotz/laravel-swagger-ui": "^2.1",
     "elasticsearch/elasticsearch": "^9.5",

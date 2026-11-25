@@ -274,3 +274,27 @@ it('superadmin role syncPermissions rejects any permission', function (): void {
     expect(fn () => $superadmin_role->syncPermissions([$permission]))
         ->toThrow(ValidationException::class);
 });
+
+it('inherits permissions through a trashed middle role', function (): void {
+    $guard = 'web';
+    $permission_name = 'default.chain_table.select';
+    $a = Role::factory()->create(['name' => 'chain-a', 'guard_name' => $guard]);
+    $b = Role::factory()->create(['name' => 'chain-b', 'guard_name' => $guard, 'parent_id' => $a->id]);
+    $c = Role::factory()->create(['name' => 'chain-c', 'guard_name' => $guard, 'parent_id' => $b->id]);
+
+    Permission::create(['name' => $permission_name, 'guard_name' => $guard]);
+    $a->givePermissionTo($permission_name);
+
+    $fresh_c = Role::query()->findOrFail($c->id);
+    expect($fresh_c->hasPermission($permission_name))->toBeTrue()
+        ->and($fresh_c->getAllPermissions()->pluck('name')->all())->toBe([$permission_name]);
+
+    $b->delete();
+
+    // Today's behaviour, pinned: the ancestor walk does not stop at a soft-deleted role, so the permission
+    // held only by A still reaches C and the results are identical to the ones with B alive.
+    $trashed_c = Role::query()->findOrFail($c->id);
+    expect(Role::withTrashed()->findOrFail($b->id)->trashed())->toBeTrue()
+        ->and($trashed_c->hasPermission($permission_name))->toBeTrue()
+        ->and($trashed_c->getAllPermissions()->pluck('name')->all())->toBe([$permission_name]);
+});

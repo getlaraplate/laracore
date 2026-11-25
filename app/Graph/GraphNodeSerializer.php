@@ -19,7 +19,6 @@ final class GraphNodeSerializer
         'name',
         'label',
         'slug',
-        'path',
         'status',
         'type',
         'code',
@@ -54,7 +53,7 @@ final class GraphNodeSerializer
     private function attributesFor(Model $model, string $module, string $entity, string $detail): array
     {
         if ($detail === 'minimal') {
-            return $this->onlyExisting($model, ['slug', 'path']);
+            return $this->onlyExisting($model, ['slug']);
         }
 
         if ($detail === 'full') {

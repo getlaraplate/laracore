@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Modules\Core\Models;
 
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Validation\Rule;
 use Modules\Core\Enums\CoreTables;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Model;
 use Override;
 
@@ -19,6 +21,7 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $deleted_at
  * @property bool|null $is_deleted Whether the entity is deleted
  */
+#[ObservedBy(HierarchyOwnerObserver::class)]
 final class Template extends Model
 {
     /**

@@ -140,7 +140,6 @@ throws away the benefit and makes the application slower:
 | `AuthorizationService::$permission_model_cache` | `once()` in `resolvePermission()`, service bound `scoped()` |
 | `HasValidations::$permission_existence_cache` | `Authorization\PermissionExistenceMemo::exists()` |
 | `HasTable::$permissionCache` | `once()` keyed on `User::onceHash()` |
-| `HasClosureTable::$depth_cache` | `Cache::memo()` over the existing 24h entry |
 | `PerModelSettingResolver` singleton | `scoped()` binding |
 | `DatabaseConfigOverlay` applied in `boot()` | `ApplyDatabaseSettingsOverlay` middleware (console still applies at boot) |
 

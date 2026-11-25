@@ -49,6 +49,7 @@ use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Models\Pivot\ModelHasRole;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Observers\UserObserver;
 use Modules\Core\Services\ModificationVoteService;
 use Modules\Core\SoftDeletes\SoftDeletes;
@@ -85,7 +86,7 @@ use UnexpectedValueException;
  * @property \Carbon\CarbonImmutable|null $valid_to
  * @property array<array-key, mixed>|null $preferences Server-persisted UI preferences (theme, density, layout) synced from the SPA
  */
-#[ObservedBy([UserObserver::class])]
+#[ObservedBy([UserObserver::class, HierarchyOwnerObserver::class])]
 class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, MustVerifyEmail, PasskeyUser
 {
     use HasApiTokens;
