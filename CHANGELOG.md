@@ -2,6 +2,82 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-11-25
+
+### 🚀 Features
+
+- *(console)* Models:declare-columns writes each model's column tags
+- *(console)* Declare the fields translatable models read from their translation
+- *(core)* Closure table maintainer and migration helper
+- *(core)* Owner cascades keep hierarchy closures in step
+- *(contracts)* Versioned and searchable models declare their contracts
+
+### 🐛 Bug Fixes
+
+- *(versioning)* Share one strategy cache across every versioned model
+- *(phpstan)* Type the Core traits so their errors stop repeating per class
+- *(helpers)* User_class() answers Core's User
+- *(translations)* HasTranslations honours ITranslatableModel
+- *(console)* Read tags whose type has spaces in its generics
+- *(phpstan)* Type Core's models and the contracts other modules wait for
+- *(phpstan)* Type Core's CRUD, cache labels and relation overrides
+- *(core)* Bounded memory and safer inputs in the closure maintainer
+- *(core)* Facets refuse black-listed relations
+- *(core)* Closure kept in step when a delete is cancelled, deterministic sibling order
+- *(core)* Children re-parented during a delete keep their links
+- *(core)* Purging soft deletes keeps the closure in step
+- *(core)* Taxonomy owners keep the closure in step
+- *(core)* Owner cascade guards compare foreign key chains
+- *(core)* Drop a batch path once what it was built from changes
+- *(core)* Settings are read on behalf of the application
+
+### 🚜 Refactor
+
+- *(core)* Closure table trait with the full hierarchy relations
+- *(core)* Roles and taxonomies on the closure table
+- *(core)* [**breaking**] Compute no hierarchy paths
+- *(core)* [**breaking**] Drop the name path of TreeCollection
+
+### 📚 Documentation
+
+- *(models)* Every model declares its columns as @property tags
+- *(models)* Declare the json and array columns too
+- *(models)* Declare translated and proxied attributes, and type factory keys
+- *(core)* Document closure-table hierarchies
+- *(core)* Correct the closure hierarchy docs
+- *(core)* [**breaking**] Document the upgrade of an existing install
+
+### ⚡ Performance
+
+- *(core)* Hydrate closure relatives without model mutators
+- *(core)* Let eager closure lineages enter the model table by key
+- *(core)* The tree skips the redundant per-row select check of its nodes
+- *(core)* Read the closure row off the node without a pivot model
+- *(core)* Write tree paths without the model mutators
+- *(core)* Give a collection of taxonomies their paths in one batch
+- *(core)* Keep the eager lineage sub-select on an index range on MySQL
+- *(core)* Tree paths above a node come from the rows already loaded
+- *(core)* Read the batch path ancestors with their closure rows in one query
+- *(core)* Let the batch path join enter the taxonomies by key
+- *(core)* Tree paths below a node come from the rows already loaded
+
+### 🎨 Styling
+
+- *(filament)* Apply Pint to HasTable
+
+### 🧪 Testing
+
+- *(inspector)* Let the mocked database manager list its connections
+- *(overrides)* State the uncached configuration the merge test relies on
+- *(core)* Characterize role inheritance through a trashed role
+- *(core)* Pin the depth of the detached nested row
+- *(core)* Purge check on batch seeder without a Redis server
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove the patch backups committed by mistake
+- *(core)* Drop staudenmeir/laravel-adjacency-list
+
 ## [1.83.0] - 2026-11-24
 
 ### 🚀 Features
