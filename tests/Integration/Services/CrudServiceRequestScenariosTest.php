@@ -24,6 +24,7 @@ use Modules\Core\Casts\ModifyRequestData;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\TreeRequestData;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Helpers\MigrateUtils;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -949,7 +950,7 @@ it('history returns record and version history for versionable models', function
         $table->timestamps();
     });
 
-    $hist_model = new class extends Model
+    $hist_model = new class extends Model implements IVersionedModel
     {
         use HasApprovals;
         use HasVersions;

@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersionedRelations;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -16,7 +17,7 @@ use Modules\Core\Versioning\Data\RelationDescriptor;
  * A versioned record that versions every column but `notes`, and registers the relations a test gives it: its schema
  * epoch follows its table and its relations (D13, D33, D57).
  */
-final class EpochArticle extends Model
+final class EpochArticle extends Model implements IVersionedModel
 {
     use HasVersionedRelations;
     use HasVersions;

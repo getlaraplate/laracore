@@ -10,6 +10,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Unique;
 use Modules\Core\Cache\HasCache;
 use Modules\Core\Casts\ActionEnum;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\PermissionFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Concerns\HasValidations;
@@ -31,7 +32,7 @@ use Spatie\Permission\Models\Permission as ModelsPermission;
  * @property string|null $table_name
  * @property string|null $module_name
  */
-final class Permission extends ModelsPermission
+final class Permission extends ModelsPermission implements IVersionedModel
 {
     use HasCache;
     use HasFactory;

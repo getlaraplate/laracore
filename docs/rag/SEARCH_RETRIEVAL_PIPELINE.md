@@ -816,6 +816,21 @@ The steps by hand, for a single model or an engine the command does not cover: `
 `scout:reindex "{Model}"` and `scout:check-index "{Model}"`; when the mapping cannot be patched,
 `scout:delete-index "{Model}"`, `scout:index "{Model}"` and `scout:import "{Model}"`.
 
+### Syncing recent changes (`scout:sync`)
+
+`scout:sync {model} {--id=} {--from=}` sends a model's records to its index again, without rebuilding anything. It
+takes the records `scout:import` would index, trashed ones included, and narrows them:
+
+- `--id`: that record only;
+- `--from`: the records updated after that date;
+- neither: the records updated after the last indexing, as the model's engine reports it. When the engine cannot tell
+  (an engine other than Core's own, an empty index, a failed lookup), every record is synced.
+
+Each record is indexed again, except a trashed one, which is removed from the index unless `scout.soft_delete` keeps
+trashed documents flagged in it, as Scout does when a record is deleted. With `scout.queue` on, the work is queued.
+The model must implement `ISearchableModel`, which every model with Core's `Searchable` trait declares (PHPStan and the
+app test `SearchableModelsImplementTheContractTest` check it).
+
 ## FAQ prompts for RAG
 
 - How many retrieval strategies run for a query with a number in it?

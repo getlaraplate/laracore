@@ -9,7 +9,7 @@ use Filament\Widgets\Widget;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Laravel\Scout\EngineManager;
-use Laravel\Scout\Searchable;
+use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Services\ElasticsearchService;
 use Override;
@@ -66,10 +66,13 @@ final class SearchEngineHealthTableWidget extends Widget
             $data['driver'] = config('scout.driver', 'unknown');
             $data['version'] = $this->serverVersion();
 
-            $models = models(filter: static fn (string|object $model): bool => class_uses_trait($model, Searchable::class));
             $modelData = [];
 
-            foreach ($models as $model) {
+            foreach (models() as $model) {
+                if (! is_a($model, ISearchableModel::class, true)) {
+                    continue;
+                }
+
                 $instance = new $model();
                 $documents = 0;
                 $index_exists = false;
@@ -122,7 +125,7 @@ final class SearchEngineHealthTableWidget extends Widget
      * The number of rows the index should hold: the rows `scout:import` reaches through
      * makeAllSearchableQuery(), which lifts scopes such as LocaleScope that `query()` keeps.
      *
-     * @param  class-string<Model>  $model
+     * @param  class-string<Model&ISearchableModel>  $model
      */
     private function countRecords(string $model): int
     {

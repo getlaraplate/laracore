@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Tests\Stubs\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\SoftDeletes\SoftDeletes;
@@ -13,7 +14,7 @@ use Modules\Core\SoftDeletes\SoftDeletes;
  * A versioned model carrying Core's soft deletes and switching them off in its own code, so that
  * a plain delete removes the row.
  */
-final class HardDeletedVersionedArticle extends Model
+final class HardDeletedVersionedArticle extends Model implements IVersionedModel
 {
     use HasVersions;
     use SoftDeletes {

@@ -46,11 +46,11 @@ trait SoftDeletes
 
         $hidden = $this->hidden;
 
-        if (is_array($hidden) && ! in_array($this->getDeletedAtColumn(), $hidden, true)) {
+        if (! in_array($this->getDeletedAtColumn(), $hidden, true)) {
             $this->hidden[] = $this->getDeletedAtColumn();
         }
 
-        if (is_array($hidden) && ! in_array($this->getIsDeletedColumn(), $hidden, true)) {
+        if (! in_array($this->getIsDeletedColumn(), $hidden, true)) {
             $this->hidden[] = $this->getIsDeletedColumn();
         }
     }

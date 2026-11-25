@@ -7,6 +7,7 @@ namespace Modules\Core\Models\Pivot;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Attributes\Scope;
 use Illuminate\Database\Eloquent\Builder;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\Concerns\SortableTrait;
@@ -29,7 +30,7 @@ use Spatie\EloquentSortable\Sortable;
  * @property array<array-key, mixed>|null $default The default value of the field
  */
 #[ObservedBy([FieldableObserver::class, DynamicContentMetadataObserver::class])]
-final class Fieldable extends Pivot implements Sortable
+final class Fieldable extends Pivot implements IVersionedModel, Sortable
 {
     use HasVersions;
     use SortableTrait;

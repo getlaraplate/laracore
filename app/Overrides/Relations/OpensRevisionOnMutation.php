@@ -6,6 +6,7 @@ namespace Modules\Core\Overrides\Relations;
 
 use Closure;
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Data\VersionSetOptions;
 use Modules\Core\Versioning\Data\VersionSetRoot;
@@ -81,7 +82,7 @@ trait OpensRevisionOnMutation
         return $manager->run(
             VersionSetRoot::forModel($parent),
             $operation,
-            new VersionSetOptions(actor: method_exists($parent, 'getVersionUserId') ? $parent->getVersionUserId() : null),
+            new VersionSetOptions(actor: $parent instanceof IVersionedModel ? $parent->getVersionUserId() : null),
         );
     }
 
@@ -93,7 +94,7 @@ trait OpensRevisionOnMutation
 
     private function registersThis(Model $root, string $rootPivotKey): bool
     {
-        if (! method_exists($root, 'versionedRelationThroughPivot') || ! method_exists($root, 'getVersionStrategy')) {
+        if (! method_exists($root, 'versionedRelationThroughPivot') || ! $root instanceof IVersionedModel) {
             return false;
         }
 

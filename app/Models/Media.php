@@ -16,6 +16,7 @@ use Modules\Core\Contracts\IEmbeddableModel;
 use Modules\Core\Contracts\IRestrictsReadableColumns;
 use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Media\MediaProjection;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -67,7 +68,7 @@ use Throwable;
  * @property array<array-key, mixed> $responsive_images The responsive images of the media
  */
 #[ObservedBy([MediaMetadataObserver::class, MediaLifecycleObserver::class])]
-final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEmbeddableModel, IRestrictsReadableColumns, ISearchableModel, ISoftDeletableModel
+final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEmbeddableModel, IRestrictsReadableColumns, ISearchableModel, ISoftDeletableModel, IVersionedModel
 {
     /** @use HasFactory<\Illuminate\Database\Eloquent\Factories\Factory<static>> */
     use HasFactory;

@@ -47,6 +47,8 @@ use Modules\Core\Versioning\VersionStrategyCache;
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  *
+ * @phpstan-require-implements \Modules\Core\Contracts\IVersionedModel
+ *
  * @phpstan-type HasVersionsType HasVersions
  */
 trait HasVersions
@@ -413,10 +415,8 @@ trait HasVersions
      * column. Deliberately not falling back to auth()->id() the way the package
      * does: a version written by a queue worker or a seeder has no user behind it,
      * and naming whoever happens to be logged in would be a lie.
-     *
-     * @return int|null
      */
-    public function getVersionUserId()
+    public function getVersionUserId(): ?int
     {
         $user_key = $this->getUserForeignKeyName();
 
