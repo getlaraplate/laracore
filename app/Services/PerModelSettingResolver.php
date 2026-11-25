@@ -6,6 +6,7 @@ namespace Modules\Core\Services;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Modules\Core\Authorization\RetrievedSelectGuard;
 use Modules\Core\Cache\CacheManager;
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\LabelledCache;
@@ -96,10 +97,13 @@ final class PerModelSettingResolver
             self::groupCacheKey($group_name),
             self::cacheLabels(),
             self::cacheTtl(),
-            static fn (): Collection => Setting::query()
-                ->where('group_name', $group_name)
-                ->get()
-                ->keyBy('name'),
+            static fn (): Collection => RetrievedSelectGuard::without(
+                Setting::class,
+                static fn (): Collection => Setting::query()
+                    ->where('group_name', $group_name)
+                    ->get()
+                    ->keyBy('name'),
+            ),
             static fn (mixed $group): bool => $group instanceof Collection,
         );
 
