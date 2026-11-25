@@ -119,9 +119,13 @@ it('roots the taxonomies left by an owner hard delete', function (Closure $owner
         return ['entity' => (int) $this->otherPreset->entity_id, 'presettable' => (int) $presettable->id, 'delete' => static function () use ($presettable): void {
             try {
                 $presettable->forceDelete();
-            } catch (TypeError) {
+            } catch (TypeError $error) {
                 // Pre-existing: Core SoftDeletes::delete() declares ?bool, a pivot's delete returns the row count, so
                 // the return type throws after the row went and the events ran. Either outcome leaves the same rows.
+                // Any other TypeError is a real failure and is rethrown.
+                if (! str_contains($error->getMessage(), '::delete(): Return value must be of type ?bool, int returned')) {
+                    throw $error;
+                }
             }
         }];
     }],

@@ -80,6 +80,56 @@ The hierarchy computes no path. Laraplate stays headless (decision of 2026-11-24
 and the slug path a taxonomy built from its ancestors (`HasPath`, with `ids` and `full_name`) are gone. A client that
 needs a breadcrumb or a URL builds it from the nodes and their signed `depth`, or from the ancestors it loads.
 
+## Upgrading an existing install
+
+The three closure tables (`vend_roles_closure`, `core_taxonomies_closure`, `cms_comments_closure`) are created
+inside the create migrations of their model tables, so `php artisan migrate` creates nothing on an install whose
+migrations already ran. Until the tables exist, every role read that walks the hierarchy (`Role::getAllPermissions()`,
+`hasPermission()`, `AclResolverService`) fails with "table not found", and so does creating a category or a comment.
+
+The supported path while the project is pre-stable is to start again from the migrations:
+
+```bash
+php artisan migrate:fresh --seed
+```
+
+This drops all data. To keep the data, create the three closure tables by hand and fill them from the `parent_id`
+columns. `MigrateUtils::closureTable()` creates `{modelTable}_closure` (its second argument, the connection, is
+optional and defaults to the default connection; pass it when the model table lives on another one). Run it once,
+for example from `php artisan tinker` or a one-off migration, and only when the table does not exist yet:
+
+```php
+use Illuminate\Support\Facades\Schema;
+use Modules\CMS\Models\Category;
+use Modules\CMS\Models\Comment;
+use Modules\Core\Helpers\MigrateUtils;
+use Modules\Core\Models\Role;
+
+foreach (['vend_roles', 'core_taxonomies', 'cms_comments'] as $modelTable) {
+    if (! Schema::hasTable($modelTable . '_closure')) {
+        MigrateUtils::closureTable($modelTable);
+    }
+}
+
+Role::rebuildClosure();
+Category::rebuildClosure(); // any Taxonomy subclass: they share core_taxonomies_closure
+Comment::rebuildClosure();
+```
+
+`rebuildClosure()` is a static method of `HasClosureTable`. It empties the model's closure table and rebuilds it
+from the parent column in one transaction, soft-deleted rows included, so it can be run again at any time. Skip the
+`Comment` lines when the CMS module is not installed. A project with its own hierarchies does the same for each.
+
+Other things a consumer of the removed API must change:
+
+- `Modules\Core\Models\Concerns\HasTypedRecursiveRelationships` is deleted. Models use `HasClosureTable`.
+- Core no longer requires `staudenmeir/laravel-adjacency-list`, so it no longer arrives transitively. A project
+  model that uses `HasRecursiveRelationships` directly must require the package itself or move to `HasClosureTable`.
+- `HasClosureTable` lost `closure()`, `bloodlineAndSelf()`, the `withClosure`, `tree`, `withSiblings` and
+  `withBloodline` scopes and the `newCollection()` override (`TreeCollection` is no longer the model collection).
+  `bloodline()` is now a relation, not a collection, and `ancestors()` and `ancestorsAndSelf()` list the closest
+  ancestor first, not the root.
+
 ## What the trait maintains
 
 Model events keep the closure in step with the parent column, each write in a transaction on the model's
