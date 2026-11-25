@@ -9,12 +9,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Scope;
 use Modules\Core\Helpers\LocaleContext;
 
+/**
+ * @implements Scope<Model>
+ */
 final class LocaleScope implements Scope
 {
     /**
      * Apply the scope to a given Eloquent query builder.
      *
-     * @param  Builder<Model>  $builder
+     * @param  Builder<covariant Model>  $builder
      */
     public function apply(Builder $builder, Model $model): void
     {
@@ -90,7 +93,7 @@ final class LocaleScope implements Scope
     /**
      * Eager load translation with fallback logic.
      *
-     * @param  Builder<Model>  $builder
+     * @param  Builder<covariant Model>  $builder
      */
     private function eagerLoadTranslation(
         Builder $builder,

@@ -189,7 +189,7 @@ final readonly class CrudCacheDependencyResolver
 
         $owner_key = $relation->getOwnerKeyName();
 
-        if ($owner_key !== null && $owner_key !== $related->getKeyName()) {
+        if ($owner_key !== $related->getKeyName()) {
             return null;
         }
 
@@ -572,6 +572,7 @@ final readonly class CrudCacheDependencyResolver
                     $labels[] = $label;
                 }
 
+                // @phpstan-ignore instanceof.alwaysTrue (PHPStan narrows $loaded through the reassignment of $relation above; a morphTo whose target is gone leaves it null, as CrudCacheDependencyResolverTest shows)
                 if ($relation instanceof MorphTo && $loaded instanceof Model) {
                     $targets[$loaded::class] ??= $loaded;
                 }

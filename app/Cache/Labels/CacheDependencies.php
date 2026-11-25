@@ -25,6 +25,6 @@ final readonly class CacheDependencies
 
     public function withLabels(string ...$labels): self
     {
-        return new self([...$this->labels, ...$labels], $this->row_tables, $this->complete);
+        return new self([...$this->labels, ...array_values($labels)], $this->row_tables, $this->complete);
     }
 }

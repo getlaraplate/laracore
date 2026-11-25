@@ -44,7 +44,7 @@ final class CacheScope
             }
         }
 
-        return $keys;
+        return array_values($keys);
     }
 
     private static function keyOf(Model $model): string

@@ -194,14 +194,14 @@ LUA;
             ...array_map(fn (string $label): string => $prefix . self::FLUSHED_KEY . $label, $labels),
         ];
 
-        $stored = $connection->eval(
+        $stored = RedisScript::run($connection,
             self::LUA_MICROS . "\n" . self::LUA_STORE,
             count($keys),
             ...$keys,
             ...[(string) $lookup->started_at, $this->pack($value, $connection), (string) max(1, $ttl), (string) $this->windowMicros()],
         );
 
-        return (int) $stored === 1;
+        return is_numeric($stored) && (int) $stored === 1;
     }
 
     #[Override]
@@ -232,7 +232,7 @@ LUA;
             $record = true;
 
             while ($batch !== []) {
-                $unfinished = $connection->eval(
+                $unfinished = RedisScript::run($connection,
                     self::LUA_MICROS . "\n" . self::LUA_FLUSH,
                     2 * count($batch) + 1,
                     ...array_map(fn (string $label): string => $prefix . self::LABEL_KEY . $label, $batch),
@@ -263,7 +263,7 @@ LUA;
         $cursor = $this->initialCursor($connection);
 
         do {
-            $reply = $connection->scan($cursor, ['match' => $this->escapeGlob($client_prefix . $prefix) . self::LABEL_KEY . '*', 'count' => self::CHUNK]);
+            $reply = $this->scanPage($connection, $cursor, ['match' => $this->escapeGlob($client_prefix . $prefix) . self::LABEL_KEY . '*', 'count' => self::CHUNK]);
 
             if ($reply === false) {
                 break;
@@ -280,7 +280,7 @@ LUA;
                     }
                 }
             }
-        } while ((string) $cursor !== '0');
+        } while (is_scalar($cursor) && (string) $cursor !== '0');
 
         return count($seen);
     }
@@ -383,7 +383,7 @@ LUA;
     private function announce(Connection $connection): int
     {
         $announced_at = hrtime(true);
-        $now = $connection->eval(
+        $now = RedisScript::run($connection,
             self::LUA_MICROS . "\n" . self::LUA_ANNOUNCE,
             1,
             $this->store->getPrefix() . self::WINDOW_KEY,
@@ -459,10 +459,12 @@ LUA;
     {
         if ($connection instanceof PhpRedisConnection) {
             if ($connection->serialized()) {
+                // @phpstan-ignore argument.type (Laravel declares string values, but with a serializer set pack() serializes any value, as RedisStore does)
                 return $connection->pack([$value])[0];
             }
 
             if ($connection->compressed()) {
+                // @phpstan-ignore argument.type (Laravel declares string values, but with a serializer set pack() serializes any value, as RedisStore does)
                 return $connection->pack([$this->serialize($value)])[0];
             }
         }
@@ -481,7 +483,7 @@ LUA;
             return $raw;
         }
 
-        return is_numeric($raw) ? $raw : unserialize((string) $raw);
+        return is_numeric($raw) || ! is_string($raw) ? $raw : unserialize($raw);
     }
 
     /**
@@ -492,12 +494,17 @@ LUA;
     {
         $client = $connection->client();
 
-        if ($connection instanceof PhpRedisConnection) {
-            return (string) $client->getOption(Redis::OPT_PREFIX);
+        if ($client instanceof Redis) {
+            $prefix = $client->getOption(Redis::OPT_PREFIX);
+
+            return is_string($prefix) ? $prefix : '';
         }
 
-        if (method_exists($client, 'getOptions')) {
-            return (string) $client->getOptions()->prefix?->getPrefix();
+        if (is_object($client) && method_exists($client, 'getOptions')) {
+            $prefix = data_get($client->getOptions(), 'prefix');
+            $value = is_object($prefix) && method_exists($prefix, 'getPrefix') ? $prefix->getPrefix() : null;
+
+            return is_string($value) ? $value : '';
         }
 
         return '';
@@ -514,5 +521,24 @@ LUA;
     private function escapeGlob(string $value): string
     {
         return (string) preg_replace('/[\\\\*?\[\]]/', '\\\\$0', $value);
+    }
+
+    /**
+     * One page of a SCAN, as the next cursor and the keys it found, or false when the scan is over or failed.
+     *
+     * @param  array{match: string, count: int}  $options
+     * @return array{0: mixed, 1: list<string>}|false
+     */
+    private function scanPage(Connection $connection, mixed $cursor, array $options): array|false
+    {
+        $reply = $connection instanceof PhpRedisConnection
+            ? $connection->scan($cursor, $options)
+            : $connection->command('scan', [$cursor, $options]);
+
+        if (! is_array($reply) || ! is_array($reply[1] ?? null)) {
+            return false;
+        }
+
+        return [$reply[0] ?? null, array_values(array_filter($reply[1], is_string(...)))];
     }
 }

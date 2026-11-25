@@ -58,7 +58,7 @@ class StatusCommand extends BaseStatusCommand
             }
 
             if ($this->option('pending') && $migrations->some(static fn (array $m): bool => (new Stringable($m[1]))->contains('Pending'))) {
-                return $this->option('pending');
+                return (int) $this->option('pending');
             }
         });
     }

@@ -135,10 +135,14 @@ LUA;
         $report = [];
 
         foreach (is_array($labels) ? $labels : [] as $label) {
-            $report[(string) $label] = [
-                'hits' => (int) $this->stats->get(self::PREFIX . 'hits:' . $label, 0),
-                'misses' => (int) $this->stats->get(self::PREFIX . 'misses:' . $label, 0),
-                'flushes' => (int) $this->stats->get(self::PREFIX . 'flushes:' . $label, 0),
+            if (! is_string($label)) {
+                continue;
+            }
+
+            $report[$label] = [
+                'hits' => self::counter($this->stats->get(self::PREFIX . 'hits:' . $label, 0)),
+                'misses' => self::counter($this->stats->get(self::PREFIX . 'misses:' . $label, 0)),
+                'flushes' => self::counter($this->stats->get(self::PREFIX . 'flushes:' . $label, 0)),
             ];
         }
 
@@ -157,6 +161,14 @@ LUA;
             CacheLabel::isUser($label) => CacheLabel::user('*'),
             default => $label,
         };
+    }
+
+    /**
+     * A stored counter; the store may answer an integer or its numeric string.
+     */
+    private static function counter(mixed $value): int
+    {
+        return is_numeric($value) ? (int) $value : 0;
     }
 
     /**
@@ -204,7 +216,8 @@ LUA;
         $store = $this->stats instanceof BaseRepository ? $this->stats->getStore() : null;
 
         if ($store instanceof RedisStore) {
-            $created = $store->connection()->eval(
+            $created = RedisScript::run(
+                $store->connection(),
                 self::LUA_COUNT,
                 count($labels),
                 ...array_map(static fn (string $label): string => $store->getPrefix() . self::PREFIX . $metric . ':' . $label, $labels),

@@ -89,9 +89,7 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex, IReso
             // added again. When the last add fails too the store failed every write (a memcached server that is down
             // answers false, never an exception): the flush did not happen, and a failover index must degrade
             // instead of losing it.
-            if ($this->served($this->cache->add($counter, Clock::micros(), self::COUNTER_TTL), 'add')
-                || $this->served($this->cache->increment($counter), 'increment') !== false
-                || $this->served($this->cache->add($counter, Clock::micros(), self::COUNTER_TTL), 'add')) {
+            if ($this->seed($counter) || $this->served($this->cache->increment($counter), 'increment') !== false || $this->seed($counter)) {
                 continue;
             }
 
@@ -215,5 +213,15 @@ final readonly class VersionCounterLabelIndex implements ICacheLabelIndex, IReso
         }
 
         throw new LabelIndexUnavailableException(sprintf('The memcached store failed the %s of a version counter: %s (%d).', $call, $client->getResultMessage(), $code));
+    }
+
+    /**
+     * Adds the counter at a seed unless it exists. Called again after a failed increment, it is not the same call.
+     *
+     * @phpstan-impure
+     */
+    private function seed(string $counter): bool
+    {
+        return (bool) $this->served($this->cache->add($counter, Clock::micros(), self::COUNTER_TTL), 'add');
     }
 }
