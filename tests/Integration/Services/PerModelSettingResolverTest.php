@@ -2,9 +2,13 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\Access\AuthorizationException;
 use Modules\Core\Casts\SettingTypeEnum;
+use Modules\Core\Models\Permission;
 use Modules\Core\Models\Setting;
+use Modules\Core\Models\User;
 use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Support\PermissionName;
 use Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe;
 
 beforeEach(function (): void {
@@ -268,4 +272,22 @@ it('reloads every group after a settings write that flushes the table label', fu
     resolve(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable('core_settings');
 
     expect(new PerModelSettingResolver()->string('labelled_settings_flush_test', 'missing'))->toBe('after');
+});
+
+it('reads the settings on behalf of the application, whatever the acting user may select', function (): void {
+    Setting::factory()->persistedWithoutApprovalCapture()->create([
+        'name' => 'restricted_reader_setting_test',
+        'value' => true,
+        'type' => SettingTypeEnum::Boolean,
+        'group_name' => 'moderation',
+        'description' => 'test',
+    ]);
+
+    // As `permission:refresh` does: the select permission of the settings exists, granted to nobody.
+    Permission::query()->firstOrCreate(['name' => PermissionName::forClass(Setting::class, 'select'), 'guard_name' => 'web']);
+    $this->actingAs(User::factory()->create());
+
+    expect(fn (): mixed => Setting::query()->where('name', 'restricted_reader_setting_test')->first())
+        ->toThrow(AuthorizationException::class, 'User cannot select core_settings')
+        ->and(new PerModelSettingResolver()->boolean('restricted_reader_setting_test', false))->toBeTrue();
 });
