@@ -70,7 +70,7 @@ final readonly class CacheLabelInvalidator
      * Flushes the tables of the pivot and of both sides, and, for a grant of roles or permissions, the scope labels
      * of whoever it changes ({@see scopeLabelsOfPivot()}).
      *
-     * @param  BelongsToMany<*, *, *, *>  $relation
+     * @param  BelongsToMany<covariant Model, covariant Model, *, *>  $relation
      * @param  list<int|string>|null  $related_keys  The related keys the mutation touched, null when unknown (a detach of all).
      */
     public function flushPivot(BelongsToMany $relation, ?array $related_keys = null): void

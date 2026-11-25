@@ -46,7 +46,7 @@ final readonly class AggregateQuery
      * @param  list<AggregateMeasure>  $measures
      * @param  array<string, mixed>|null  $period  The spec {@see AggregatePeriod::resolve()} reads, validated and normalized.
      * @param  string  $sortBy  `measure` (the first measure) or `key` (the group key, which is chronological for a bucket).
-     * @param  string  $sortDir  `asc` or `desc`.
+     * @param  'asc'|'desc'  $sortDir
      */
     public function __construct(
         public array $measures,
@@ -382,7 +382,7 @@ final readonly class AggregateQuery
      * The sort of the request with what it leaves out filled in: a bucketed group runs by its key, any other
      * by the first measure, and a key runs ascending, a measure descending.
      *
-     * @return array{string, string}
+     * @return array{'measure'|'key', 'asc'|'desc'}
      */
     private static function sort(mixed $value, bool $bucketed): array
     {

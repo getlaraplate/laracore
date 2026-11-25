@@ -63,6 +63,7 @@ use Modules\Core\Enums\TimeBucket;
 use Modules\Core\Exceptions\AggregateException;
 use Modules\Core\Exceptions\CrudWriteNotAllowedException;
 use Modules\Core\Helpers\LocaleContext;
+use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Locking\Locked;
 use Modules\Core\Locking\LockIntent;
@@ -923,7 +924,7 @@ class CrudService
         $this->assertCrudWriteAllowed($model, 'update');
         $permission_name = $this->auth->ensurePermission($requestData->request, $model->getTable(), 'update', $model->getConnectionName());
 
-        $key_value = $this->getModelKeyValue($requestData);
+        $key_value = $this->requiredModelKeyValue($requestData);
         $found_records = $this->aclFiltered(
             $model->newQuery()->where($this->keyValueToWhereCondition($model, $key_value)),
             $permission_name,
@@ -968,7 +969,11 @@ class CrudService
                 $mutated = (bool) (method_exists($found_record, 'withinRevision') ? $found_record->withinRevision($write) : $write());
 
                 if ($mutated) {
-                    $updated_records->add($found_record->fresh());
+                    $fresh = $found_record->fresh();
+
+                    if ($fresh instanceof Model) {
+                        $updated_records->add($fresh);
+                    }
                 }
             }
         });
@@ -991,7 +996,7 @@ class CrudService
         $model = $requestData->model;
         $this->assertCrudWriteAllowed($model, 'delete');
         $permission_name = $this->auth->ensurePermission($requestData->request, $model->getTable(), 'forceDelete', $model->getConnectionName());
-        $key_value = $this->getModelKeyValue($requestData);
+        $key_value = $this->requiredModelKeyValue($requestData);
         $found_records = $this->aclFiltered(
             $model->newQuery()->where($this->keyValueToWhereCondition($model, $key_value)),
             $permission_name,
@@ -1036,7 +1041,7 @@ class CrudService
         $required_permission = $is_activate ? 'restore' : 'delete';
         $this->assertCrudWriteAllowed($model, $required_permission);
         $permission_name = $this->auth->ensurePermission($requestData->request, $model->getTable(), $required_permission, $model->getConnectionName());
-        $key_value = $this->getModelKeyValue($requestData);
+        $key_value = $this->requiredModelKeyValue($requestData);
         $found_record = $this->aclFiltered(
             $this->newQueryWithTrashed($model)->where($this->keyValueToWhereCondition($model, $key_value)),
             $permission_name,
@@ -1215,10 +1220,10 @@ class CrudService
         $rows = $modifications->map(static function (Modification $modification) use ($user): Fluent {
             $row = self::pendingApprovalRow($modification);
             $type = $modification->modifiable_type;
-            $is_mine = $modification->modifier_type === $user::class && (string) $modification->modifier_id === (string) $user->getKey();
+            $is_mine = $modification->modifier_type === $user::class && $modification->modifier_id === ModelKey::of($user);
 
             $row['modifiable_type'] = $type;
-            $row['entity'] = is_string($type) && class_exists($type) ? (new $type())->getTable() : null;
+            $row['entity'] = is_string($type) && is_a($type, Model::class, true) ? (new $type())->getTable() : null;
             $row['operation'] = $modification->operation->value;
             $row['is_mine'] = $is_mine;
             // Somebody else's request is listed only when the user may decide on it.
@@ -1312,6 +1317,8 @@ class CrudService
 
     /**
      * One pending request as the inbox lists it: the record, its label and the quorum still missing.
+     *
+     * @return Fluent<string, mixed>
      */
     private static function pendingApprovalRow(Modification $modification): Fluent
     {
@@ -1354,6 +1361,24 @@ class CrudService
         }
 
         return $properties;
+    }
+
+    /**
+     * Runs the read with the per-row select check of every given class suppressed.
+     *
+     * @param  list<class-string>  $classes
+     * @param  Closure(): Collection<int, Model>  $read
+     * @return Collection<int, Model>
+     */
+    private static function withoutSelectGuards(array $classes, Closure $read): Collection
+    {
+        if ($classes === []) {
+            return $read();
+        }
+
+        $class = array_shift($classes);
+
+        return RetrievedSelectGuard::without($class, static fn (): Collection => self::withoutSelectGuards($classes, $read));
     }
 
     /**
@@ -2430,7 +2455,7 @@ class CrudService
             return $submitted;
         }
 
-        $readable_attached = $readable($attached)->pluck($key)->map(static fn (mixed $id): string => (string) $id)->all();
+        $readable_attached = array_map(static fn (mixed $id): string => is_scalar($id) ? (string) $id : '', $readable($attached)->pluck($key)->all());
         $hidden = array_values(array_filter(
             $attached,
             static fn (int|string $id): bool => ! in_array((string) $id, $readable_attached, true),
@@ -2471,6 +2496,7 @@ class CrudService
      * it falls back to the key, so a label sort never silently does nothing.
      *
      * @param  array{related: Model, relatedTable: string, ownerKey: string, column: string}|null  $label_relation
+     * @param  'asc'|'desc'  $direction
      */
     private function orderFacetByLabel(BaseQueryBuilder $query, string $base_table, string $key, ?array $label_relation, string $direction): void
     {
@@ -3046,6 +3072,21 @@ class CrudService
     }
 
     /**
+     * The key of the record the request names. Every request but a vote names one (the request rules require it),
+     * so a missing key is refused instead of reaching the query as no condition.
+     *
+     * @return array<string, mixed>|string|int
+     */
+    private function requiredModelKeyValue(ModifyRequestData $filters): array|string|int
+    {
+        $key_value = $this->getModelKeyValue($filters);
+
+        throw_if($key_value === null, InvalidArgumentException::class, 'A record id is required.');
+
+        return $key_value;
+    }
+
+    /**
      * Normalize key value to an array suitable for Builder::where() (column => value or [col => val, ...]).
      *
      * @param  array<string, mixed>|string|int  $keyValue
@@ -3127,7 +3168,7 @@ class CrudService
     private function searchWithScout(SearchRequestData $requestData, string $permissionName, ?ExtenderSearch $extender = null, ?ReadableExtenders $readable = null): CrudResult
     {
         $model = $requestData->model;
-        $engine_model = $extender?->host ?? $model;
+        $engine_model = $extender !== null ? $extender->host : $model;
 
         if (is_array($engine_model->getKeyName())) {
             return new CrudResult(
@@ -3157,7 +3198,7 @@ class CrudService
         } else {
             $this->auth->injectAclFilters($requestData, $permissionName);
             $engine_filters = $readable instanceof ReadableExtenders
-                ? new FiltersGroup(array_values(array_filter([$readable->hostRows(app(ExtenderFilterTranslator::class)), $requestData->filters])), WhereClause::And)
+                ? new FiltersGroup(array_filter([$readable->hostRows(app(ExtenderFilterTranslator::class)), $requestData->filters]), WhereClause::And)
                 : $requestData->filters;
             $engine_sort = $requestData->sort;
         }
@@ -3229,7 +3270,7 @@ class CrudService
     private function searchWithAdvanced(SearchRequestData $requestData, string $permissionName, ?ExtenderSearch $extender = null, ?ReadableExtenders $readable = null): CrudResult
     {
         $advanced_search = $this->advanced_search ?? app(AdvancedSearchService::class);
-        $engine_model = $extender?->host ?? $requestData->model;
+        $engine_model = $extender !== null ? $extender->host : $requestData->model;
 
         if (! $advanced_search->available($engine_model)) {
             return new CrudResult(
@@ -3288,7 +3329,9 @@ class CrudService
     {
         $user = $requestData->request->user();
 
-        return $user !== null ? 'user:' . $user->getAuthIdentifier() : 'ip:' . $requestData->request->ip();
+        $identifier = $user?->getAuthIdentifier();
+
+        return is_scalar($identifier) ? 'user:' . $identifier : 'ip:' . $requestData->request->ip();
     }
 
     /**
@@ -3312,7 +3355,11 @@ class CrudService
         $this->query_builder->applyRequestedRelations($query, $requestData, $this->relationAuthorizer());
 
         $records = $query->get();
-        $records_by_key = $records->keyBy(static fn (Model $record): string => (string) ($hitKeyColumn !== null ? $record->getAttribute($hitKeyColumn) : $record->getKey()));
+        $records_by_key = $records->keyBy(static function (Model $record) use ($hitKeyColumn): string {
+            $key = $hitKeyColumn !== null ? $record->getAttribute($hitKeyColumn) : $record->getKey();
+
+            return is_scalar($key) ? (string) $key : '';
+        });
         $data = new Collection(
             collect($ids)
                 ->map(static fn (string $id): ?Model => $records_by_key->get($id))
@@ -3468,14 +3515,10 @@ class CrudService
      */
     private function upcastExtendedRows(ReadableExtenders $readable, Collection $rows): Collection
     {
-        $upcast = static fn (): Collection => new Collection($readable->host->upcastExtensions($rows)->all());
-
-        foreach ($readable->extenderClasses() as $class) {
-            $inner = $upcast;
-            $upcast = static fn (): Collection => RetrievedSelectGuard::without($class, $inner);
-        }
-
-        return $upcast();
+        return self::withoutSelectGuards(
+            $readable->extenderClasses(),
+            static fn (): Collection => new Collection($readable->host->upcastExtensions($rows)->all()),
+        );
     }
 
     private function searchConstraintApplier(): ScoutSearchConstraintApplier
@@ -3546,7 +3589,7 @@ class CrudService
             : $key_value !== null && $key_value !== '';
         throw_if(! $has_record_key && ! is_array($requested), InvalidArgumentException::class, 'A record id or the modifications to vote on are required.');
 
-        $found_record = $has_record_key
+        $found_record = $has_record_key && $key_value !== null
             ? $this->aclFiltered(
                 $this->newQueryWithTrashed($model)->where($this->keyValueToWhereCondition($model, $key_value)),
                 $permission_name,
@@ -3662,7 +3705,7 @@ class CrudService
         $is_single = $request->has('id');
         $intent = $operation === 'lock' ? $this->resolveLockIntent($requestData) : null;
 
-        $key_value = $this->getModelKeyValue($requestData);
+        $key_value = $this->requiredModelKeyValue($requestData);
         $query = $model->newQuery()->where($this->keyValueToWhereCondition($model, $key_value));
 
         if ($intent instanceof LockIntent) {
@@ -3682,7 +3725,11 @@ class CrudService
                     : $this->applyUnlock($found_record, $requestData, $is_single);
 
                 if ($changed) {
-                    $affected_records->add($found_record->fresh());
+                    $fresh = $found_record->fresh();
+
+                    if ($fresh instanceof Model) {
+                        $affected_records->add($fresh);
+                    }
                 }
             }
         });
@@ -3907,20 +3954,13 @@ class CrudService
     }
 
     /**
-     * Narrows a write query to the rows the caller's ACL actually reaches.
-     *
-     * The entity-level check says the caller may perform the operation at all; without this, every
-     * write path resolved its rows by key alone, so a row-level ACL that hid a record from a list
-     * did nothing to stop the same user updating, deleting or approving it by id.
+     * Apply a permission's ACL when the permission exists. The pending-approvals lists read
+     * permissions the user need not hold, and a permission nobody defined has no ACL to apply.
      *
      * @template TModel of Model
      *
      * @param  Builder<TModel>  $query
      * @return Builder<TModel>
-     */
-    /**
-     * Apply a permission's ACL when the permission exists. The pending-approvals lists read
-     * permissions the user need not hold, and a permission nobody defined has no ACL to apply.
      */
     private function aclFilteredIfDefined(Builder $query, string $permission_name): Builder
     {
@@ -3932,6 +3972,18 @@ class CrudService
         return Permission::query()->where('name', $permission_name)->exists();
     }
 
+    /**
+     * Narrows a write query to the rows the caller's ACL actually reaches.
+     *
+     * The entity-level check says the caller may perform the operation at all; without this, every
+     * write path resolved its rows by key alone, so a row-level ACL that hid a record from a list
+     * did nothing to stop the same user updating, deleting or approving it by id.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
+     */
     private function aclFiltered(Builder $query, string $permission_name): Builder
     {
         $this->auth->applyAclFiltersToQuery($query, $permission_name);

@@ -82,13 +82,21 @@ final class PendingLabelFlushes
     public function add(Connection $connection, ICacheLabelIndex $index, array $labels): void
     {
         $key = (string) $connection->getName() . ':' . spl_object_id($index);
-        $this->pending[$key] ??= ['index' => $index, 'labels' => [], 'watched' => new WeakMap()];
+        $this->pending[$key] ??= ['index' => $index, 'labels' => [], 'watched' => self::watchList()];
 
         foreach ($labels as $label) {
             $this->pending[$key]['labels'][$label] = true;
         }
 
         $this->watch($connection, $key);
+    }
+
+    /**
+     * @return WeakMap<DatabaseTransactionRecord, true>
+     */
+    private static function watchList(): WeakMap
+    {
+        return new WeakMap();
     }
 
     /**

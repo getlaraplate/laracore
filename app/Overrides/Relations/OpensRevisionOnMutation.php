@@ -20,26 +20,43 @@ use Modules\Core\Versioning\Data\VersionSetRoot;
  */
 trait OpensRevisionOnMutation
 {
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
     public function attach($ids, array $attributes = [], $touch = true): void
     {
         $this->withinRevisionOfItsRoot(fn () => parent::attach($ids, $attributes, $touch));
     }
 
+    /**
+     * @return int
+     */
     public function detach($ids = null, $touch = true)
     {
         return $this->withinRevisionOfItsRoot(fn () => parent::detach($ids, $touch));
     }
 
+    /**
+     * @param  \Illuminate\Support\Collection<array-key, mixed>|Model|array<array-key, mixed>|int|string  $ids
+     * @return array{attached: array<mixed>, detached: array<mixed>, updated: array<mixed>}
+     */
     public function sync($ids, $detaching = true)
     {
         return $this->withinRevisionOfItsRoot(fn () => parent::sync($ids, $detaching));
     }
 
+    /**
+     * @return array<array-key, mixed>
+     */
     public function toggle($ids, $touch = true)
     {
         return $this->withinRevisionOfItsRoot(fn () => parent::toggle($ids, $touch));
     }
 
+    /**
+     * @param  array<string, mixed>  $attributes
+     * @return int
+     */
     public function updateExistingPivot($id, array $attributes, $touch = true)
     {
         return $this->withinRevisionOfItsRoot(fn () => parent::updateExistingPivot($id, $attributes, $touch));

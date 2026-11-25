@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Services\Crud\Aggregate;
 
+use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as BaseQueryBuilder;
 use Illuminate\Database\Query\Expression;
@@ -126,7 +127,7 @@ final class CurrencyCheck
      * The currency partials of the amounts, to select beside their figures: the least and the greatest currency of
      * the rows that fall in a cell.
      *
-     * @return list<Expression<string>>
+     * @return list<ExpressionContract>
      */
     public function select(Model $model, Grammar $grammar): array
     {

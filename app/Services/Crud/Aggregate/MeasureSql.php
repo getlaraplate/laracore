@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Services\Crud\Aggregate;
 
+use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Database\Query\Grammars\Grammar;
@@ -73,7 +74,7 @@ final class MeasureSql
      *
      * @throws AggregateException
      *
-     * @return list<Expression<string>>
+     * @return list<ExpressionContract>
      */
     public static function select(Model $model, Grammar $grammar, array $measures, CurrencyCheck $currency): array
     {

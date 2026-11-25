@@ -6,9 +6,9 @@ namespace Modules\Core\Services\Crud;
 
 use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Contracts\IMountsRelatedAttributes;
+use Modules\Core\Contracts\ITranslatableModel;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Models\Concerns\HasDynamicContents;
-use Modules\Core\Models\Concerns\HasTranslations;
 
 /**
  * Tells where a flat filter property lives when it is not a column of the model's own table.
@@ -52,7 +52,7 @@ final class ModelPropertyResolver
         }
 
         $traits = class_uses_recursive($model);
-        $is_translatable = isset($traits[HasTranslations::class]);
+        $is_translatable = $model instanceof ITranslatableModel;
         $has_dynamic_contents = isset($traits[HasDynamicContents::class]);
 
         $mounts_attributes = $model instanceof IMountsRelatedAttributes;
@@ -70,7 +70,7 @@ final class ModelPropertyResolver
             return null;
         }
 
-        if ($is_translatable && in_array($property, $model::getTranslatableFields(), true)) {
+        if ($model instanceof ITranslatableModel && in_array($property, $model::getTranslatableFields(), true)) {
             return self::TRANSLATED;
         }
 
@@ -102,7 +102,7 @@ final class ModelPropertyResolver
      */
     public static function translationContainer(Model $model): ?string
     {
-        if (! isset(class_uses_recursive($model)[HasTranslations::class])) {
+        if (! $model instanceof ITranslatableModel) {
             return null;
         }
 

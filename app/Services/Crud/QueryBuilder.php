@@ -650,6 +650,7 @@ final class QueryBuilder
      * table does not have is ignored. The caller needs the right to read the related entity.
      *
      * @param  Builder<Model>  $query
+     * @param  'asc'|'desc'  $direction
      *
      * @throws AuthorizationException when the caller may not read the related entity
      */

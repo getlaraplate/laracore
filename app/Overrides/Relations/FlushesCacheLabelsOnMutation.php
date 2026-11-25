@@ -28,40 +28,57 @@ trait FlushesCacheLabelsOnMutation
      */
     private ?array $cache_label_touched_keys = [];
 
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
     public function attach($ids, array $attributes = [], $touch = true): void
     {
         $keys = $this->touchedKeys($ids);
         $this->flushingPivotLabelsOnce(fn (): null => $this->attachWithinRevision($ids, $attributes, $touch), static fn (): array => $keys);
     }
 
+    /**
+     * @return int
+     */
     public function detach($ids = null, $touch = true)
     {
         $keys = $ids === null ? null : $this->touchedKeys($ids);
 
-        return $this->flushingPivotLabelsOnce(fn (): mixed => $this->detachWithinRevision($ids, $touch), static fn (): ?array => $keys);
+        return $this->flushingPivotLabelsOnce(fn (): int => $this->detachWithinRevision($ids, $touch), static fn (): ?array => $keys);
     }
 
+    /**
+     * @param  \Illuminate\Support\Collection<array-key, mixed>|\Illuminate\Database\Eloquent\Model|array<array-key, mixed>|int|string  $ids
+     * @return array{attached: array<mixed>, detached: array<mixed>, updated: array<mixed>}
+     */
     public function sync($ids, $detaching = true)
     {
         return $this->flushingPivotLabelsOnce(
-            fn (): mixed => $this->syncWithinRevision($ids, $detaching),
+            fn (): array => $this->syncWithinRevision($ids, $detaching),
             static fn (mixed $result): array => self::changedKeys($result, ['attached', 'detached', 'updated']),
         );
     }
 
+    /**
+     * @return array<array-key, mixed>
+     */
     public function toggle($ids, $touch = true)
     {
         return $this->flushingPivotLabelsOnce(
-            fn (): mixed => $this->toggleWithinRevision($ids, $touch),
+            fn (): array => $this->toggleWithinRevision($ids, $touch),
             static fn (mixed $result): array => self::changedKeys($result, ['attached', 'detached']),
         );
     }
 
+    /**
+     * @param  array<string, mixed>  $attributes
+     * @return int
+     */
     public function updateExistingPivot($id, array $attributes, $touch = true)
     {
         $keys = $this->touchedKeys($id);
 
-        return $this->flushingPivotLabelsOnce(fn (): mixed => $this->updateExistingPivotWithinRevision($id, $attributes, $touch), static fn (): array => $keys);
+        return $this->flushingPivotLabelsOnce(fn (): int => $this->updateExistingPivotWithinRevision($id, $attributes, $touch), static fn (): array => $keys);
     }
 
     /**
