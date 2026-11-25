@@ -119,7 +119,7 @@ trait HasVersions
      * pending translations and their history are one revision committed together (D28, D34). Any other save, and a
      * save with nothing to write, runs as Eloquent's.
      *
-     * @param  array<string, mixed>  $options
+     * @param  array{touch?: bool|null}  $options
      */
     public function save(array $options = []): bool
     {
@@ -208,7 +208,7 @@ trait HasVersions
 
     public function getRefreshedModel(Model $model): Model
     {
-        return $model->newQueryWithoutScopes()->findOrFail($model->getKey());
+        return $model->newQueryWithoutScopes()->whereKey($model->getKey())->firstOrFail();
     }
 
     /**
@@ -566,7 +566,7 @@ trait HasVersions
             $parent_key = $translations->getForeignKeyName();
 
             foreach ($translations->withoutGlobalScopes()->orderBy($translations->getRelated()->getKeyName())->get() as $translation) {
-                $locale_image = method_exists($translation, 'imageOnOwner')
+                $locale_image = $translation instanceof Model && method_exists($translation, 'imageOnOwner')
                     ? $translation->imageOnOwner()
                     : Arr::except($translation->getAttributes(), [$translation->getKeyName(), $parent_key, 'locale', 'created_at', 'updated_at']);
                 $image[] = $this->imageRow($partType, $locale_image, 'translations', ['locale' => $translation->getAttribute('locale')]);

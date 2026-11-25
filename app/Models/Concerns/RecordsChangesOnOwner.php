@@ -67,7 +67,7 @@ trait RecordsChangesOnOwner
      * Saves the part inside its owner's revision scope when no scope is open, so the part and the row it records on
      * its owner commit together (D52); inside an open scope the row joins its owner's set as it is.
      *
-     * @param  array<string, mixed>  $options
+     * @param  array{touch?: bool|null}  $options
      */
     public function save(array $options = []): bool
     {
@@ -79,7 +79,9 @@ trait RecordsChangesOnOwner
      */
     public function delete(): ?bool
     {
-        return $this->withinOwnerScope(fn (): ?bool => parent::delete());
+        $deleted = $this->withinOwnerScope(fn (): bool|int|null => parent::delete());
+
+        return is_int($deleted) ? $deleted > 0 : $deleted;
     }
 
     /**

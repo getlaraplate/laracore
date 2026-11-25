@@ -272,6 +272,7 @@ trait HasValidations
             // abilities did not narrow what its owner's roles grant.
             return ResolvingAuthorization::resolve(static function () use ($user, $permissions): bool {
                 foreach (array_keys($permissions) as $permission) {
+                    // @phpstan-ignore instanceof.alwaysTrue (true where the application user extends Core's, not for every Authenticatable)
                     $holds = $user instanceof User
                         ? resolve(AuthorizationService::class)->userHolds($user, $permission)
                         : $user->can($permission);

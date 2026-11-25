@@ -43,7 +43,7 @@ final class Notification extends DatabaseNotification
     {
         self::saving(static function (self $notification): void {
             $data = $notification->data;
-            $scope = is_array($data) ? ($data['scope'] ?? null) : null;
+            $scope = $data['scope'] ?? null;
             $notification->module_name = is_string($scope) && $scope !== '' ? $scope : null;
         });
     }

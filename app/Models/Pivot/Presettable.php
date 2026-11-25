@@ -23,7 +23,9 @@ use Override;
  * @property \Carbon\CarbonImmutable|null $created_at
  * @property \Carbon\CarbonImmutable|null $deleted_at
  * @property bool|null $is_deleted Whether the entity is deleted
- * @property array<array-key, mixed> $fields_snapshot
+ * @property list<FieldSnapshot>|null $fields_snapshot
+ *
+ * @phpstan-type FieldSnapshot array{field_id: int, name: string, type: string, options: mixed, is_translatable: bool, is_slug: bool, pivot: array{is_required: bool, order_column: int, default?: mixed}}
  */
 abstract class Presettable extends Pivot implements ISoftDeletableModel
 {

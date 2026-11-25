@@ -18,7 +18,7 @@ final class DevCoreDatabaseSeeder extends BatchSeeder
 
     protected function execute(): void
     {
-        Artisan::call('module:seed', ['module' => 'Core', '--force' => $this->command->option('force')], outputBuffer: $this->command->getOutput());
+        Artisan::call('module:seed', ['module' => 'Core', '--force' => $this->console()->option('force')], outputBuffer: $this->console()->getOutput());
 
         $this->withoutModelVersioning(
             [User::class, License::class],

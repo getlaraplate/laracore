@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Arr;
 use Modules\Core\Casts\FieldType;
 use Modules\Core\Contracts\IDynamicEntityTypable;
+use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Models\Entity;
 use Modules\Core\Models\Field;
 use Modules\Core\Models\Pivot\Presettable;
@@ -153,7 +154,7 @@ trait HasDynamicContents
             $entity_id = null;
             $presettable = $this->relationLoaded('presettable') ? $this->getRelation('presettable') : null;
 
-            if ($presettable === null || ($presettable instanceof Model && (string) $presettable->getKey() !== (string) $value)) {
+            if ($presettable === null || ($presettable instanceof Model && (string) ModelKey::of($presettable) !== (string) $value)) {
                 $presettable = $this->presettable()->getResults();
                 $this->setRelation('presettable', $presettable);
             }
