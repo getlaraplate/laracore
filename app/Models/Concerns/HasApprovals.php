@@ -18,6 +18,7 @@ use Modules\Core\Approvals\PendingDeletionLock;
 use Modules\Core\Approvals\PendingDeletionStrategy;
 use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Casts\CrudExecutor;
+use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Models\Approval;
 use Modules\Core\Models\Modification;
 use Modules\Core\Models\User;
@@ -83,7 +84,7 @@ trait HasApprovals
                 $blocked = array_diff(array_keys($item->getDirty()), $item->attributesWritableWhilePendingDeletion(), [$item->getUpdatedAtColumn()]);
 
                 if ($blocked !== [] && $item->modifications()->activeOnly()->whereIn('operation', [Operation::Delete->value, Operation::ForceDelete->value])->exists()) {
-                    throw PendingDeletionLock::for($item::class, $item->getKey());
+                    throw PendingDeletionLock::for($item::class, ModelKey::of($item));
                 }
             }
 
@@ -182,7 +183,7 @@ trait HasApprovals
         $modification->active = true;
         $modification->operation = $operation;
         $modification->modifications = [];
-        $modification->md5 = md5($operation->value . '|' . $item::class . '|' . $item->getKey());
+        $modification->md5 = md5($operation->value . '|' . $item::class . '|' . ModelKey::of($item));
 
         if ($existing === null) {
             $modification->approvers_required = $item->approversRequired;
@@ -248,7 +249,8 @@ trait HasApprovals
             $modification->disapprovers_required = $item->disapproversRequired;
 
             if ($modifier !== null) {
-                $modification->modifier_id = $modifier->getKey();
+                $modifier_key = ModelKey::of($modifier);
+                $modification->modifier_id = is_int($modifier_key) ? $modifier_key : null;
                 $modification->modifier_type = $modifier::class;
             }
 

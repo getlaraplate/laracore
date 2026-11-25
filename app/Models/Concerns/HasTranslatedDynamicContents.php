@@ -144,8 +144,8 @@ trait HasTranslatedDynamicContents
                 $this->setComponentsAttribute($components);
             } else {
                 // Non-translatable field: store in shared_components
-                $shared_components = isset($this->attributes['shared_components'])
-                    ? json_decode((string) $this->attributes['shared_components'], true)
+                $shared_components = is_string($this->attributes['shared_components'] ?? null)
+                    ? json_decode($this->attributes['shared_components'], true)
                     : [];
                 $shared_components[$key] = $value;
                 $this->attributes['shared_components'] = json_encode($shared_components);

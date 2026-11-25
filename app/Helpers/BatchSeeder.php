@@ -8,6 +8,7 @@ use function Laravel\Prompts\progress;
 
 use ErrorException;
 use Illuminate\Cache\Repository;
+use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Sleep;
 use Illuminate\Validation\ValidationException;
 use Laravel\Prompts\Progress;
+use LogicException;
 use Modules\Core\Concurrency\BatchTask;
 use Modules\Core\Concurrency\ErrorPolicy;
 use Modules\Core\Concurrency\Exceptions\BatchExecutionFailedException;
@@ -57,15 +59,27 @@ abstract class BatchSeeder extends Seeder
     {
         try {
             $this->execute();
-            $this->command->newLine();
-            $this->command->info('All data seeded successfully!');
+            $this->console()->newLine();
+            $this->console()->info('All data seeded successfully!');
         } catch (Throwable $throwable) {
-            $this->command->error('Error during seeding: ' . $throwable->getMessage() . ' in ' . $throwable->getFile() . ' on line ' . $throwable->getLine() . PHP_EOL . $throwable->getTraceAsString());
+            $this->console()->error('Error during seeding: ' . $throwable->getMessage() . ' in ' . $throwable->getFile() . ' on line ' . $throwable->getLine() . PHP_EOL . $throwable->getTraceAsString());
             Log::error('Seeding error: ' . $throwable->getMessage(), [
                 'exception' => $throwable,
                 'trace' => $throwable->getTraceAsString(),
             ]);
         }
+    }
+
+    /**
+     * The console command running the seeder. A batch seeder runs only from `db:seed` or `module:seed`, which set it.
+     */
+    final protected function console(): Command
+    {
+        if (! $this->command instanceof Command) {
+            throw new LogicException(static::class . ' runs only from a console command.');
+        }
+
+        return $this->command;
     }
 
     /**
@@ -142,7 +156,7 @@ abstract class BatchSeeder extends Seeder
         $entity_name = new ReflectionClass($modelClass)->newInstanceWithoutConstructor()->getTable();
 
         if ($count_to_create <= 0) {
-            $this->command->info($entity_name . ' already at target count.');
+            $this->console()->info($entity_name . ' already at target count.');
 
             return 0;
         }
@@ -207,7 +221,7 @@ abstract class BatchSeeder extends Seeder
         $db_connection_name = $model->getConnection()->getName();
 
         if ($count_to_create <= 0) {
-            $this->command->info($entity_name . ' already at target count.');
+            $this->console()->info($entity_name . ' already at target count.');
 
             return 0;
         }
@@ -266,10 +280,10 @@ abstract class BatchSeeder extends Seeder
             $file = $error['file'] ?? '?';
             $line = (int) ($error['line'] ?? 0);
 
-            $this->command->error("Task {$e->outcome->taskId} failed: {$message} in {$file} on line {$line}");
+            $this->console()->error("Task {$e->outcome->taskId} failed: {$message} in {$file} on line {$line}");
 
             if (($trace = $e->trace()) !== '') {
-                $this->command->error($trace);
+                $this->console()->error($trace);
             }
 
             Log::error('BatchSeeder parallel run failed', [
@@ -407,7 +421,7 @@ abstract class BatchSeeder extends Seeder
 
     private function countToCreate(int $totalCount, int $currentCount): int
     {
-        $currentCount = $this->command->option('force') ? 0 : $currentCount;
+        $currentCount = $this->console()->option('force') ? 0 : $currentCount;
 
         return $totalCount - $currentCount;
     }
@@ -525,7 +539,7 @@ abstract class BatchSeeder extends Seeder
                 $retry_count++;
 
                 if ($retry_count >= self::MAX_RETRIES) {
-                    $this->command->error($e->getTraceAsString());
+                    $this->console()->error($e->getTraceAsString());
 
                     if ($force_kill_batches !== null) {
                         $force_kill_batches($e, $batch);

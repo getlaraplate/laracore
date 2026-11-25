@@ -311,7 +311,7 @@ final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEm
     }
 
     /**
-     * @return Builder<Model>|null
+     * @return Builder<covariant Model>|null
      */
     private static function visibleOwnersOf(string $owner_type): ?Builder
     {

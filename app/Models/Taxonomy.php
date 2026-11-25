@@ -149,7 +149,7 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     /**
      * Shared translation table {@see TaxonomyTranslation} keys rows with taxonomy_id, not {subclass}_id.
      *
-     * @return HasMany<TaxonomyTranslation>
+     * @return HasMany<TaxonomyTranslation, $this>
      */
     public function translations(): HasMany
     {
@@ -214,6 +214,9 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         });
     }
 
+    /**
+     * @return class-string<TaxonomyTranslation>
+     */
     protected static function getTranslationModelClass(): string
     {
         return TaxonomyTranslation::class;

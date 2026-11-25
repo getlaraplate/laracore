@@ -70,3 +70,16 @@ it('keeps a zero target at zero', function (): void {
 
     expect(invokeScale(makeScaleSeeder(), 'scaleTargetCount', 0))->toBe(0);
 });
+
+it('hands its subclasses the console command that runs it', function (): void {
+    $command = Illuminate\Support\Facades\Artisan::all()['db:seed'];
+    $seeder = makeScaleSeeder();
+    $seeder->setCommand($command);
+
+    expect(invokeScale($seeder, 'console'))->toBe($command);
+});
+
+it('refuses to run outside a console command', function (): void {
+    expect(fn (): mixed => invokeScale(makeScaleSeeder(), 'console'))
+        ->toThrow(LogicException::class, 'runs only from a console command');
+});

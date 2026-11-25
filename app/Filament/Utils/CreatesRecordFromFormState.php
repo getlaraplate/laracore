@@ -24,6 +24,16 @@ trait CreatesRecordFromFormState
 
     /**
      * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    #[Override]
+    protected function mutateFormDataBeforeCreate(array $data): array
+    {
+        return $this->stripUnsupportedFilamentFormAttributes(parent::mutateFormDataBeforeCreate($data));
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
      */
     #[Override]
     protected function handleRecordCreation(array $data): Model

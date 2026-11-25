@@ -23,7 +23,7 @@ interface IOwnerAuthorizer
     /**
      * Owners of {@see ownerType()} the current user may see.
      *
-     * @return Builder<Model>
+     * @return Builder<covariant Model>
      */
     public function visibleOwners(): Builder;
 }

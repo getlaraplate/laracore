@@ -344,11 +344,11 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
      */
     public function canAuthenticate(?CarbonInterface $at = null): bool
     {
-        if ($this->valid_from === null && $this->valid_to === null) {
+        if ($this->getAttribute('valid_from') === null && $this->valid_to === null) {
             return true;
         }
 
-        if ($this->valid_from === null) {
+        if ($this->getAttribute('valid_from') === null) {
             return false;
         }
 
