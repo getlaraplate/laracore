@@ -856,6 +856,28 @@ it('takes the hierarchy lock before reading what a delete inside a transaction d
         ->and($forest['a1']->fresh()->parent_id)->toBeNull();
 });
 
+it('takes the hierarchy lock before reading back the children a delete left', function (): void {
+    $forest = closureTreeForest();
+    $statements = [];
+    DB::listen(static function ($query) use (&$statements): void {
+        $statements[] = $query->sql;
+    });
+
+    $forest['a']->fresh()->delete();
+
+    $after_delete = array_slice($statements, (int) array_key_last(array_filter(
+        $statements,
+        static fn (string $sql): bool => str_starts_with($sql, 'delete from "closure_tree_nodes"'),
+    )) + 1);
+    $touching = array_values(array_filter(
+        $after_delete,
+        static fn (string $sql): bool => str_contains($sql, '"closure_tree_nodes"') || str_contains($sql, CoreTables::HierarchyLocks->value),
+    ));
+
+    expect($touching[0] ?? '')->toContain(CoreTables::HierarchyLocks->value)
+        ->and($forest['a1']->fresh()->parent_id)->toBeNull();
+});
+
 it('reads back more children of a deleted node than one statement binds', function (): void {
     $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
     $doomed = ClosureTreeStubModel::query()->create(['parent_id' => $root->id]);

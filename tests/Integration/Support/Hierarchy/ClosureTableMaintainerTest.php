@@ -632,28 +632,38 @@ it('asks for a retry when another writer created the lock row after the transact
     $connection->readLockVersionsAs([null], repeatLast: true);
 
     expect(fn () => (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode(maintainerBulkNode($root), $root))
-        ->toThrow(DeadlockException::class, 'created the hierarchy lock')
+        ->toThrow(DeadlockException::class, 'after this transaction read it')
         ->and(maintainerLockVersion())->toBe(1);
 });
 
-it('takes the lock on the next round when a statement saw the commit it waited for', function (): void {
+it('waits on the lock row with a locking read before reading it from the snapshot', function (): void {
     $root = ($this->addNode)(null);
     $leaf = maintainerBulkNode($root);
     $connection = new StaleSnapshotConnection(DB::connection());
-    $connection->readLockVersionsAs([0]);
 
     (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode($leaf, $root);
 
-    expect(maintainerLockVersion())->toBe(2)
+    expect($connection->lockReads())->toBe(['locking', 'snapshot'])
+        ->and(maintainerLockVersion())->toBe(2)
         ->and(maintainerClosureRows())->toContain(sprintf('%d>%d:1', $root, $leaf));
 });
 
-it('gives up with a retryable conflict when the lock keeps changing hands', function (): void {
+it('creates the lock row when a locking read finds none', function (): void {
+    $connection = new StaleSnapshotConnection(DB::connection());
+    $root = maintainerBulkNode(null);
+
+    (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode($root, null);
+
+    expect($connection->lockReads())->toBe(['locking', 'locking', 'snapshot'])
+        ->and(maintainerLockVersion())->toBe(1);
+});
+
+it('refuses to write when the lock row cannot be read back after it was created', function (): void {
     $root = ($this->addNode)(null);
     $connection = new StaleSnapshotConnection(DB::connection());
-    $connection->readLockVersionsAs(range(10, 21));
+    $connection->readLockVersionsAs([null], repeatLast: true, lockingReads: true);
 
     expect(fn () => (new ClosureTableMaintainer($connection, MAINTAINER_NODES, MAINTAINER_CLOSURE))->insertNode(maintainerBulkNode($root), $root))
-        ->toThrow(DeadlockException::class, 'changed hands 10 times')
+        ->toThrow(LogicException::class, 'could not be created')
         ->and(maintainerLockVersion())->toBe(1);
 });

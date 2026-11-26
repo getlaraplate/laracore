@@ -36,8 +36,9 @@ use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
  * - deleting, when the row really goes: the node's children and strict ancestors are read, nothing is written, so
  *   a listener that cancels the delete leaves the closure as it was; inside a caller's transaction the hierarchy
  *   lock is taken first ({@see ClosureTableMaintainer::lock()}), so the read cannot go stale before `deleted`;
- * - deleted, once the row is gone: the subtree of each child still orphaned by the delete is unlinked from those
- *   ancestors (a child a `deleting` listener re-parented was moved by its own save). The node's own rows go
+ * - deleted, once the row is gone: under the hierarchy lock, the subtree of each child still orphaned by the delete
+ *   is unlinked from those ancestors (a child a `deleting` listener re-parented was moved by its own save). The
+ *   lock comes before the children are read back, so that read cannot go stale either. The node's own rows go
  *   with the cascading foreign keys, and the children's parent column with the parent foreign key.
  * Soft deletes and restores leave the closure as it is: a trashed node hides only itself.
  *
@@ -316,10 +317,9 @@ trait HasClosureTable
             }
 
             $node->inClosureTransaction(static function () use ($node, $detachment): void {
-                ClosureTableMaintainer::forModel($node)->detachChildren(
-                    $node->childrenLeftByDelete($detachment['children']),
-                    $detachment['ancestors'],
-                );
+                $maintainer = ClosureTableMaintainer::forModel($node);
+                $maintainer->lock();
+                $maintainer->detachChildren($node->childrenLeftByDelete($detachment['children']), $detachment['ancestors']);
             });
         });
     }
