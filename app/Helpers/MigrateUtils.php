@@ -7,11 +7,14 @@ namespace Modules\Core\Helpers;
 use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use InvalidArgumentException;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Locked;
 use Modules\Core\Models\Concerns\HasValidity;
+use Modules\Core\Support\Db2Drivers;
+use PDOException;
 
 final class MigrateUtils
 {
@@ -122,7 +125,8 @@ final class MigrateUtils
      * `unique([..., 'deleted_at'])` does not do this: `deleted_at` is null on every live row, and a null in a
      * unique key makes the row distinct on MySQL, MariaDB, PostgreSQL and SQLite. PostgreSQL and SQLite get a
      * partial index; Oracle a function-based index whose key is all null on a deleted row; MySQL and MariaDB a
-     * stored `is_live` column (1, or null when deleted) added to the key. Call it after `Schema::create()`; the
+     * stored `is_live` column (1, or null when deleted) added to the key; Db2 the same `is_live` column kept by a
+     * trigger, with a unique index that skips the null keys of deleted rows. Call it after `Schema::create()`; the
      * table must have `deleted_at`.
      *
      * @param  list<string>  $columns
@@ -141,7 +145,7 @@ final class MigrateUtils
         $grammar = $connection->getQueryGrammar();
         $wrapped_columns = array_map(static fn (string $column): string => $grammar->wrap($column), $columns);
 
-        match ($connection->getDriverName()) {
+        match (Db2Drivers::family($connection->getDriverName())) {
             'pgsql', 'sqlite' => $connection->statement(sprintf(
                 'CREATE UNIQUE INDEX %s ON %s (%s) WHERE %s IS NULL',
                 $grammar->wrap($name),
@@ -158,6 +162,7 @@ final class MigrateUtils
                     $wrapped_columns,
                 )),
             )),
+            Db2Drivers::FAMILY => self::createDb2LiveUniqueIndex($table, $columns, $wrapped_columns, $name, $connection),
             default => $connection->getSchemaBuilder()->table($table, static function (Blueprint $blueprint) use ($connection, $table, $columns, $name): void {
                 if (! $connection->getSchemaBuilder()->hasColumn($table, 'is_live')) {
                     $blueprint->tinyInteger('is_live')->nullable()->storedAs('IF(deleted_at IS NULL, 1, NULL)')->comment('1 on a live row, null on a deleted one, for unique keys over live rows');
@@ -405,7 +410,7 @@ final class MigrateUtils
         }
 
         if (! $schema->hasColumn($table->getTable(), 'is_deleted')) {
-            switch ($connection->getDriverName()) {
+            switch (Db2Drivers::family($connection->getDriverName())) {
                 case 'pgsql':
                 case 'sqlite':
                     $table->boolean('is_deleted')->storedAs('deleted_at IS NOT NULL')->index($table->getTable() . '_is_deleted_idx')->comment('Whether the entity is deleted');
@@ -413,6 +418,14 @@ final class MigrateUtils
                     break;
                 case 'oracle':
                     // Oracle richiede ancora i trigger
+                    $table->boolean('is_deleted')->default(false)->index($table->getTable() . '_is_deleted_idx')->comment('Whether the entity is deleted');
+                    $connection->afterCommit(function () use ($connection, $table): void {
+                        self::createBooleanTriggers($table, 'deleted', $connection);
+                    });
+
+                    break;
+                case Db2Drivers::FAMILY:
+                    // Db2 has no expression-based generated columns: a trigger keeps the column
                     $table->boolean('is_deleted')->default(false)->index($table->getTable() . '_is_deleted_idx')->comment('Whether the entity is deleted');
                     $connection->afterCommit(function () use ($connection, $table): void {
                         self::createBooleanTriggers($table, 'deleted', $connection);
@@ -430,8 +443,8 @@ final class MigrateUtils
 
     private static function dropSoftDeletes(Blueprint $table, Connection $connection): void
     {
-        // Rimuoviamo i trigger solo per Oracle
-        if ($connection->getDriverName() === 'oracle') {
+        // Rimuoviamo i trigger solo per Oracle e Db2
+        if (in_array(Db2Drivers::family($connection->getDriverName()), ['oracle', Db2Drivers::FAMILY], true)) {
             self::dropBooleanTriggers($table, 'deleted', $connection);
         }
 
@@ -514,6 +527,18 @@ final class MigrateUtils
 
     private static function createBooleanTriggers(Blueprint $table, string $suffix, Connection $connection): void
     {
+        if (Db2Drivers::is($connection->getDriverName())) {
+            $grammar = $connection->getQueryGrammar();
+            self::createDb2Trigger(
+                $table->getTable(),
+                'is_' . $suffix,
+                sprintf('CASE WHEN N.%s IS NULL THEN 0 ELSE 1 END', $grammar->wrap($suffix . '_at')),
+                $connection,
+            );
+
+            return;
+        }
+
         if ($connection->getDriverName() === 'oracle') {
             // In Oracle we use a virtual column with a check constraint
             // Create trigger for Oracle
@@ -538,6 +563,22 @@ final class MigrateUtils
 
     private static function dropBooleanTriggers(Blueprint $table, string $suffix, Connection $connection): void
     {
+        if (Db2Drivers::is($connection->getDriverName())) {
+            $wrapped_trigger = $connection->getQueryGrammar()->wrap($table->getTable() . '_is_' . $suffix . '_trigger');
+
+            try {
+                $connection->unprepared('DROP TRIGGER ' . $wrapped_trigger);
+            } catch (QueryException $exception) {
+                $previous = $exception->getPrevious();
+                $sql_state = $previous instanceof PDOException ? ($previous->errorInfo[0] ?? null) : null;
+
+                // 42704: undefined object, the trigger does not exist
+                throw_unless($sql_state === '42704', $exception);
+            }
+
+            return;
+        }
+
         if ($connection->getDriverName() === 'oracle') {
             $wrapped_trigger = $connection->getQueryGrammar()->wrap($table->getTable() . '_is_' . $suffix . '_trigger');
             $connection->unprepared('
@@ -551,6 +592,55 @@ final class MigrateUtils
                 END;
             ');
         }
+    }
+
+    /**
+     * Create the BEFORE trigger that keeps a derived column of a Db2 table in step with the row it is written on.
+     */
+    private static function createDb2Trigger(string $table, string $column, string $expression, Connection $connection): void
+    {
+        $grammar = $connection->getQueryGrammar();
+        $connection->unprepared(sprintf(
+            'CREATE OR REPLACE TRIGGER %s NO CASCADE BEFORE INSERT OR UPDATE ON %s REFERENCING NEW AS N FOR EACH ROW SET N.%s = %s',
+            $grammar->wrap($table . '_' . $column . '_trigger'),
+            $grammar->wrapTable($table),
+            $grammar->wrap($column),
+            $expression,
+        ));
+    }
+
+    /**
+     * @param  list<string>  $columns
+     * @param  list<string>  $wrappedColumns
+     */
+    private static function createDb2LiveUniqueIndex(
+        string $table,
+        array $columns,
+        array $wrappedColumns,
+        string $name,
+        Connection $connection,
+    ): void {
+        $grammar = $connection->getQueryGrammar();
+        $schema = $connection->getSchemaBuilder();
+
+        if (! $schema->hasColumn($table, 'is_live')) {
+            $schema->table($table, static function (Blueprint $blueprint): void {
+                $blueprint->tinyInteger('is_live')->nullable()->comment('1 on a live row, null on a deleted one, for unique keys over live rows');
+            });
+            self::createDb2Trigger(
+                $table,
+                'is_live',
+                sprintf('CASE WHEN N.%s IS NULL THEN 1 END', $grammar->wrap('deleted_at')),
+                $connection,
+            );
+        }
+
+        $connection->statement(sprintf(
+            'CREATE UNIQUE WHERE NOT NULL INDEX %s ON %s (%s)',
+            $grammar->wrap($name),
+            $grammar->wrapTable($table),
+            implode(', ', [...$wrappedColumns, $grammar->wrap('is_live')]),
+        ));
     }
 
     private static function createDateIndex(
@@ -634,9 +724,10 @@ final class MigrateUtils
     {
         self::assertIdentifier($table);
         $base = mb_strtolower(implode('_', [$table, ...$columns, $suffix, 'idx']));
-        $limit = match ($connection->getDriverName()) {
+        $limit = match (Db2Drivers::family($connection->getDriverName())) {
             'oracle' => 30,
             'pgsql' => 63,
+            Db2Drivers::FAMILY => 128,
             default => 64,
         };
 
