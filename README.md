@@ -891,7 +891,7 @@ in the default suite: tagged tests keep running on SQLite under `phpunit.xml` li
 forcing `DB_HOST`, `DB_PORT`, `DB_URL` or `DB_READ_HOSTS`, so the connection comes from the
 shell or `.env` (`DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`,
 `DB_PREFIX`, `DB_SCHEMA`). The environment guard refuses a remote `DB_HOST` unless
-`ALLOW_REMOTE_TEST_DATABASE=1` is set knowingly.
+`ALLOW_REMOTE_TEST_DATABASE=1` is set knowingly. The run executes `migrate:fresh`, which drops every table in the target library: point it only at a dedicated, empty library.
 
 ```bash
 composer test:db2                    # vendor/bin/pest -c phpunit.db2.xml --group=db2
