@@ -24,13 +24,23 @@ final class Db2PretendConnection
 {
     private const string CONNECTION_NAME = 'db2_pretend';
 
+    /**
+     * The connection mirrors the options of the application's `db2` connection that change the SQL it compiles.
+     */
     public static function make(string $driver = 'db2_ibmi_odbc'): DB2Connection
     {
         return new DB2Connection(
             static fn (): PDO => throw new LogicException('No PDO in a pretend connection'),
             '',
             '',
-            ['driver' => $driver, 'name' => self::CONNECTION_NAME, 'schema' => 'laraplate', 'prefix' => '', 'quote_reserved_words' => true],
+            [
+                'driver' => $driver,
+                'name' => self::CONNECTION_NAME,
+                'schema' => 'laraplate',
+                'prefix' => '',
+                'quote_reserved_words' => true,
+                'ccsid' => config('database.connections.db2.ccsid'),
+            ],
         );
     }
 

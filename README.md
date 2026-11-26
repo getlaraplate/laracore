@@ -111,6 +111,7 @@ DB2_DRIVER=db2_ibmi_odbc						#db2: driver of the db2 connection (db2_ibmi_odbc,
 DB2_ODBC_DRIVER={IBM i Access ODBC Driver}		#db2: name of the installed ODBC driver
 DB2_COMMIT_MODE=2								#db2: ODBC CommitMode, 2 = *CHG (commitment control; use *CHG or stricter)
 DB2_SERVER_VERSION=7.5							#db2: server version reported to the framework, spares a PDO server-version read
+DB2_CCSID=1208									#db2: CCSID of new char, varchar, text, enum and set columns (1208 = UTF-8); lengths stay in bytes, so a multi-byte character takes more than one; empty leaves the system default
 
 #https
 FORCE_HTTPS=false								#enables HTTPS
