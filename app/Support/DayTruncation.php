@@ -26,6 +26,7 @@ final class DayTruncation
         'pgsql' => 'CAST(%s AS date)',
         'sqlsrv' => 'CAST(%s AS date)',
         'oracle' => 'TRUNC(%s)',
+        Db2Drivers::FAMILY => 'DATE(%s)',
     ];
 
     /**
@@ -35,7 +36,7 @@ final class DayTruncation
      */
     public static function supports(string $driver): bool
     {
-        return isset(self::EXPRESSIONS[$driver]);
+        return isset(self::EXPRESSIONS[Db2Drivers::family($driver)]);
     }
 
     /**
@@ -52,7 +53,7 @@ final class DayTruncation
             throw self::unsupported($driver);
         }
 
-        return sprintf(self::EXPRESSIONS[$driver], $wrappedColumn);
+        return sprintf(self::EXPRESSIONS[Db2Drivers::family($driver)], $wrappedColumn);
     }
 
     /**

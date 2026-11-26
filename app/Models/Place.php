@@ -150,7 +150,7 @@ class Place extends Model
     }
 
     /**
-     * Match {@see Concerns\HasPlace::shouldPersistPlaceGeolocationGeometry}: avoid spatial bindings on SQLite tests.
+     * Match {@see Concerns\HasPlace::shouldPersistPlaceGeolocationGeometry}: avoid spatial bindings on SQLite tests and on Oracle and Db2, which have no spatial column here.
      */
     private function geometryColumnSupportsSpatialBinding(): bool
     {

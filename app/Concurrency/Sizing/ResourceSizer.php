@@ -14,7 +14,7 @@ use Throwable;
  * The sizer caps the requested parallelism by:
  *  - the number of usable CPU cores (one is reserved for the orchestrator);
  *  - the number of available connections on the target database (Postgres
- *    and MySQL are introspected; other drivers fall back to the CPU cap).
+ *    and MySQL are introspected; other drivers, Oracle and Db2 included, fall back to the CPU cap).
  *
  * The optional batch-size attribute is reduced proportionally when the
  * effective parallelism shrinks, so a single worker doesn't end up holding a

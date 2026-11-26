@@ -19,6 +19,7 @@ use Filament\Commands\FileGenerators\Resources\Schemas\ResourceFormSchemaClassGe
 use Filament\Commands\FileGenerators\Resources\Schemas\ResourceInfolistSchemaClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Schemas\ResourceTableClassGenerator;
 use Filament\Forms\Components\Toggle;
+use Filament\Tables\Columns\Column;
 use Filament\Tables\Enums\FiltersLayout;
 use Filament\Tables\Table;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -138,6 +139,7 @@ use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Services\StubOutboxPublisher;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
+use Modules\Core\Support\Db2Drivers;
 use Modules\Core\Support\Env\ConfigCacheRefresher;
 use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
 use Modules\Core\Support\Hierarchy\DynamicEntityCascade;
@@ -644,6 +646,12 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         Table::configureUsing(
             static fn (Table $table): Table => $table->filtersLayout(FiltersLayout::AfterContentCollapsible),
+        );
+
+        Column::configureUsing(
+            static fn (Column $column): Column => $column->forceSearchCaseInsensitive(
+                static fn (): ?bool => Db2Drivers::is(DB::connection()->getDriverName()) ? true : null,
+            ),
         );
 
         $this->app->singleton(AttributeLabelResolver::class);

@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Modules\Core\Console\Concerns\HasBenchmark;
+use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 use ReflectionMethod;
 use ReflectionProperty;
 use RuntimeException;
@@ -220,6 +221,18 @@ final class BenchmarkHarness extends Command
         } finally {
             DB::swap($original);
         }
+    }
+
+    public function testGetQueryCountUsesDb2Branch(string $driver): void
+    {
+        $connection = Db2PretendConnection::make($driver);
+        $connection->enableQueryLog();
+        $connection->pretend(static function (Connection $pretending): void {
+            $pretending->select('select 1 from sysibm.sysdummy1');
+            $pretending->select('select 2 from sysibm.sysdummy1');
+        });
+
+        expect($this->queryCountForTest($connection))->toBe(2);
     }
 
     private function queryCountForTest(Connection $connection): int

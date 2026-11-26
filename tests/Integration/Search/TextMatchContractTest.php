@@ -84,7 +84,7 @@ it('compiles a portable database fallback for every database driver', function (
     expect($compiled['sql'])->toBe('LOWER("documents"."title") LIKE LOWER(?)')
         ->and($compiled['bindings'])->toBe(['fattura%'])
         ->and($compiled['degraded'])->toBeTrue();
-})->with(['mysql', 'mariadb', 'sqlite', 'oracle']);
+})->with(['mysql', 'mariadb', 'sqlite', 'oracle', 'db2_ibmi_odbc', 'db2_ibmi_ibm', 'db2_expressc_odbc']);
 
 it('compiles postgres trigram matching when typo tolerance is available', function (): void {
     $compiled = (new DatabaseTextMatchCompiler())->compile(

@@ -10,6 +10,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Console\Concerns\HasBenchmark;
+use Modules\Core\Support\Db2Drivers;
 use Modules\Core\Tests\Stubs\Benchmark\BenchmarkHarness;
 use Modules\Core\Tests\Stubs\Benchmark\BenchmarkSeederHarness;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -254,3 +255,11 @@ it('does not throw when a seeder has no command instance', function (): void {
 
     expect(fn () => $seeder->emitBenchmarkOutput('bench output'))->not->toThrow(Error::class);
 });
+
+it('counts the query log on a Db2 connection', function (string $driver): void {
+    $cmd = new BenchmarkHarness;
+    $cmd->setLaravel($this->app);
+    prepare_benchmark_command($cmd);
+
+    $cmd->testGetQueryCountUsesDb2Branch($driver);
+})->with(Db2Drivers::DRIVERS);

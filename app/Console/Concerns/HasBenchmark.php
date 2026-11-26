@@ -10,6 +10,7 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Modules\Core\Performance\BootTime;
+use Modules\Core\Support\Db2Drivers;
 use Throwable;
 
 trait HasBenchmark
@@ -127,8 +128,8 @@ trait HasBenchmark
 
     protected function getQueryCount(Connection $connection): int
     {
-        return match ($connection->getDriverName()) {
-            'mysql', 'sqlite' => count($connection->getQueryLog()), // Requires Connection::enableQueryLog()
+        return match (Db2Drivers::family($connection->getDriverName())) {
+            'mysql', 'sqlite', Db2Drivers::FAMILY => count($connection->getQueryLog()), // Requires Connection::enableQueryLog()
             'pgsql' => (int) $connection->select(
                 'SELECT pg_stat_get_db_xact_commit(pg_backend_pid()) + pg_stat_get_db_xact_rollback(pg_backend_pid()) as count',
             )[0]->count,

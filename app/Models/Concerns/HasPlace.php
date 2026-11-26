@@ -301,6 +301,7 @@ trait HasPlace
 
     /**
      * Geometry bindings (e.g. ST_GeomFromText) are not portable to all test drivers (SQLite).
+     * Oracle and Db2 are excluded too: they have no spatial column here, so geolocation stays off.
      */
     protected function shouldPersistPlaceGeolocationGeometry(): bool
     {

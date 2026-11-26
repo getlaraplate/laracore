@@ -16,6 +16,9 @@ it('builds the day expression of each driver', function (string $driver, string 
     'pgsql' => ['pgsql', 'CAST("orders"."ordered_at" AS date)'],
     'sqlsrv' => ['sqlsrv', 'CAST("orders"."ordered_at" AS date)'],
     'oracle' => ['oracle', 'TRUNC("orders"."ordered_at")'],
+    'db2_ibmi_odbc' => ['db2_ibmi_odbc', 'DATE("orders"."ordered_at")'],
+    'db2_ibmi_ibm' => ['db2_ibmi_ibm', 'DATE("orders"."ordered_at")'],
+    'db2_expressc_odbc' => ['db2_expressc_odbc', 'DATE("orders"."ordered_at")'],
 ]);
 
 it('refuses a bucket on a driver it has no expression for', function (): void {

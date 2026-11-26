@@ -11,12 +11,15 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Core\Casts\Filter;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Enums\AggregateErrorCode;
+use Modules\Core\Enums\TimeBucket;
 use Modules\Core\Exceptions\AggregateException;
 use Modules\Core\Inspector\SchemaInspector;
 use Modules\Core\Services\Crud\Aggregate\AggregateLimits;
 use Modules\Core\Services\Crud\Aggregate\AggregateQuery;
 use Modules\Core\Services\Crud\Aggregate\AggregateResult;
+use Modules\Core\Services\Crud\Aggregate\PeriodPlan;
 use Modules\Core\Services\Crud\CrudService;
+use Modules\Core\Support\Db2Drivers;
 use Modules\Core\Tests\Stubs\Crud\AggregateCustomerStubModel;
 use Modules\Core\Tests\Stubs\Crud\AggregateOrderStubModel;
 use Modules\Core\Tests\Support\AggregateTestKit;
@@ -399,6 +402,21 @@ it('a bucket on a driver with no day expression is UNSUPPORTED_FUNCTION before a
         ->and(aggregate_buckets_order_reads('aggregate_other_driver'))->toBe([])
         ->and(aggregate_buckets_order_reads())->toBe([]);
 });
+
+it('a time bucket on a Db2 model is accepted by the period plan', function (string $driver): void {
+    $order = aggregate_buckets_orders_on_driver($driver);
+
+    $query = AggregateQuery::fromArray([
+        'measures' => [['fn' => 'count']],
+        'group_by' => ['field' => 'ordered_at', 'bucket' => 'day'],
+        'period' => ['field' => 'ordered_at', 'from' => '2026-01-01', 'to' => '2026-01-31'],
+    ], AggregateLimits::fromConfig());
+
+    $plan = PeriodPlan::resolve($order, $query, AggregateLimits::fromConfig(), CarbonImmutable::parse('2026-02-01'));
+
+    expect($plan)->toBeInstanceOf(PeriodPlan::class)
+        ->and($plan->bucket)->toBe(TimeBucket::Day);
+})->with(Db2Drivers::DRIVERS);
 
 it('a previous period with more buckets than max_points is PERIOD_TOO_LONG', function (): void {
     config(['core.aggregate.max_points' => 30]);

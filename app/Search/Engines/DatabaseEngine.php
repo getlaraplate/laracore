@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\Paginator;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\DatabaseEngine as BaseDatabaseEngine;
@@ -22,6 +23,7 @@ use Modules\Core\Search\Support\PgvectorProfileIndex;
 use Modules\Core\Search\Support\ScoutWheres;
 use Modules\Core\Search\Support\VectorProfileContext;
 use Modules\Core\Search\Traits\CommonEngineFunctions;
+use Modules\Core\Support\Db2Drivers;
 use Override;
 
 final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorSimilarity, ISearchEngine
@@ -153,6 +155,11 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
                 'degraded' => ['typo_tolerance', 'exact_match_boost', 'operator'],
                 'future_adapter' => 'Oracle Text CONTEXT index',
             ],
+            Db2Drivers::FAMILY => [
+                'typo_tolerance' => false,
+                'prefix' => true,
+                'degraded' => ['typo_tolerance', 'exact_match_boost', 'operator'],
+            ],
         ];
     }
 
@@ -161,7 +168,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
      */
     public function search(Builder $builder): mixed
     {
-        if ($this->isVectorSearch($builder)) {
+        if ($this->runsVectorSearch($builder)) {
             $models = $this->vectorModels($builder, $builder->limit);
 
             return [
@@ -175,7 +182,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
 
     public function paginateUsingDatabase(Builder $builder, $perPage, $pageName, $page): LengthAwarePaginator
     {
-        if (! $this->isVectorSearch($builder)) {
+        if (! $this->runsVectorSearch($builder)) {
             return parent::paginateUsingDatabase($builder, $perPage, $pageName, $page);
         }
 
@@ -282,7 +289,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
     {
         $query_vector = $this->extractVectorFromBuilder($builder);
         $model = $builder->model;
-        $driver = $this->getDatabaseDriver();
+        $driver = $this->getDatabaseDriver($model);
         $candidate_ids = $this->vectorCandidateIds($builder);
 
         return match ($driver) {
@@ -743,10 +750,26 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
         return $dot_product / (sqrt($norm_a) * sqrt($norm_b));
     }
 
-    private function getDatabaseDriver(): string
+    /**
+     * The driver name of the connection the model uses, or of the default connection without a model.
+     *
+     * `config('database.default')` is a connection name, which only equals the driver by coincidence.
+     */
+    private function getDatabaseDriver(?Model $model = null): string
     {
-        $default_connection = config('database.default');
+        $connection = $model instanceof Model ? $model->getConnection() : DB::connection();
 
-        return is_string($default_connection) ? $default_connection : 'mysql';
+        return $connection->getDriverName();
+    }
+
+    /**
+     * Whether the builder runs the vector arm: a semantic search on a Db2 connection has none, so it
+     * falls back to the keyword path like any other text query.
+     *
+     * @param  Builder<covariant Model>  $builder
+     */
+    private function runsVectorSearch(Builder $builder): bool
+    {
+        return $this->isVectorSearch($builder) && ! Db2Drivers::is($builder->modelConnectionType());
     }
 }

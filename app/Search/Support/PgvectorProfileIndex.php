@@ -93,6 +93,9 @@ final class PgvectorProfileIndex implements IProfileVectorIndex
         return "'" . str_replace("'", "''", $value) . "'";
     }
 
+    /**
+     * Only PostgreSQL with the `vector` extension; every other driver, Oracle and Db2 included, has no profile index.
+     */
     #[Override]
     public function supports(Connection $connection): bool
     {
