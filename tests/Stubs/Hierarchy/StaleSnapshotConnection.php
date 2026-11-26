@@ -15,9 +15,10 @@ use UnitEnum;
 
 /**
  * A connection that reads the hierarchy lock row as an older snapshot would: what a MySQL transaction under
- * REPEATABLE READ sees after another writer committed (stale on every read), what one statement sees under READ
- * COMMITTED before the commit it waited for (stale once), or a row another writer inserted that the snapshot cannot
- * see (null). Writes, and every other read, go to the wrapped connection.
+ * REPEATABLE READ sees with plain reads after another writer committed, or a row another writer inserted that the
+ * snapshot cannot see (null). Locking reads, which a query builder sends to the write connection, read the database
+ * as the current row; they can be faked too. Writes, and every other read, go to the wrapped connection. It records
+ * the kind of each read of the lock row, in order.
  */
 final class StaleSnapshotConnection implements ConnectionInterface
 {
@@ -30,18 +31,38 @@ final class StaleSnapshotConnection implements ConnectionInterface
 
     private bool $repeatLast = false;
 
+    private bool $fakeLockingReads = false;
+
+    /**
+     * The reads of the lock row so far, in order: `locking` or `snapshot`.
+     *
+     * @var list<string>
+     */
+    private array $lockReads = [];
+
     public function __construct(private readonly Connection $inner) {}
 
     /**
-     * Make the next reads of the lock row return these versions in turn (null: no row), then read the database;
-     * with `$repeatLast`, the last one stays for every later read.
+     * Make the next plain reads of the lock row (or its locking reads, with `$lockingReads`) return these versions
+     * in turn (null: no row), then read the database; with `$repeatLast`, the last one stays for every later read.
      *
      * @param  list<int|null>  $versions
      */
-    public function readLockVersionsAs(array $versions, bool $repeatLast = false): void
+    public function readLockVersionsAs(array $versions, bool $repeatLast = false, bool $lockingReads = false): void
     {
         $this->staleVersions = $versions;
         $this->repeatLast = $repeatLast;
+        $this->fakeLockingReads = $lockingReads;
+    }
+
+    /**
+     * The reads of the lock row so far, in order: `locking` for a locking read, `snapshot` for a plain one.
+     *
+     * @return list<string>
+     */
+    public function lockReads(): array
+    {
+        return $this->lockReads;
     }
 
     public function table($table, $as = null): Builder
@@ -72,7 +93,13 @@ final class StaleSnapshotConnection implements ConnectionInterface
      */
     public function select($query, $bindings = [], $useReadPdo = true, array $fetchUsing = []): array
     {
-        if ($this->staleVersions !== [] && str_starts_with($query, 'select') && str_contains($query, CoreTables::HierarchyLocks->value)) {
+        $is_lock_read = str_starts_with($query, 'select') && str_contains($query, CoreTables::HierarchyLocks->value);
+
+        if ($is_lock_read) {
+            $this->lockReads[] = $useReadPdo ? 'snapshot' : 'locking';
+        }
+
+        if ($is_lock_read && $this->staleVersions !== [] && $useReadPdo !== $this->fakeLockingReads) {
             $version = $this->repeatLast && count($this->staleVersions) === 1 ? $this->staleVersions[0] : array_shift($this->staleVersions);
 
             return $version === null ? [] : [(object) ['version' => $version]];

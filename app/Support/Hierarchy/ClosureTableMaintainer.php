@@ -52,11 +52,6 @@ final readonly class ClosureTableMaintainer
      */
     private const array COLUMNS = ['ancestor_id', 'descendant_id', 'depth'];
 
-    /**
-     * Lock rounds before {@see self::lock()} gives up, each one lost to another writer that committed meanwhile.
-     */
-    private const int LOCK_ATTEMPTS = 10;
-
     public function __construct(
         private ConnectionInterface $connection,
         private string $table,
@@ -296,21 +291,21 @@ final readonly class ClosureTableMaintainer
      * `core_hierarchy_locks`, created on the first write, whose version is bumped by every write. A writer of the
      * same hierarchy waits on it until this transaction ends.
      *
-     * The version also tells a snapshot that predates the last write. The lock row is read as the transaction sees
-     * it, then bumped only if it still holds that version. On MySQL and MariaDB under REPEATABLE READ the
-     * transaction reads a snapshot taken at its first plain read, which can be older than the lock: when the bump
-     * misses and a second read still shows the old version, the transaction cannot see the last write and nothing
-     * is written ({@see HierarchyWriteConflictException}, retryable). Drivers that read the latest commit per
-     * statement (PostgreSQL, SQL Server and Oracle under READ COMMITTED, SQLite) see the new version on the second
-     * read and take the lock on the next round.
+     * The row is first read with a locking read, which waits for the current holder and returns the last committed
+     * version without taking a snapshot. A plain read then shows the version as the transaction's snapshot sees it.
+     * On MySQL and MariaDB under REPEATABLE READ the snapshot is taken at the transaction's first plain read: when
+     * that came before the lock and another writer committed in between, the two reads differ and nothing is
+     * written ({@see HierarchyWriteConflictException}, retryable). When the lock is the first thing the transaction
+     * reads, the snapshot starts after the wait and the reads agree. Drivers that read the latest commit per
+     * statement (PostgreSQL, SQL Server and Oracle under READ COMMITTED, SQLite) always see them agree.
      *
      * Each write of this class takes it itself. Call it first in a transaction that reads the hierarchy and writes
      * from what it read, as {@see \Modules\Core\Models\Concerns\HasClosureTable} does before reading what a delete
      * will detach.
      *
-     * @throws LogicException When no transaction is open: the lock would end with the statement
-     * @throws HierarchyWriteConflictException When the transaction's snapshot predates the last write, or the lock
-     *                                         changed hands {@see self::LOCK_ATTEMPTS} times
+     * @throws LogicException When no transaction is open: the lock would end with the statement; or when the lock
+     *                        row cannot be read back after it was created
+     * @throws HierarchyWriteConflictException When the transaction's snapshot predates the last write
      */
     public function lock(): void
     {
@@ -318,34 +313,18 @@ final readonly class ClosureTableMaintainer
             throw new LogicException(sprintf('The hierarchy lock of "%s" must be taken inside a transaction.', $this->closureTable));
         }
 
-        $seen = $this->lockVersion();
+        $held = $this->lockedVersion();
 
-        for ($attempt = 0; $attempt < self::LOCK_ATTEMPTS; $attempt++) {
-            if ($seen === null) {
-                $created = $this->createLockRow();
-                $seen = $this->lockVersion();
-
-                if ($seen === null && ! $created) {
-                    throw HierarchyWriteConflictException::lockRowHidden($this->closureTable);
-                }
-
-                continue;
-            }
-
-            if ($this->lockRow()->where('version', $seen)->update(['version' => $seen + 1]) === 1) {
-                return;
-            }
-
-            $read = $this->lockVersion();
-
-            if ($read === $seen) {
-                throw HierarchyWriteConflictException::staleSnapshot($this->closureTable);
-            }
-
-            $seen = $read;
+        if ($held === null) {
+            $this->createLockRow();
+            $held = $this->lockedVersion() ?? throw new LogicException(sprintf('The hierarchy lock of "%s" could not be created.', $this->closureTable));
         }
 
-        throw HierarchyWriteConflictException::contended($this->closureTable, self::LOCK_ATTEMPTS);
+        if ($held !== $this->lockVersion()) {
+            throw HierarchyWriteConflictException::staleSnapshot($this->closureTable);
+        }
+
+        $this->lockRow()->update(['version' => $held + 1]);
     }
 
     /**
@@ -386,24 +365,32 @@ final readonly class ClosureTableMaintainer
 
     /**
      * Insert the lock row of this closure table, in a savepoint so a row another writer inserted first fails alone.
-     *
-     * @return bool Whether this call inserted it
      */
-    private function createLockRow(): bool
+    private function createLockRow(): void
     {
         try {
             $this->connection->transaction(function (): void {
                 $this->connection->table(CoreTables::HierarchyLocks->value)->insert(['name' => $this->closureTable, 'version' => 0]);
             });
         } catch (QueryException) {
-            return false;
+            // Another writer inserted it first: the caller reads it back.
         }
-
-        return true;
     }
 
     /**
-     * The lock row's version as the transaction reads it; null when the row does not exist (yet, or for it).
+     * The lock row's last committed version, read with a locking read that waits for the current holder; null
+     * when the row does not exist yet. The query has no row limit: Oracle cannot lock a limited query.
+     */
+    private function lockedVersion(): ?int
+    {
+        $version = array_first($this->lockRow()->lockForUpdate()->pluck('version')->all());
+
+        return is_numeric($version) ? (int) $version : null;
+    }
+
+    /**
+     * The lock row's version as the transaction's snapshot shows it; null when the row does not exist (yet, or for
+     * it).
      */
     private function lockVersion(): ?int
     {

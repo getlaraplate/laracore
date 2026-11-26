@@ -152,7 +152,7 @@ connection:
   surviving children become roots and their subtrees stay linked inside themselves. What the delete needs is read
   in `deleting` and written in `deleted`, so a listener that cancels the delete leaves the closure as it was. Inside
   a caller's transaction `deleting` takes the hierarchy lock before it reads, so the read cannot go stale before
-  `deleted` writes from it.
+  `deleted` writes from it; `deleted` takes it again before it reads back which children the delete left.
 - Soft deletes and restores leave the closure as it is. A trashed node hides only itself: its descendants stay
   reachable, and a trashed role between a user's role and its grandparent still lets the grandparent's permissions
   flow. `Modules\Core\SoftDeletes\RowRemoval::inDelete()` tells a delete that removes the row from one that only
@@ -212,23 +212,33 @@ share a closure table (every `Taxonomy` subclass) share the lock.
 
 - When the maintainer opens the outermost transaction, nothing has been read in it yet, so one
   `update ... set version = version + 1` takes the lock: one extra statement per write.
-- Inside a caller's transaction (`moveTo()`, `saveOrFail()`, `DB::transaction()`, the CRUD service), the
-  transaction may have read before, and MySQL and MariaDB under REPEATABLE READ (their default) keep the snapshot
-  of that first read for the whole transaction. `ClosureTableMaintainer::lock()` reads the version as the
-  transaction sees it and bumps it only if it still holds that value. If the bump misses and a second read still
-  shows the old version, the transaction cannot see the last write: it throws
-  `Modules\Core\Exceptions\HierarchyWriteConflictException` before any closure row changes. Drivers that read the
-  latest commit per statement (PostgreSQL, SQL Server and Oracle under READ COMMITTED, SQLite) see the new version
-  on the second read and take the lock on the next round. Two extra statements per write.
+- Inside a caller's transaction (`moveTo()`, `saveOrFail()`, `DB::transaction()`, the CRUD service, and the
+  transaction the trait opens around each closure step), the transaction may have read before, and MySQL and
+  MariaDB under REPEATABLE READ (their default) keep the snapshot of that first plain read for the whole
+  transaction. `ClosureTableMaintainer::lock()` first reads the lock row with a locking read (`lockForUpdate()`),
+  which waits for the current holder and returns the last committed version without taking a snapshot, then reads
+  it plainly, as the snapshot sees it. When the transaction read nothing before, the snapshot starts after the
+  wait and the two reads agree. When it read before and another writer committed in between, they differ: the
+  transaction cannot see the last write, and it throws `Modules\Core\Exceptions\HierarchyWriteConflictException`
+  before any closure row changes. Drivers that read the latest commit per statement (PostgreSQL, SQL Server and
+  Oracle under READ COMMITTED, SQLite) always see the two reads agree. Three extra statements per write; a
+  model's hard delete takes it up to three times (`deleting` inside a caller's transaction, `deleted`, and the
+  detach itself).
 - `HierarchyWriteConflictException` extends Laravel's `DeadlockException` with SQLSTATE `40001`, so Laravel treats
   it as a concurrency error: inside a nested transaction it reaches the caller as a `DeadlockException` whose
   previous exception is the conflict, and `DB::transaction($callback, $attempts)` with `$attempts > 1` reruns the
   whole callback on a fresh snapshot. Wrap a hierarchy write that runs inside a longer transaction in one with
   retries when a concurrent move is plausible.
+- A transaction that reads before the lock and finds it held is always retried on MySQL: the holder commits a
+  write while it waits, so its snapshot is stale by the time it gets the lock. Under rare writes that costs an
+  occasional retry; under writers hammering one hierarchy it starves (see the figures below). Take `lock()` as the
+  first statement of such a transaction: its snapshot then starts after the wait and it is never refused.
 - `lock()` is public for a caller that reads the hierarchy and writes from what it read: call it first in the
   transaction. It throws a `LogicException` outside a transaction, where the lock would end with the statement.
 - A plain `save()` or `delete()` opens no transaction around the model write (see above), so a concurrent writer
   can still slip between the row write and the closure step; only a caller's transaction makes the two one step.
+  Two plain saves moving the same node can commit their parent column in one order and their closure steps in the
+  other, leaving the closure on the parent that lost; `rebuildClosure()` repairs it.
 - A transaction that writes two hierarchies (an owner's cascade that reaches comments and taxonomies) takes two
   locks; two such transactions taking them in opposite orders are a deadlock the database detects and Laravel
   retries like any other.
@@ -236,15 +246,31 @@ share a closure table (every `Taxonomy` subclass) share the lock.
   `MigrateUtils::hierarchyLocksTable($connection)` creates it alone.
 
 The tests pin the serialization structurally and the conflict logic by simulation (see [Tests](#tests)); the
-suite runs on SQLite, which serializes writers itself, so the waiting of one real writer on another has not been
-observed in the suite.
+suite runs on SQLite, which serializes writers itself. Real writers were run against each other on MySQL 8.0.21
+(REPEATABLE READ) on 2026-11-26, on a throwaway database, with the scripts kept out of the repository:
+
+- interleaved on two connections: crossed moves (the second waits on the lock row, then is refused as a cycle),
+  a delete inside a transaction waiting on a move's lock, a stale snapshot refused and passing on its second
+  attempt of `DB::transaction($callback, 3)`; the closure matched the parent column after each;
+- four processes, 60 random operations each (45% moves, 30% creates, 25% hard deletes) on one 100-node hierarchy,
+  every one in `DB::transaction($callback, 10)`. With `lock()` first: no retry, no failure. Reading random nodes
+  before the write: 446 retries, and 22 of 240 operations gave up after ten attempts with the retryable conflict.
+  Plain saves and deletes with no caller transaction: no conflict, 3 closure rows left on a parent that lost the
+  race described above. In every run the closure matched the parent column apart from those 3 rows, with no
+  cycle.
+
+The first MySQL run found that `lock()` read the version before waiting, which started the snapshot before the
+wait: every contended lock was refused as stale, even taken first, and closure steps of plain saves failed and
+left the closure behind. The locking read first is the fix.
 
 ## Database portability
 
 The maintainer's SQL is the same on every driver: query builder only, no recursive query, no driver branch, no
-upsert or `insertOrIgnore` (SQL Server's grammar has none), no locking read clause (yajra's Oracle grammar
-cannot combine `for update` with a row limit, and PostgreSQL refuses it with `distinct`). The review of
-2026-11-25 checked these points against the installed grammars:
+upsert or `insertOrIgnore` (SQL Server's grammar has none). One locking read, on the lock row only, with no row
+limit (yajra's Oracle grammar cannot combine `for update` with one) and no `distinct` (PostgreSQL refuses it):
+`for update` on MySQL, PostgreSQL and Oracle, the `with(rowlock,updlock,holdlock)` table hint on SQL Server,
+nothing on SQLite, which serializes writers itself. The review of 2026-11-25 checked these points against the
+installed grammars:
 
 | Concern | How the maintainer meets it |
 |---|---|
@@ -254,14 +280,14 @@ cannot combine `for update` with a row limit, and PostgreSQL refuses it with `di
 | Subquery aliases (Oracle refuses `as` before a table alias) | `crossJoinSub()` and `joinSub()` go through yajra's `OracleBuilder`, which writes the alias without `as`. |
 | Raw select fragments (`depth + 1 as depth`, `0 as depth`) | Unquoted lowercase closure columns: Oracle folds them to upper case, the case yajra quotes every identifier in, so they match. |
 | Rows written by `insert ... select` | `rebuild()` and the leaf insert read the affected-row count; it is reliable on every driver while SQL Server's `NOCOUNT` stays off (its default). |
-| Isolation | See [Concurrent writers](#concurrent-writers): the lock row's version detects a MySQL snapshot older than the last write. |
+| Isolation | See [Concurrent writers](#concurrent-writers): a locking read of the lock row, then a plain one, detect a MySQL snapshot older than the last write. |
 
 What has run, and where:
 
 - **SQLite**: the whole maintainer, trait, cascade and lock suite, on every test run.
 - **MySQL 8.0.21**: the closure migrations, a fresh install with the seeds, and the benchmark cases (reads, leaf
   insert, a 200-node subtree move, a middle delete), measured for the performance gate of 2026-11-24 on a throwaway
-  database. The lock (added on 2026-11-25) has not run on MySQL yet.
+  database. The lock, with real concurrent writers on 2026-11-26 (see [Concurrent writers](#concurrent-writers)).
 - **PostgreSQL, SQL Server, Oracle**: reviewed against the grammars above, never executed.
 
 
@@ -287,9 +313,9 @@ A delete that a later listener cancels, or that fails, writes nothing to any clo
 
 `Modules/Core/tests/Integration/Support/Hierarchy/ClosureTableMaintainerTest.php` covers the maintainer (including
 equality between incremental maintenance and a rebuild on a random 300-node tree, the linking of parents missing
-from the closure, the lock taken before any closure statement of every write, and the conflict and retry paths of
-`lock()` through `Modules/Core/tests/Stubs/Hierarchy/StaleSnapshotConnection.php`, a connection that reads the lock
-row as an older snapshot would);
+from the closure, the lock taken before any closure statement of every write, and the conflict paths of
+`lock()` and the order of its two reads through `Modules/Core/tests/Stubs/Hierarchy/StaleSnapshotConnection.php`, a
+connection that reads the lock row as an older snapshot would and records each read as locking or plain);
 `Modules/Core/tests/Integration/Helpers/HasClosureTableTest.php` covers the trait and its relations; the CMS
 characterization tests under `Modules/CMS/tests/Feature/Hierarchy` pin the tree payload (`depth`, order,
 ACL hiding, no `path`). The benchmark `Modules/CMS/tests/Integration/Performance/HierarchyBenchmarkTest.php` runs only with
