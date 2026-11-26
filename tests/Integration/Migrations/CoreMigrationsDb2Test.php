@@ -199,3 +199,24 @@ it('never writes geolocation on Db2', function (): void {
     expect($sql)->not->toBeEmpty()
         ->and(mb_strtolower(implode("\n", $sql)))->not->toContain('geolocation');
 });
+
+it('keeps the taxonomies triggers and validity indexes when the migration runs in a transaction on Db2', function (): void {
+    $sql = Db2PretendConnection::captureMigration(static function (): void {
+        $migration = require base_path('Modules/Core/database/migrations/2024_11_28_225853_create_taxonomies_table.php');
+        $migration->up();
+    });
+    $first = static function (string $needle) use ($sql): int {
+        $found = array_keys(array_filter($sql, static fn (string $statement): bool => str_contains($statement, $needle)));
+
+        expect($found)->not->toBeEmpty();
+
+        return $found[0];
+    };
+
+    core_db2_assert_portable($sql);
+
+    expect($first('core_taxonomies_is_deleted_trigger'))->toBeGreaterThan($first('create table core_taxonomies '))
+        ->and($first('core_taxonomies_validity_idx'))->toBeGreaterThan($first('create table core_taxonomies '))
+        ->and($sql)->toContain('CREATE INDEX core_taxonomies_validity_idx ON core_taxonomies (valid_from, valid_to)')
+        ->and($sql)->toContain('CREATE INDEX core_taxonomies_validity_deleted_idx ON core_taxonomies (valid_from, valid_to, is_deleted)');
+});

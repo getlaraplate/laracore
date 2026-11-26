@@ -106,3 +106,20 @@ it('defers afterCommit callbacks to the end of a captured migration, as a transa
         ->and($immediate)->toBe(['select 2 from sysibm.sysdummy1', 'select 1 from sysibm.sysdummy1'])
         ->and(DB::connection()->transactionLevel())->toBeLessThan(2);
 });
+
+it('creates the trigger and the validity indexes after the table inside a migration transaction on Db2', function (): void {
+    $sql = Db2PretendConnection::captureMigration(function (): void {
+        Schema::create('widgets', function (Blueprint $table): void {
+            $table->id();
+            MigrateUtils::timestamps($table, hasSoftDelete: true, hasValidity: true);
+        });
+    });
+
+    $positions = static fn (string $needle): array => array_keys(array_filter($sql, static fn (string $statement): bool => str_contains($statement, $needle)));
+
+    expect($positions('create table widgets'))->toHaveCount(1)
+        ->and($positions('widgets_is_deleted_trigger'))->toHaveCount(1)
+        ->and($positions('widgets_is_deleted_trigger')[0])->toBeGreaterThan($positions('create table widgets')[0])
+        ->and($sql)->toContain('CREATE INDEX widgets_validity_idx ON widgets (valid_from, valid_to)')
+        ->and($sql)->toContain('CREATE INDEX widgets_validity_deleted_idx ON widgets (valid_from, valid_to, is_deleted)');
+});

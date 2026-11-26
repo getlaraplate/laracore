@@ -303,9 +303,17 @@ final class MigrateUtils
             if (! $schema->hasIndex($table_name, [$valid_from_column, $valid_to_column]) && ! $schema->hasIndex($table_name, $index_name)) {
                 $connection->afterCommit(function () use ($connection, $table, $table_name, $valid_from_column, $valid_to_column, $index_name): void {
                     $grammar = $connection->getQueryGrammar();
-                    match ($connection->getDriverName()) {
-                        'pgsql' => $connection->statement(sprintf(
+                    $driver_name = $connection->getDriverName();
+                    match (true) {
+                        $driver_name === 'pgsql' => $connection->statement(sprintf(
                             'CREATE INDEX %s ON %s (%s DESC, %s)',
+                            $grammar->wrap($index_name),
+                            $grammar->wrapTable($table_name),
+                            $grammar->wrap($valid_from_column),
+                            $grammar->wrap($valid_to_column),
+                        )),
+                        Db2Drivers::is($driver_name) => $connection->statement(sprintf(
+                            'CREATE INDEX %s ON %s (%s, %s)',
                             $grammar->wrap($index_name),
                             $grammar->wrapTable($table_name),
                             $grammar->wrap($valid_from_column),
@@ -322,9 +330,18 @@ final class MigrateUtils
         if ($hasSoftDelete && $hasValidity && ! $schema->hasIndex($table_name, [$valid_from_column, $valid_to_column, 'is_deleted']) && ! $schema->hasIndex($table_name, $index_name)) {
             $connection->afterCommit(function () use ($connection, $table, $table_name, $valid_from_column, $valid_to_column, $index_name): void {
                 $grammar = $connection->getQueryGrammar();
-                match ($connection->getDriverName()) {
-                    'pgsql' => $connection->statement(sprintf(
+                $driver_name = $connection->getDriverName();
+                match (true) {
+                    $driver_name === 'pgsql' => $connection->statement(sprintf(
                         'CREATE INDEX %s ON %s (%s DESC, %s, %s)',
+                        $grammar->wrap($index_name),
+                        $grammar->wrapTable($table_name),
+                        $grammar->wrap($valid_from_column),
+                        $grammar->wrap($valid_to_column),
+                        $grammar->wrap('is_deleted'),
+                    )),
+                    Db2Drivers::is($driver_name) => $connection->statement(sprintf(
+                        'CREATE INDEX %s ON %s (%s, %s, %s)',
                         $grammar->wrap($index_name),
                         $grammar->wrapTable($table_name),
                         $grammar->wrap($valid_from_column),
