@@ -9,9 +9,12 @@ use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use LogicException;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Exceptions\HierarchyCycleException;
+use Modules\Core\Exceptions\HierarchyWriteConflictException;
 
 /**
  * Owns every set-based statement on a closure table: `{table}_closure` with `ancestor_id`, `descendant_id` and
@@ -25,6 +28,11 @@ use Modules\Core\Exceptions\HierarchyCycleException;
  * Deletes never read the closure table in their own subquery (MySQL error 1093): the keys to unlink are selected
  * first, then deleted by key in chunks. Memory stays bounded: a subtree is read by keyset pages, never whole, and
  * the only lists held in full are a node's ancestors (at most its depth) and the doomed nodes that have descendants.
+ *
+ * Every write runs in a transaction that first takes the hierarchy's lock (see {@see self::lock()}), so the writers
+ * of one closure table run one at a time and each reads what the previous one committed. Row locks on the closure
+ * rows alone would not do: under PostgreSQL's READ COMMITTED a statement does not see rows another transaction
+ * inserted while it waited, and two moves can each pass their cycle check before the other commits.
  */
 final readonly class ClosureTableMaintainer
 {
@@ -43,6 +51,11 @@ final readonly class ClosureTableMaintainer
      * The closure table's columns, in the order every insert selects them.
      */
     private const array COLUMNS = ['ancestor_id', 'descendant_id', 'depth'];
+
+    /**
+     * Lock rounds before {@see self::lock()} gives up, each one lost to another writer that committed meanwhile.
+     */
+    private const int LOCK_ATTEMPTS = 10;
 
     public function __construct(
         private ConnectionInterface $connection,
@@ -74,27 +87,24 @@ final readonly class ClosureTableMaintainer
 
     /**
      * Insert the closure rows of a new leaf node: its self row and one row per ancestor-or-self of its parent.
+     *
+     * A parent the closure does not know (a row a bulk insert added without its closure rows) is linked first from
+     * the parent column, with its own unlinked ancestors (see {@see self::linkFromParentColumn()}), so the node never
+     * lands under a parent that is missing from the closure. That costs nothing when the parent is known: the insert
+     * reports how many rows it wrote, and only a lone self row means the parent was missing.
+     *
+     * @throws LogicException When the parent column of the unlinked ancestors loops or names a missing row
      */
     public function insertNode(int|string $id, int|string|null $parentId): void
     {
-        $rows = $this->selfRows()->where($this->keyColumn, $id);
+        $this->writeLocked(function () use ($id, $parentId): void {
+            if ($this->insertLinks($id, $parentId) > 1 || $parentId === null) {
+                return;
+            }
 
-        if ($parentId !== null) {
-            $rows->unionAll(
-                $this->closure()
-                    ->crossJoinSub(
-                        $this->connection->table($this->table)
-                            ->select($this->keyColumn . ' as node_key')
-                            ->where($this->keyColumn, $id),
-                        'node',
-                    )
-                    ->select(['ancestor_id', 'node.node_key as descendant_id'])
-                    ->selectRaw('depth + 1 as depth')
-                    ->where('descendant_id', $parentId),
-            );
-        }
-
-        $this->closure()->insertUsing(self::COLUMNS, $rows);
+            $this->linkFromParentColumn($parentId, null);
+            $this->closure()->insertUsing(self::COLUMNS, $this->parentLinks($id, $parentId));
+        });
     }
 
     /**
@@ -103,51 +113,16 @@ final readonly class ClosureTableMaintainer
      * The links inside the subtree stay. The links from the node's old ancestors to every node of the subtree go,
      * and the cross product of the new parent's ancestors-and-self with the subtree comes in.
      *
+     * A new parent the closure does not know is linked first from the parent column, as {@see self::insertNode()}
+     * does; the cycle check runs after that link, so it also sees a parent the closure did not know yet.
+     *
      * @throws HierarchyCycleException When the new parent is the node itself or one of its descendants
-     * @throws LogicException When the new parent has no self row in the closure (the closure needs a rebuild)
+     * @throws LogicException When the parent column of an unlinked new parent loops or names a missing row
      */
     public function moveSubtree(int|string $id, int|string|null $newParentId): void
     {
-        $this->connection->transaction(function () use ($id, $newParentId): void {
-            if ($newParentId !== null) {
-                if ($this->wouldCycle($id, $newParentId)) {
-                    throw HierarchyCycleException::forMove($this->table, $id, $newParentId);
-                }
-
-                if (! $this->hasSelfRow($newParentId)) {
-                    throw new LogicException(sprintf(
-                        'Cannot move node [%s] of "%s" under [%s]: the new parent has no self row in "%s"; rebuild the closure first.',
-                        $id,
-                        $this->table,
-                        $newParentId,
-                        $this->closureTable,
-                    ));
-                }
-            }
-
-            $this->unlinkFromAncestors(
-                $id,
-                $this->keys($this->closure()->where('descendant_id', $id)->where('depth', '>', 0), 'ancestor_id'),
-                includeNode: true,
-            );
-
-            if ($newParentId === null) {
-                return;
-            }
-
-            $this->closure()->insertUsing(
-                self::COLUMNS,
-                $this->closure()
-                    ->crossJoinSub(
-                        $this->closure()
-                            ->select(['descendant_id as subtree_key', 'depth as subtree_depth'])
-                            ->where('ancestor_id', $id),
-                        'subtree',
-                    )
-                    ->select(['ancestor_id', 'subtree.subtree_key as descendant_id'])
-                    ->selectRaw('depth + subtree_depth + 1 as depth')
-                    ->where('descendant_id', $newParentId),
-            );
+        $this->writeLocked(function () use ($id, $newParentId): void {
+            $this->moveLockedSubtree($id, $newParentId);
         });
     }
 
@@ -179,7 +154,7 @@ final readonly class ClosureTableMaintainer
     {
         $doomed = $this->doomedQuery($doomedKeys);
 
-        $this->connection->transaction(function () use ($doomed): void {
+        $this->writeLocked(function () use ($doomed): void {
             $doomed_with_descendants = $this->keys(
                 $this->closure()->whereIn('ancestor_id', $doomed)->where('depth', '>', 0)->distinct(),
                 'ancestor_id',
@@ -212,7 +187,7 @@ final readonly class ClosureTableMaintainer
             return;
         }
 
-        $this->connection->transaction(function () use ($childIds, $ancestorIds): void {
+        $this->writeLocked(function () use ($childIds, $ancestorIds): void {
             foreach ($childIds as $child_id) {
                 $this->unlinkFromAncestors($child_id, $ancestorIds, includeNode: true);
             }
@@ -261,7 +236,7 @@ final readonly class ClosureTableMaintainer
             return;
         }
 
-        $this->connection->transaction(function () use ($ids): void {
+        $this->writeLocked(function () use ($ids): void {
             foreach (array_chunk($ids, self::DESCENDANT_CHUNK_SIZE) as $chunk) {
                 $parentless = $this->nodeKeys(
                     $this->connection->table($this->table)
@@ -271,7 +246,7 @@ final readonly class ClosureTableMaintainer
                 );
 
                 foreach ($parentless as $id) {
-                    $this->moveSubtree($id, null);
+                    $this->moveLockedSubtree($id, null);
                 }
             }
         });
@@ -287,7 +262,7 @@ final readonly class ClosureTableMaintainer
      */
     public function rebuild(): void
     {
-        $this->connection->transaction(function (): void {
+        $this->writeLocked(function (): void {
             $this->closure()->delete();
 
             $this->closure()->insertUsing(self::COLUMNS, $this->selfRows());
@@ -314,6 +289,270 @@ final readonly class ClosureTableMaintainer
                 }
             }
         });
+    }
+
+    /**
+     * Take the hierarchy's lock for the rest of the current transaction: the row of this closure table in
+     * `core_hierarchy_locks`, created on the first write, whose version is bumped by every write. A writer of the
+     * same hierarchy waits on it until this transaction ends.
+     *
+     * The version also tells a snapshot that predates the last write. The lock row is read as the transaction sees
+     * it, then bumped only if it still holds that version. On MySQL and MariaDB under REPEATABLE READ the
+     * transaction reads a snapshot taken at its first plain read, which can be older than the lock: when the bump
+     * misses and a second read still shows the old version, the transaction cannot see the last write and nothing
+     * is written ({@see HierarchyWriteConflictException}, retryable). Drivers that read the latest commit per
+     * statement (PostgreSQL, SQL Server and Oracle under READ COMMITTED, SQLite) see the new version on the second
+     * read and take the lock on the next round.
+     *
+     * Each write of this class takes it itself. Call it first in a transaction that reads the hierarchy and writes
+     * from what it read, as {@see \Modules\Core\Models\Concerns\HasClosureTable} does before reading what a delete
+     * will detach.
+     *
+     * @throws LogicException When no transaction is open: the lock would end with the statement
+     * @throws HierarchyWriteConflictException When the transaction's snapshot predates the last write, or the lock
+     *                                         changed hands {@see self::LOCK_ATTEMPTS} times
+     */
+    public function lock(): void
+    {
+        if ($this->connection->transactionLevel() === 0) {
+            throw new LogicException(sprintf('The hierarchy lock of "%s" must be taken inside a transaction.', $this->closureTable));
+        }
+
+        $seen = $this->lockVersion();
+
+        for ($attempt = 0; $attempt < self::LOCK_ATTEMPTS; $attempt++) {
+            if ($seen === null) {
+                $created = $this->createLockRow();
+                $seen = $this->lockVersion();
+
+                if ($seen === null && ! $created) {
+                    throw HierarchyWriteConflictException::lockRowHidden($this->closureTable);
+                }
+
+                continue;
+            }
+
+            if ($this->lockRow()->where('version', $seen)->update(['version' => $seen + 1]) === 1) {
+                return;
+            }
+
+            $read = $this->lockVersion();
+
+            if ($read === $seen) {
+                throw HierarchyWriteConflictException::staleSnapshot($this->closureTable);
+            }
+
+            $seen = $read;
+        }
+
+        throw HierarchyWriteConflictException::contended($this->closureTable, self::LOCK_ATTEMPTS);
+    }
+
+    /**
+     * Run a write in a transaction that takes the hierarchy's lock first.
+     *
+     * When this opens the outermost transaction, nothing in it has read yet, so no snapshot can predate the lock:
+     * one unconditional bump takes it. Inside a caller's transaction the version check of {@see self::lock()} runs.
+     *
+     * @param  Closure(): void  $write
+     */
+    private function writeLocked(Closure $write): void
+    {
+        $outermost = $this->connection->transactionLevel() === 0;
+
+        $this->connection->transaction(function () use ($outermost, $write): void {
+            if ($outermost) {
+                $this->bumpLock();
+            } else {
+                $this->lock();
+            }
+
+            $write();
+        });
+    }
+
+    /**
+     * Take the lock with one unconditional bump, creating the row on the first write.
+     */
+    private function bumpLock(): void
+    {
+        if ($this->lockRow()->increment('version') === 1) {
+            return;
+        }
+
+        $this->createLockRow();
+        $this->lockRow()->increment('version');
+    }
+
+    /**
+     * Insert the lock row of this closure table, in a savepoint so a row another writer inserted first fails alone.
+     *
+     * @return bool Whether this call inserted it
+     */
+    private function createLockRow(): bool
+    {
+        try {
+            $this->connection->transaction(function (): void {
+                $this->connection->table(CoreTables::HierarchyLocks->value)->insert(['name' => $this->closureTable, 'version' => 0]);
+            });
+        } catch (QueryException) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * The lock row's version as the transaction reads it; null when the row does not exist (yet, or for it).
+     */
+    private function lockVersion(): ?int
+    {
+        $version = $this->lockRow()->value('version');
+
+        return is_numeric($version) ? (int) $version : null;
+    }
+
+    private function lockRow(): Builder
+    {
+        return $this->connection->table(CoreTables::HierarchyLocks->value)->where('name', $this->closureTable);
+    }
+
+    /**
+     * The body of {@see self::moveSubtree()}, for a caller that holds the lock.
+     *
+     * @throws HierarchyCycleException When the new parent is the node itself or one of its descendants
+     */
+    private function moveLockedSubtree(int|string $id, int|string|null $newParentId): void
+    {
+        if ($newParentId !== null) {
+            if (! $this->hasSelfRow($newParentId)) {
+                $this->linkFromParentColumn($newParentId, $id);
+            }
+
+            if ($this->wouldCycle($id, $newParentId)) {
+                throw HierarchyCycleException::forMove($this->table, $id, $newParentId);
+            }
+        }
+
+        $this->unlinkFromAncestors(
+            $id,
+            $this->keys($this->closure()->where('descendant_id', $id)->where('depth', '>', 0), 'ancestor_id'),
+            includeNode: true,
+        );
+
+        if ($newParentId === null) {
+            return;
+        }
+
+        $this->closure()->insertUsing(
+            self::COLUMNS,
+            $this->closure()
+                ->crossJoinSub(
+                    $this->closure()
+                        ->select(['descendant_id as subtree_key', 'depth as subtree_depth'])
+                        ->where('ancestor_id', $id),
+                    'subtree',
+                )
+                ->select(['ancestor_id', 'subtree.subtree_key as descendant_id'])
+                ->selectRaw('depth + subtree_depth + 1 as depth')
+                ->where('descendant_id', $newParentId),
+        );
+    }
+
+    /**
+     * Give a node the closure does not know its rows, with every unlinked ancestor above it: the chain is read up the
+     * parent column to the first node that has a self row (or past a root), then linked top-down, each node under
+     * its parent as {@see self::insertNode()} links a leaf. Rows a chain node holds as a descendant without its self
+     * row are dropped first, so the inserts never meet a half-written node. One read per unlinked node, none when
+     * the closure is whole.
+     *
+     * Only this chain is repaired: other rows a bulk write left without closure rows stay so until they are written
+     * through the model or {@see self::rebuild()} runs.
+     *
+     * @throws HierarchyCycleException When the chain climbs to the node being moved under it
+     * @throws LogicException When the parent column loops or names a row that does not exist
+     */
+    private function linkFromParentColumn(int|string $nodeId, int|string|null $movingId): void
+    {
+        /** @var list<array{0: int|string, 1: int|string|null}> $unlinked */
+        $unlinked = [];
+        $visited = [];
+        $current = $nodeId;
+
+        while ($current !== null && ! $this->hasSelfRow($current)) {
+            if ($movingId !== null && (string) $current === (string) $movingId) {
+                throw HierarchyCycleException::forMove($this->table, $movingId, $nodeId);
+            }
+
+            if (isset($visited[(string) $current])) {
+                throw new LogicException(sprintf('The parent column of "%s" loops through [%s]; fix it, then rebuild the closure.', $this->table, $current));
+            }
+
+            $visited[(string) $current] = true;
+            $parent = $this->parentOf($current);
+            $unlinked[] = [$current, $parent];
+            $current = $parent;
+        }
+
+        foreach (array_reverse($unlinked) as [$node, $parent]) {
+            $this->closure()->where('descendant_id', $node)->delete();
+            $this->insertLinks($node, $parent);
+        }
+    }
+
+    /**
+     * The parent key of a node, read from the model table.
+     *
+     * @throws LogicException When the node has no row, or its parent value is not a key
+     */
+    private function parentOf(int|string $id): int|string|null
+    {
+        $row = $this->connection->table($this->table)->where($this->keyColumn, $id)->first([$this->parentColumn]);
+
+        if (! is_object($row)) {
+            throw new LogicException(sprintf('The table "%s" has no row [%s] to link into "%s".', $this->table, $id, $this->closureTable));
+        }
+
+        $parent = $row->{$this->parentColumn} ?? null;
+
+        if ($parent === null || is_int($parent) || is_string($parent)) {
+            return $parent;
+        }
+
+        throw new LogicException(sprintf('The table "%s" holds a non-key %s value.', $this->table, $this->parentColumn));
+    }
+
+    /**
+     * Insert a node's self row and its links under its parent's ancestors-and-self, returning the rows written.
+     */
+    private function insertLinks(int|string $id, int|string|null $parentId): int
+    {
+        $rows = $this->selfRows()->where($this->keyColumn, $id);
+
+        if ($parentId !== null) {
+            $rows->unionAll($this->parentLinks($id, $parentId));
+        }
+
+        return $this->closure()->insertUsing(self::COLUMNS, $rows);
+    }
+
+    /**
+     * The rows linking a node to every ancestor-or-self of its parent, one level deeper; none when the parent has no
+     * self row, so a parent holding stray rows without its own still counts as missing.
+     */
+    private function parentLinks(int|string $id, int|string $parentId): Builder
+    {
+        return $this->closure()
+            ->crossJoinSub(
+                $this->connection->table($this->table)
+                    ->select($this->keyColumn . ' as node_key')
+                    ->where($this->keyColumn, $id),
+                'node',
+            )
+            ->select(['ancestor_id', 'node.node_key as descendant_id'])
+            ->selectRaw('depth + 1 as depth')
+            ->where('descendant_id', $parentId)
+            ->whereExists($this->closure()->select('depth')->where('ancestor_id', $parentId)->where('descendant_id', $parentId));
     }
 
     private function wouldCycle(int|string $id, int|string $newParentId): bool

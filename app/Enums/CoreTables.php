@@ -67,4 +67,7 @@ enum CoreTables: string
     // closure tables of the hierarchies ({@see \Modules\Core\Helpers\MigrateUtils::closureTable()})
     case RolesClosure = 'vend_roles_closure';
     case TaxonomiesClosure = 'core_taxonomies_closure';
+
+    // one lock row per closure table, serializing its writers ({@see \Modules\Core\Helpers\MigrateUtils::hierarchyLocksTable()})
+    case HierarchyLocks = 'core_hierarchy_locks';
 }

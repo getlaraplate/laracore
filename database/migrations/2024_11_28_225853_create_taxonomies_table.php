@@ -90,7 +90,7 @@ return new class extends Migration
     public function down(): void
     {
         $schema = app('db')->connection()->getSchemaBuilder();
-        $schema->dropIfExists(CoreTables::TaxonomiesClosure->value);
+        $schema->dropIfExists('core_taxonomies_closure');
         $schema->dropIfExists(CoreTables::Taxonomies->value);
     }
 };
