@@ -6,6 +6,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\MigrateUtils;
+use Modules\Core\Support\Db2Drivers;
 
 return new class extends Migration
 {
@@ -28,7 +29,7 @@ return new class extends Migration
             $table->decimal('latitude', 10, 7)->nullable();
             $table->decimal('longitude', 10, 7)->nullable();
 
-            $driver = $connection->getDriverName();
+            $driver = Db2Drivers::family($connection->getDriverName());
 
             if ($driver === 'pgsql') {
                 // Create PostGIS extension first
@@ -37,6 +38,9 @@ return new class extends Migration
             } elseif (in_array($driver, ['mysql', 'mariadb', 'sqlite'], true)) {
                 // Campo opzionale, nessun spatial index per evitare NOT NULL forzato
                 $table->geometry('geolocation')->nullable()->comment('The geolocation of the location');
+            } elseif ($driver === Db2Drivers::FAMILY) {
+                // No spatial column on Db2: latitude and longitude hold the point, as SQLite does for spatial reads.
+                // Nothing writes `geolocation` on this driver (see HasPlace and Place), so there is no column to create.
             } elseif ($driver === 'oracle') {
                 // Campo opzionale; registriamo metadata SDO e creiamo indice spaziale
                 $table->geometry('geolocation')->nullable()->comment('The geolocation of the location');

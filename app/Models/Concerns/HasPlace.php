@@ -406,7 +406,14 @@ trait HasPlace
             return $this;
         }
 
-        $place->geolocation = $value;
+        if ($this->shouldPersistPlaceGeolocationGeometry()) {
+            $place->geolocation = $value;
+        } else {
+            // No geometry column on this driver: the decimals hold the point.
+            $place->latitude = $value?->latitude;
+            $place->longitude = $value?->longitude;
+        }
+
         $place->save();
 
         if ($this->relationLoaded('place')) {

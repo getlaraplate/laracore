@@ -15,4 +15,12 @@ final class PlaceAffinityModel extends Model
     {
         return $this->shouldPersistPlaceGeolocationGeometry();
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function placeRow(): array
+    {
+        return $this->buildPlaceRowFromHostAttributes();
+    }
 }

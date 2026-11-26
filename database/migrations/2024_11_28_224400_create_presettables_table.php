@@ -7,6 +7,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\MigrateUtils;
+use Modules\Core\Support\Db2Drivers;
 
 return new class extends Migration
 {
@@ -15,7 +16,7 @@ return new class extends Migration
     /**
      * Create the presettables pivot with row versioning, field snapshots, and DB triggers.
      *
-     * Drivers: mysql, mariadb, pgsql, sqlite, sqlsrv, oracle.
+     * Drivers: mysql, mariadb, pgsql, sqlite, sqlsrv, oracle, db2.
      *
      * Unique / FK: InnoDB reuses the unique index behind `presettables_preset_FK`; the composite
      * unique `presettables_version_UN` on (entity_id, preset_id, version) supports the FK on
@@ -73,6 +74,13 @@ return new class extends Migration
             );
         }
 
+        if (Db2Drivers::is($this->connection()->getDriverName())) {
+            // The Db2 schema grammar cannot modify a column, so the constraint is set with the native statement.
+            $this->connection()->statement('ALTER TABLE ' . $this->table(CoreTables::Presettables->value) . ' ALTER COLUMN ' . $this->identifier('fields_snapshot') . ' SET NOT NULL');
+
+            return;
+        }
+
         $this->connection()->getSchemaBuilder()->table(CoreTables::Presettables->value, static function (Blueprint $table): void {
             $table->json('fields_snapshot')->nullable(false)->change();
         });
@@ -83,12 +91,13 @@ return new class extends Migration
      */
     private function createTriggers(): void
     {
-        match ($this->connection()->getDriverName()) {
+        match (Db2Drivers::family($this->connection()->getDriverName())) {
             'mysql', 'mariadb' => $this->createMySQLTriggers(),
             'pgsql' => $this->createPostgreSQLTriggers(),
             'sqlite' => $this->createSQLiteTriggers(),
             'sqlsrv' => $this->createSQLServerTriggers(),
             'oracle' => $this->createOracleTriggers(),
+            Db2Drivers::FAMILY => $this->createDb2Triggers(),
             default => throw new RuntimeException('Unsupported database driver: ' . $this->connection()->getDriverName()),
         };
     }
@@ -98,12 +107,13 @@ return new class extends Migration
      */
     private function dropTriggers(): void
     {
-        match ($this->connection()->getDriverName()) {
+        match (Db2Drivers::family($this->connection()->getDriverName())) {
             'mysql', 'mariadb' => $this->dropMySQLTriggers(),
             'pgsql' => $this->dropPostgreSQLTriggers(),
             'sqlite' => $this->dropSQLiteTriggers(),
             'sqlsrv' => $this->dropSQLServerTriggers(),
             'oracle' => $this->dropOracleTriggers(),
+            Db2Drivers::FAMILY => $this->dropDb2Triggers(),
             default => throw new RuntimeException('Unsupported database driver: ' . $this->connection()->getDriverName()),
         };
     }
@@ -426,6 +436,81 @@ return new class extends Migration
     }
 
     private function dropOracleTriggers(): void
+    {
+        $this->connection()->unprepared('DROP TRIGGER ' . $this->identifier('trg_presettables_version'));
+        $this->connection()->unprepared('DROP TRIGGER ' . $this->identifier('trg_presets_insert'));
+        $this->connection()->unprepared('DROP TRIGGER ' . $this->identifier('trg_presets_update'));
+        $this->connection()->unprepared('DROP TRIGGER ' . $this->identifier('trg_presets_delete'));
+    }
+
+    /**
+     * Db2 for i SQL PL: the version is set by a BEFORE trigger (which only reads the table), the preset
+     * synchronisation by AFTER triggers that write presettables.
+     */
+    private function createDb2Triggers(): void
+    {
+        $presettables_table = $this->table(CoreTables::Presettables->value);
+        $presets_table = $this->table(CoreTables::Presets->value);
+        $version_trigger = $this->identifier('trg_presettables_version');
+        $insert_trigger = $this->identifier('trg_presets_insert');
+        $update_trigger = $this->identifier('trg_presets_update');
+        $delete_trigger = $this->identifier('trg_presets_delete');
+        $id = $this->identifier('id');
+        $version = $this->identifier('version');
+        $entity_id = $this->identifier('entity_id');
+        $preset_id = $this->identifier('preset_id');
+        $snapshot = $this->identifier('fields_snapshot');
+        $deleted_at = $this->identifier('deleted_at');
+
+        $this->connection()->unprepared("
+            CREATE OR REPLACE TRIGGER {$version_trigger}
+            NO CASCADE BEFORE INSERT ON {$presettables_table}
+            REFERENCING NEW AS N
+            FOR EACH ROW
+            SET N.{$version} = COALESCE(
+                (SELECT MAX({$version}) FROM {$presettables_table}
+                 WHERE {$preset_id} = N.{$preset_id} AND {$entity_id} = N.{$entity_id}), 0
+            ) + 1
+        ");
+
+        $this->connection()->unprepared("
+            CREATE OR REPLACE TRIGGER {$insert_trigger}
+            AFTER INSERT ON {$presets_table}
+            REFERENCING NEW AS N
+            FOR EACH ROW
+            BEGIN ATOMIC
+                INSERT INTO {$presettables_table} ({$entity_id}, {$preset_id}, {$snapshot}, {$deleted_at})
+                VALUES (N.{$entity_id}, N.{$id}, '[]', N.{$deleted_at});
+            END
+        ");
+
+        $this->connection()->unprepared("
+            CREATE OR REPLACE TRIGGER {$update_trigger}
+            AFTER UPDATE ON {$presets_table}
+            REFERENCING NEW AS N OLD AS O
+            FOR EACH ROW
+            BEGIN ATOMIC
+                IF (N.{$deleted_at} IS NULL AND O.{$deleted_at} IS NOT NULL)
+                   OR (N.{$deleted_at} IS NOT NULL AND O.{$deleted_at} IS NULL) THEN
+                    UPDATE {$presettables_table}
+                    SET {$deleted_at} = N.{$deleted_at}
+                    WHERE {$preset_id} = N.{$id} AND {$deleted_at} IS NULL;
+                END IF;
+            END
+        ");
+
+        $this->connection()->unprepared("
+            CREATE OR REPLACE TRIGGER {$delete_trigger}
+            AFTER DELETE ON {$presets_table}
+            REFERENCING OLD AS O
+            FOR EACH ROW
+            BEGIN ATOMIC
+                DELETE FROM {$presettables_table} WHERE {$preset_id} = O.{$id};
+            END
+        ");
+    }
+
+    private function dropDb2Triggers(): void
     {
         $this->connection()->unprepared('DROP TRIGGER ' . $this->identifier('trg_presettables_version'));
         $this->connection()->unprepared('DROP TRIGGER ' . $this->identifier('trg_presets_insert'));

@@ -6,6 +6,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\MigrateUtils;
+use Modules\Core\Support\Db2Drivers;
 
 return new class extends Migration
 {
@@ -48,13 +49,13 @@ return new class extends Migration
         MigrateUtils::closureTable($taxonomies_table, $connection);
 
         // Evita auto-relazione (categoria che punta sé stessa)
-        $driver_name = $connection->getDriverName();
+        $driver_name = Db2Drivers::family($connection->getDriverName());
         $grammar = $connection->getQueryGrammar();
         $wrapped_taxonomies_table = $grammar->wrapTable($taxonomies_table);
 
-        if ($driver_name === 'pgsql') {
+        if (in_array($driver_name, ['pgsql', Db2Drivers::FAMILY], true)) {
             $wrapped_constraint = $grammar->wrap("{$taxonomies_table}_parent_id_check");
-            $connection->statement("ALTER TABLE {$wrapped_taxonomies_table} ADD CONSTRAINT {$wrapped_constraint} CHECK (parent_id <> id)");
+            $connection->statement("ALTER TABLE {$wrapped_taxonomies_table} ADD CONSTRAINT {$wrapped_constraint} CHECK ({$grammar->wrap('parent_id')} <> {$grammar->wrap('id')})");
         } elseif (in_array($driver_name, ['mysql', 'mariadb'], true)) {
             // MySQL/MariaDB non consentono il CHECK con colonna usata da una FK (errore 3823),
             // quindi usiamo trigger per bloccare parent_id = id.

@@ -5,9 +5,23 @@ declare(strict_types=1);
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Modules\Core\Helpers\MigrateUtils;
+use Modules\Core\Support\Db2Drivers;
 
 return new class() extends Migration
 {
+    /**
+     * Db2 name parts, `connection.table.action`. Each pattern captures one part in group 1 or 2 of the whole
+     * name, so a single REGEXP_REPLACE gives the PostgreSQL value; the module is the table's prefix before the
+     * first underscore.
+     */
+    public const string DB2_NAME_PATTERN = '^\\w+\\.\\w+\\.\\w+$';
+
+    public const string DB2_CONNECTION_PATTERN = '^(\\w+)\\.(\\w+)\\.(\\w+)$';
+
+    public const string DB2_TABLE_PATTERN = '^(\\w+)\\.(\\w+)\\.(\\w+)$';
+
+    public const string DB2_MODULE_PATTERN = '^\\w+\\.([A-Za-z0-9]*)\\w*\\.\\w+$';
+
     /**
      * Run the migrations.
      */
@@ -57,7 +71,9 @@ return new class() extends Migration
         $wrapped_module_index = $grammar->wrap("{$permissions_table}_module_name_IDX");
         $wrapped_name_check = $grammar->wrap("{$permissions_table}_name_CHECK");
 
-        if ($connection->getDriverName() === 'pgsql') {
+        $driver_family = Db2Drivers::family($connection->getDriverName());
+
+        if ($driver_family === 'pgsql') {
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN connection_name VARCHAR(50) GENERATED ALWAYS AS (regexp_replace(regexp_replace(name, '\\.\\w+\\.\\w+$', ''), '\\.', '')) STORED");
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN table_name VARCHAR(50) GENERATED ALWAYS AS (regexp_replace(regexp_replace(name, '^\\w+\\.', ''), '\\.\\w+$', '')) STORED");
             $connection->statement("CREATE INDEX {$wrapped_reference_index} ON {$wrapped_permissions_table} (connection_name, table_name)");
@@ -65,7 +81,7 @@ return new class() extends Migration
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN module_name VARCHAR(50) GENERATED ALWAYS AS (regexp_replace(regexp_replace(regexp_replace(name, '^\\w+\\.', ''), '\\.\\w+$', ''), '_.*$', '')) STORED");
             $connection->statement("CREATE INDEX {$wrapped_module_index} ON {$wrapped_permissions_table} (module_name)");
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD CONSTRAINT {$wrapped_name_check} CHECK (name ~ '^\\w+\\.\\w+\\.\\w+$')");
-        } elseif (in_array($connection->getDriverName(), ['mysql', 'mariadb'], true)) {
+        } elseif (in_array($driver_family, ['mysql', 'mariadb'], true)) {
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN connection_name VARCHAR(50) AS (regexp_substr(name, '^\\\\w+')) STORED");
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN table_name VARCHAR(50) AS (replace(regexp_substr(name, '\\\\.\\\\w+\\\\.'), '.', '')) STORED");
             $connection->statement("CREATE INDEX {$wrapped_reference_index} ON {$wrapped_permissions_table} (connection_name, table_name)");
@@ -73,7 +89,37 @@ return new class() extends Migration
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN module_name VARCHAR(50) AS (substring_index(replace(regexp_substr(name, '\\\\.\\\\w+\\\\.'), '.', ''), '_', 1)) STORED");
             $connection->statement("CREATE INDEX {$wrapped_module_index} ON {$wrapped_permissions_table} (module_name)");
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD CONSTRAINT {$wrapped_name_check} CHECK (REGEXP_INSTR(name, '^\\\\w+\\\\.\\\\w+\\\\.\\\\w+$') = 1)");
-        } elseif ($connection->getDriverName() === 'sqlite') {
+        } elseif ($driver_family === Db2Drivers::FAMILY) {
+            // Db2 has no generated column with a regular expression: plain columns kept by one BEFORE trigger,
+            // with the same values as the PostgreSQL generated columns (module = table prefix before the first underscore).
+            $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN connection_name VARCHAR(50)");
+            $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN table_name VARCHAR(50)");
+            $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN module_name VARCHAR(50)");
+
+            $wrapped_name = $grammar->wrap('name');
+            $wrapped_connection_name = $grammar->wrap('connection_name');
+            $wrapped_table_name = $grammar->wrap('table_name');
+            $wrapped_module_name = $grammar->wrap('module_name');
+            $wrapped_name_trigger = $grammar->wrap("{$permissions_table}_name_parts_trigger");
+
+            $connection->unprepared(sprintf(
+                "CREATE OR REPLACE TRIGGER %s NO CASCADE BEFORE INSERT OR UPDATE ON %s REFERENCING NEW AS N FOR EACH ROW BEGIN ATOMIC SET N.%s = REGEXP_REPLACE(N.%s, '%s', '\\1'); SET N.%s = REGEXP_REPLACE(N.%s, '%s', '\\2'); SET N.%s = REGEXP_REPLACE(N.%s, '%s', '\\1'); END",
+                $wrapped_name_trigger,
+                $wrapped_permissions_table,
+                $wrapped_connection_name,
+                $wrapped_name,
+                self::DB2_CONNECTION_PATTERN,
+                $wrapped_table_name,
+                $wrapped_name,
+                self::DB2_TABLE_PATTERN,
+                $wrapped_module_name,
+                $wrapped_name,
+                self::DB2_MODULE_PATTERN,
+            ));
+            $connection->statement("CREATE INDEX {$wrapped_reference_index} ON {$wrapped_permissions_table} (connection_name, table_name)");
+            $connection->statement("CREATE INDEX {$wrapped_module_index} ON {$wrapped_permissions_table} (module_name)");
+            $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD CONSTRAINT {$wrapped_name_check} CHECK (REGEXP_LIKE({$wrapped_name}, '" . self::DB2_NAME_PATTERN . "'))");
+        } elseif ($driver_family === 'sqlite') {
             // SQLite doesn't support regexp_replace in generated columns, so we use regular columns with triggers
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN connection_name TEXT");
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN table_name TEXT");
