@@ -6,9 +6,13 @@ namespace Modules\Core\Tests\Stubs\Database;
 
 use Closure;
 use Easi\DB2\Database\DB2Connection;
+use Illuminate\Database\Connection;
+use Illuminate\Database\DatabaseTransactionsManager;
 use Illuminate\Support\Facades\DB;
 use LogicException;
 use PDO;
+use ReflectionProperty;
+use Throwable;
 
 /**
  * A Db2 connection that never opens a PDO, for tests that only check the SQL it builds.
@@ -64,5 +68,50 @@ final class Db2PretendConnection
         }
 
         return $queries;
+    }
+
+    /**
+     * Run the callback as a migration wrapped in a transaction, and return the SQL it produced.
+     *
+     * Like {@see capture()}, but the callback runs at transaction level 1, as `Migrator` runs a migration when the
+     * grammar supports schema transactions, so `afterCommit()` callbacks are deferred until the callback returns
+     * and then fired, in order, as the commit fires them. The transaction is simulated, never opened: the PDO is not
+     * touched. A plain {@see DatabaseTransactionsManager} is installed on the connection, so the test's own
+     * transaction manager does not change when the callbacks run. When the callback throws, the rollback callbacks
+     * run instead and the exception is rethrown.
+     *
+     * @return list<string>
+     */
+    public static function captureMigration(Closure $callback, string $driver = 'db2_ibmi_odbc'): array
+    {
+        return self::capture(static function () use ($callback): void {
+            $connection = DB::connection(self::CONNECTION_NAME);
+            $manager = new DatabaseTransactionsManager;
+            $connection->setTransactionManager($manager);
+            $name = $connection->getName();
+
+            self::setTransactionLevel($connection, 1);
+            $manager->begin($name, 1);
+
+            try {
+                $callback();
+            } catch (Throwable $throwable) {
+                self::setTransactionLevel($connection, 0);
+                $manager->rollback($name, 0);
+
+                throw $throwable;
+            }
+
+            self::setTransactionLevel($connection, 0);
+            $manager->commit($name, 1, 0);
+        }, $driver);
+    }
+
+    /**
+     * Set the connection's transaction level without opening or committing a transaction on the PDO.
+     */
+    private static function setTransactionLevel(Connection $connection, int $level): void
+    {
+        new ReflectionProperty(Connection::class, 'transactions')->setValue($connection, $level);
     }
 }

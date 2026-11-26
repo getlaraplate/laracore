@@ -91,3 +91,18 @@ it('allows 128 characters in a Db2 index name', function (): void {
         ->and(mb_strlen($name))->toBeGreaterThan(64)
         ->and(mb_strlen($over))->toBe(128);
 });
+
+it('defers afterCommit callbacks to the end of a captured migration, as a transaction does', function (): void {
+    $deferred = Db2PretendConnection::captureMigration(static function (): void {
+        DB::afterCommit(static fn (): bool => DB::statement('select 2 from sysibm.sysdummy1'));
+        DB::statement('select 1 from sysibm.sysdummy1');
+    });
+    $immediate = Db2PretendConnection::capture(static function (): void {
+        DB::afterCommit(static fn (): bool => DB::statement('select 2 from sysibm.sysdummy1'));
+        DB::statement('select 1 from sysibm.sysdummy1');
+    });
+
+    expect($deferred)->toBe(['select 1 from sysibm.sysdummy1', 'select 2 from sysibm.sysdummy1'])
+        ->and($immediate)->toBe(['select 2 from sysibm.sysdummy1', 'select 1 from sysibm.sysdummy1'])
+        ->and(DB::connection()->transactionLevel())->toBeLessThan(2);
+});
