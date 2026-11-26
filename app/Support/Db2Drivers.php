@@ -9,6 +9,9 @@ namespace Modules\Core\Support;
  *
  * Laraplate branches on the database family, not on the transport (ODBC or the IBM extension) or the platform,
  * so every Db2 driver maps to the single family name `db2`. Db2 for z/OS is out of scope and is not a member.
+ *
+ * The `db2_expressc_odbc` driver (Db2 for LUW) is a member, but every Db2 arm in Laraplate emits Db2 for i SQL
+ * (QSYS2 catalog, IBM i trigger and index syntax) until phase 2 adds what LUW needs.
  */
 final class Db2Drivers
 {

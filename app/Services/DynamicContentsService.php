@@ -171,6 +171,9 @@ final class DynamicContentsService
      * Fetch available presettables for a given type.
      * Uses in-memory cache first, then external cache, then database.
      *
+     * The default flags are scored by comparing each to a bound true inside a CASE, not by using the flag as a
+     * predicate: Db2 has no boolean predicate in a CASE.
+     *
      * @return Collection<int, Presettable>
      */
     public function fetchAvailablePresettables(IDynamicEntityTypable $type): Collection
@@ -200,7 +203,6 @@ final class DynamicContentsService
                 ->whereNull("{$presets_table}.deleted_at")
                 ->where("{$entities_table}.type", $type->toScalar())
                 ->addSelect("{$presettables_table}.*")
-                // A flag compared to a bound true, not used as a predicate: Db2 has no boolean predicate in a CASE.
                 ->selectRaw("CASE WHEN {$presets_table}.is_default = ? THEN 1 ELSE 0 END + CASE WHEN {$entities_table}.is_default = ? THEN 1 ELSE 0 END as order_score", [true, true])
                 ->orderBy('order_score', 'desc')
                 ->get(),
