@@ -32,7 +32,8 @@ use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
  * - created: the node's closure rows (a parent the closure does not know is linked first from the parent column);
  * - updating with a new parent: refused with {@see HierarchyCycleException} when the parent is the node or one of
  *   its descendants, before anything is saved;
- * - updated with a new parent: the whole subtree moves;
+ * - updated with a new parent: the whole subtree moves under the parent the column names when the move takes the
+ *   lock, so two plain saves of one node leave the closure on the parent the column kept;
  * - deleting, when the row really goes: the node's children and strict ancestors are read, nothing is written, so
  *   a listener that cancels the delete leaves the closure as it was; inside a caller's transaction the hierarchy
  *   lock is taken first ({@see ClosureTableMaintainer::lock()}), so the read cannot go stale before `deleted`;
@@ -290,7 +291,7 @@ trait HasClosureTable
             }
 
             $node->inClosureTransaction(static function () use ($node): void {
-                ClosureTableMaintainer::forModel($node)->moveSubtree($node->closureKey(), $node->closureParentKey());
+                ClosureTableMaintainer::forModel($node)->moveSubtreeToParentColumn($node->closureKey());
             });
         });
 

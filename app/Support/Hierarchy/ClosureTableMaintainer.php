@@ -86,19 +86,28 @@ final readonly class ClosureTableMaintainer
      * A parent the closure does not know (a row a bulk insert added without its closure rows) is linked first from
      * the parent column, with its own unlinked ancestors (see {@see self::linkFromParentColumn()}), so the node never
      * lands under a parent that is missing from the closure. That costs nothing when the parent is known: the insert
-     * reports how many rows it wrote, and only a lone self row means the parent was missing.
+     * reports how many rows it wrote, and only a lone self row means the parent was missing. The parent linked then
+     * is the one the node's parent column names under the lock, which is `$parentId` unless another writer changed
+     * it since the caller wrote it: a parent deleted meanwhile (its foreign key cleared the column) leaves the node a
+     * root.
      *
      * @throws LogicException When the parent column of the unlinked ancestors loops or names a missing row
      */
     public function insertNode(int|string $id, int|string|null $parentId): void
     {
         $this->writeLocked(function () use ($id, $parentId): void {
-            if ($this->insertLinks($id, $parentId) > 1 || $parentId === null) {
+            if ($this->insertLinks($id, $parentId) !== 1 || $parentId === null) {
                 return;
             }
 
-            $this->linkFromParentColumn($parentId, null);
-            $this->closure()->insertUsing(self::COLUMNS, $this->parentLinks($id, $parentId));
+            $committed_parent = $this->parentOf($id);
+
+            if ($committed_parent === null) {
+                return;
+            }
+
+            $this->linkFromParentColumn($committed_parent, null);
+            $this->closure()->insertUsing(self::COLUMNS, $this->parentLinks($id, $committed_parent));
         });
     }
 
@@ -118,6 +127,29 @@ final readonly class ClosureTableMaintainer
     {
         $this->writeLocked(function () use ($id, $newParentId): void {
             $this->moveLockedSubtree($id, $newParentId);
+        });
+    }
+
+    /**
+     * Move a node with its whole subtree under the parent its parent column names, read under the lock, as
+     * {@see self::moveSubtree()} moves it under a given one. A node whose row is gone has nothing left to move.
+     *
+     * This is the move of a model that has just saved a new parent. A plain save commits its row before the closure
+     * step runs, so another writer can change the column in between; reading it under the lock makes the closure
+     * follow the column whatever the order of the closure steps, instead of the parent the first save wrote. One
+     * read more than {@see self::moveSubtree()}.
+     *
+     * @throws HierarchyCycleException When the parent is the node itself or one of its descendants
+     * @throws LogicException When the parent column of an unlinked parent loops or names a missing row
+     */
+    public function moveSubtreeToParentColumn(int|string $id): void
+    {
+        $this->writeLocked(function () use ($id): void {
+            $row = $this->parentRow($id);
+
+            if ($row !== null) {
+                $this->moveLockedSubtree($id, $this->parentValue($row));
+            }
         });
     }
 
@@ -494,12 +526,32 @@ final readonly class ClosureTableMaintainer
      */
     private function parentOf(int|string $id): int|string|null
     {
-        $row = $this->connection->table($this->table)->where($this->keyColumn, $id)->first([$this->parentColumn]);
+        $row = $this->parentRow($id);
 
-        if (! is_object($row)) {
+        if ($row === null) {
             throw new LogicException(sprintf('The table "%s" has no row [%s] to link into "%s".', $this->table, $id, $this->closureTable));
         }
 
+        return $this->parentValue($row);
+    }
+
+    /**
+     * A node's row with its parent column alone; null when the row does not exist.
+     */
+    private function parentRow(int|string $id): ?object
+    {
+        $row = $this->connection->table($this->table)->where($this->keyColumn, $id)->first([$this->parentColumn]);
+
+        return is_object($row) ? $row : null;
+    }
+
+    /**
+     * The parent key a row read by {@see self::parentRow()} holds.
+     *
+     * @throws LogicException When the parent value is not a key
+     */
+    private function parentValue(object $row): int|string|null
+    {
         $parent = $row->{$this->parentColumn} ?? null;
 
         if ($parent === null || is_int($parent) || is_string($parent)) {

@@ -147,7 +147,9 @@ connection:
 - `updating` with a new parent: a move under the node itself or one of its descendants is refused with
   `Modules\Core\Exceptions\HierarchyCycleException` before anything is saved.
 - `updated` with a new parent: the whole subtree moves: its rows to the old ancestors are removed and its rows to
-  the new parent's ancestors-and-self are inserted.
+  the ancestors-and-self of the parent the column names when the move holds the hierarchy lock are inserted
+  (`ClosureTableMaintainer::moveSubtreeToParentColumn()`, one read more than `moveSubtree()`), so a writer that
+  changed the column in between is followed rather than overwritten.
 - `deleting`/`deleted`, when the row really goes: the node's own rows go with the cascading foreign keys; the
   surviving children become roots and their subtrees stay linked inside themselves. What the delete needs is read
   in `deleting` and written in `deleted`, so a listener that cancels the delete leaves the closure as it was. Inside
@@ -181,7 +183,7 @@ import, a raw migration) leave the closure behind. After such a write:
   table, key and parent column.
 
 `ClosureTableMaintainer` (`Modules\Core\Support\Hierarchy`) owns every set-based statement on a closure table:
-`insertNode()`, `moveSubtree()`, `detachSubtreesOf()`, `detachChildren()`, `childrenLeftBy()`, `rootParentless()`,
+`insertNode()`, `moveSubtree()`, `moveSubtreeToParentColumn()`, `detachSubtreesOf()`, `detachChildren()`, `childrenLeftBy()`, `rootParentless()`,
 `rebuild()` and `lock()`.
 
 **A parent missing from the closure is linked, not refused.** When `insertNode()` or `moveSubtree()` puts a node
@@ -195,7 +197,10 @@ closure rows stay so (their descendants are missing from `descendants`, for inst
 through the model or `rebuildClosure()` runs, which stays the repair after a bulk write. The check costs nothing
 when the parent is known: the leaf insert reports how many rows it wrote, and a lone self row is the signal; a
 move already checked the new parent's self row before. Before 2026-11-25 a move under such a parent threw a
-`LogicException` asking for a rebuild, and an insert under it silently wrote the self row alone.
+`LogicException` asking for a rebuild, and an insert under it silently wrote the self row alone. Since 2026-11-26
+the parent an insert links in that case is the one the node's parent column names under the lock, so a parent
+deleted between the node's save and its closure step (the foreign key cleared the column) leaves the node a root
+instead of throwing.
 
 ## Concurrent writers
 
@@ -237,8 +242,10 @@ share a closure table (every `Taxonomy` subclass) share the lock.
   transaction. It throws a `LogicException` outside a transaction, where the lock would end with the statement.
 - A plain `save()` or `delete()` opens no transaction around the model write (see above), so a concurrent writer
   can still slip between the row write and the closure step; only a caller's transaction makes the two one step.
-  Two plain saves moving the same node can commit their parent column in one order and their closure steps in the
-  other, leaving the closure on the parent that lost; `rebuildClosure()` repairs it.
+  The closure step of a move reads the parent column under the lock, so two plain saves moving the same node,
+  whose parent columns and closure steps commit in opposite orders, still leave the closure on the parent the
+  column kept. A failure between the row write and the closure step (a crash, a refused cycle) still leaves the
+  closure behind until `rebuildClosure()`.
 - A transaction that writes two hierarchies (an owner's cascade that reaches comments and taxonomies) takes two
   locks; two such transactions taking them in opposite orders are a deadlock the database detects and Laravel
   retries like any other.
@@ -255,13 +262,15 @@ suite runs on SQLite, which serializes writers itself. Real writers were run aga
 - four processes, 60 random operations each (45% moves, 30% creates, 25% hard deletes) on one 100-node hierarchy,
   every one in `DB::transaction($callback, 10)`. With `lock()` first: no retry, no failure. Reading random nodes
   before the write: 446 retries, and 22 of 240 operations gave up after ten attempts with the retryable conflict.
-  Plain saves and deletes with no caller transaction: no conflict, 3 closure rows left on a parent that lost the
-  race described above. In every run the closure matched the parent column apart from those 3 rows, with no
-  cycle.
+  Plain saves and deletes with no caller transaction: no conflict. In every run the closure matched the parent
+  column, with no cycle.
 
 The first MySQL run found that `lock()` read the version before waiting, which started the snapshot before the
 wait: every contended lock was refused as stale, even taken first, and closure steps of plain saves failed and
-left the closure behind. The locking read first is the fix.
+left the closure behind. The locking read first is the fix. The second run left 3 closure rows on a parent that
+two plain saves of one node had replaced in the column, their closure steps having committed in the other order;
+reading the parent column under the lock in the move is that fix, and two more runs of plain saves after it left
+none.
 
 ## Database portability
 

@@ -235,6 +235,62 @@ it('links a new parent missing from the closure from the parent column before mo
         ->and($incremental)->toContain(sprintf('%d>%d:2', $unlinked_root, $moved));
 });
 
+it('leaves the closure on the parent the column kept when two moves of one node reach it in the other order', function (): void {
+    $first_parent = ($this->addNode)(null);
+    $second_parent = ($this->addNode)(null);
+    $moved = ($this->addNode)(null);
+    ($this->addNode)($moved);
+
+    // Two plain saves commit the parent column in turn; their closure steps then run last first.
+    DB::table(MAINTAINER_NODES)->where('id', $moved)->update(['parent_id' => $first_parent]);
+    DB::table(MAINTAINER_NODES)->where('id', $moved)->update(['parent_id' => $second_parent]);
+    $this->maintainer->moveSubtreeToParentColumn($moved);
+    $this->maintainer->moveSubtreeToParentColumn($moved);
+    $incremental = maintainerClosureRows();
+    $this->maintainer->rebuild();
+
+    expect($incremental)->toBe(maintainerClosureRows())
+        ->and($incremental)->toContain(sprintf('%d>%d:1', $second_parent, $moved))
+        ->and($incremental)->not->toContain(sprintf('%d>%d:1', $first_parent, $moved));
+});
+
+it('moves nothing when the node whose parent column it follows is gone', function (): void {
+    $root = ($this->addNode)(null);
+    $before = maintainerClosureRows();
+    $version = maintainerLockVersion();
+
+    $this->maintainer->moveSubtreeToParentColumn($root + 100);
+
+    expect(maintainerClosureRows())->toBe($before)
+        ->and(maintainerLockVersion())->toBe($version + 1);
+});
+
+it('inserts a node as a root when the parent it was given was deleted before its closure step', function (): void {
+    $root = ($this->addNode)(null);
+    // The parent foreign key cleared the column when the parent row went.
+    $orphan = maintainerBulkNode(null);
+
+    $this->maintainer->insertNode($orphan, $root + 100);
+    $incremental = maintainerClosureRows();
+    $this->maintainer->rebuild();
+
+    expect($incremental)->toBe(maintainerClosureRows())
+        ->and($incremental)->toContain(sprintf('%d>%d:0', $orphan, $orphan));
+});
+
+it('links a node under the parent its column names when the given parent is missing from the closure', function (): void {
+    $root = ($this->addNode)(null);
+    $kept_parent = ($this->addNode)($root);
+    $node = maintainerBulkNode($kept_parent);
+
+    $this->maintainer->insertNode($node, $root + 100);
+    $incremental = maintainerClosureRows();
+    $this->maintainer->rebuild();
+
+    expect($incremental)->toBe(maintainerClosureRows())
+        ->and($incremental)->toContain(sprintf('%d>%d:2', $root, $node));
+});
+
 it('refuses to move a node under a parent missing from the closure that sits in its own subtree', function (): void {
     $root = ($this->addNode)(null);
     $moved = ($this->addNode)($root);
