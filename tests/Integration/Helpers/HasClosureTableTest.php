@@ -878,6 +878,29 @@ it('takes the hierarchy lock before reading back the children a delete left', fu
         ->and($forest['a1']->fresh()->parent_id)->toBeNull();
 });
 
+it('reads the parent column under the hierarchy lock when a plain save moves a node', function (): void {
+    $forest = closureTreeForest();
+    $node = $forest['a1']->fresh();
+    $statements = [];
+    DB::listen(static function ($query) use (&$statements): void {
+        $statements[] = $query->sql;
+    });
+
+    $node->update(['parent_id' => $forest['b']->id]);
+
+    $after_update = array_slice($statements, (int) array_key_first(array_filter(
+        $statements,
+        static fn (string $sql): bool => str_starts_with($sql, 'update "closure_tree_nodes" set'),
+    )) + 1);
+    $lock = array_key_first(array_filter($after_update, static fn (string $sql): bool => str_contains($sql, CoreTables::HierarchyLocks->value)));
+    $column_read = array_key_first(array_filter($after_update, static fn (string $sql): bool => str_starts_with($sql, 'select "parent_id" from "closure_tree_nodes"')));
+
+    expect($lock)->not->toBeNull()
+        ->and($column_read)->not->toBeNull()
+        ->and($lock < $column_read)->toBeTrue()
+        ->and(DB::table('closure_tree_nodes_closure')->where('ancestor_id', $forest['b']->id)->where('descendant_id', $node->id)->exists())->toBeTrue();
+});
+
 it('reads back more children of a deleted node than one statement binds', function (): void {
     $root = ClosureTreeStubModel::query()->create(['parent_id' => null]);
     $doomed = ClosureTreeStubModel::query()->create(['parent_id' => $root->id]);
