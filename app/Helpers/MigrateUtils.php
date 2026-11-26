@@ -586,11 +586,7 @@ final class MigrateUtils
             try {
                 $connection->unprepared('DROP TRIGGER ' . $wrapped_trigger);
             } catch (QueryException $exception) {
-                $previous = $exception->getPrevious();
-                $sql_state = $previous instanceof PDOException ? ($previous->errorInfo[0] ?? null) : null;
-
-                // 42704: undefined object, the trigger does not exist
-                throw_unless($sql_state === '42704', $exception);
+                throw_unless(self::isDb2UndefinedObject($exception), $exception);
             }
 
             return;
@@ -609,6 +605,20 @@ final class MigrateUtils
                 END;
             ');
         }
+    }
+
+    /**
+     * Whether a Db2 statement failed because the object it names does not exist.
+     *
+     * Db2 reports it as SQLSTATE 42704 (SQL0204); the IBM i Access ODBC driver may map it to the ODBC state 42S02,
+     * or leave only the SQL0204 message id in the text.
+     */
+    private static function isDb2UndefinedObject(QueryException $exception): bool
+    {
+        $previous = $exception->getPrevious();
+        $sql_state = $previous instanceof PDOException ? ($previous->errorInfo[0] ?? null) : null;
+
+        return in_array($sql_state, ['42704', '42S02'], true) || str_contains($exception->getMessage(), 'SQL0204');
     }
 
     /**

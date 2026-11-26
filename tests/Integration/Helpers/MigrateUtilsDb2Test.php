@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Easi\DB2\Database\DB2Connection;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -123,3 +125,31 @@ it('creates the trigger and the validity indexes after the table inside a migrat
         ->and($sql)->toContain('CREATE INDEX widgets_validity_idx ON widgets (valid_from, valid_to)')
         ->and($sql)->toContain('CREATE INDEX widgets_validity_deleted_idx ON widgets (valid_from, valid_to, is_deleted)');
 });
+
+it('tolerates dropping a Db2 trigger that does not exist, however the driver reports it', function (?string $sql_state, string $message, bool $tolerated): void {
+    $previous = new PDOException($message);
+    $previous->errorInfo = [$sql_state, -204, $message];
+    $pretend = Db2PretendConnection::make();
+    $pretend->useDefaultSchemaGrammar();
+    $connection = Mockery::mock(DB2Connection::class);
+    $connection->shouldReceive('getDriverName')->andReturn('db2_ibmi_odbc');
+    $connection->shouldReceive('getQueryGrammar')->andReturn($pretend->getQueryGrammar());
+    $connection->shouldReceive('unprepared')->once()
+        ->andThrow(new QueryException('db2', 'DROP TRIGGER widgets_is_deleted_trigger', [], $previous));
+
+    $drop = static fn (): mixed => new ReflectionMethod(MigrateUtils::class, 'dropBooleanTriggers')
+        ->invoke(null, new Blueprint($pretend, 'widgets'), 'deleted', $connection);
+
+    if ($tolerated) {
+        expect($drop())->toBeNull();
+
+        return;
+    }
+
+    expect($drop)->toThrow(QueryException::class);
+})->with([
+    'undefined object' => ['42704', 'SQLSTATE[42704]: Undefined object', true],
+    'ODBC table or view not found' => ['42S02', 'SQLSTATE[42S02]: Base table or view not found', true],
+    'SQL0204 in the message only' => ['HY000', '[IBM][System i Access ODBC Driver][DB2 for i5/OS]SQL0204 - WIDGETS_IS_DELETED_TRIGGER in LARAPLATE type *N not found.', true],
+    'any other error' => ['42501', 'SQLSTATE[42501]: SQL0551 - Not authorized', false],
+]);
