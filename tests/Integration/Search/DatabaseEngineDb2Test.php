@@ -3,11 +3,14 @@
 declare(strict_types=1);
 
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Table;
 use Illuminate\Database\SQLiteConnection;
 use Illuminate\Support\Facades\DB;
 use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Support\Db2Drivers;
+use Modules\Core\Tests\Stubs\Database\Db2ConnectionStubModel;
 use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 use Modules\Core\Tests\Stubs\Search\DatabaseEngineSQLiteVectorSearchUser;
 
@@ -65,16 +68,17 @@ it('keeps the vector path on a driver that has one', function (): void {
         ->toBe((new DatabaseEngine)->isVectorSearch($builder));
 });
 
-it('forces case-insensitive column search on the default Db2 connection only', function (): void {
-    $column = static fn (): TextColumn => TextColumn::make('name')->searchable();
+it('forces case-insensitive column search when the table model is on a Db2 connection only', function (): void {
+    $column = static fn (string $model): TextColumn => TextColumn::make('name')->searchable()->table(
+        Table::make(Mockery::mock(HasTable::class))->query(static fn () => $model::query()),
+    );
 
-    expect($column()->isSearchForcedCaseInsensitive())->toBeNull();
+    expect($column(DatabaseEngineSQLiteVectorSearchUser::class)->isSearchForcedCaseInsensitive())->toBeNull()
+        ->and(TextColumn::make('name')->searchable()->isSearchForcedCaseInsensitive())->toBeNull();
 
     Db2PretendConnection::capture(static function () use ($column): void {
-        expect($column()->isSearchForcedCaseInsensitive())->toBeTrue();
+        expect($column(Db2ConnectionStubModel::class)->isSearchForcedCaseInsensitive())->toBeTrue();
     });
-
-    expect($column()->isSearchForcedCaseInsensitive())->toBeNull();
 });
 
 it('drops the vector wheres of a semantic search on Db2 and keeps the keyword match', function (string $field, bool $paginate): void {

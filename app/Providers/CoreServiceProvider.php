@@ -650,7 +650,15 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         Column::configureUsing(
             static fn (Column $column): Column => $column->forceSearchCaseInsensitive(
-                static fn (): ?bool => Db2Drivers::is(DB::connection()->getDriverName()) ? true : null,
+                static function () use ($column): ?bool {
+                    $model = $column->hasTable() ? $column->getTable()->getModel() : null;
+
+                    if (! is_string($model) || ! is_a($model, Model::class, true)) {
+                        return null;
+                    }
+
+                    return Db2Drivers::is((new $model)->getConnection()->getDriverName()) ? true : null;
+                },
             ),
         );
 

@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\Paginator;
-use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\DatabaseEngine as BaseDatabaseEngine;
@@ -45,7 +44,7 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
      * score with the cosine itself; pgvector scores `1 / (1 + distance)` with the cosine distance
      * `1 - cosine`. Other similarity functions are not computed here as such, so they give none.
      *
-     * It deliberately reads the driver of the default connection: it receives no model to ask.
+     * It receives no model, so it reads the driver of the connection of the embeddings model, which owns the vectors it scores.
      */
     #[Override]
     public function vectorSimilarity(float $score, VectorProfile $profile): ?float
@@ -753,13 +752,13 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
     }
 
     /**
-     * The driver name of the connection the model uses, or of the default connection without a model.
+     * The driver name of the connection the model uses, or of the embeddings model without one.
      *
      * `config('database.default')` is a connection name, which only equals the driver by coincidence.
      */
     private function getDatabaseDriver(?Model $model = null): string
     {
-        $connection = $model instanceof Model ? $model->getConnection() : DB::connection();
+        $connection = ($model ?? new ModelEmbedding)->getConnection();
 
         return $connection->getDriverName();
     }

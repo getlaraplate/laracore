@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\SQLiteConnection;
+use Illuminate\Support\Facades\DB;
 use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\ModelEmbedding;
@@ -146,14 +148,19 @@ it('tells the similarity behind a vector score where the engine scale is known',
 ]);
 
 it('tells the cosine behind a pgvector score', function (): void {
-    $default = config('database.default');
-    config()->set('database.default', 'pgsql');
+    $default = DB::getDefaultConnection();
+    $pdo = DB::connection()->getPdo();
+    config()->set('database.connections.pgsql_driver', ['driver' => 'pgsql', 'database' => ':memory:', 'prefix' => '']);
+    DB::extend('pgsql_driver', static fn (array $config): SQLiteConnection => new SQLiteConnection($pdo, ':memory:', '', $config));
+    DB::purge('pgsql_driver');
+    DB::setDefaultConnection('pgsql_driver');
 
     try {
         $similarity = (new DatabaseEngine)->vectorSimilarity(1.0 / 1.2, new VectorProfile('a:one', 3, 'cosine'));
     } finally {
         // The test database stays the one the transaction was opened on.
-        config()->set('database.default', $default);
+        DB::setDefaultConnection($default);
+        DB::purge('pgsql_driver');
     }
 
     expect($similarity)->toEqualWithDelta(0.8, 1e-9);
