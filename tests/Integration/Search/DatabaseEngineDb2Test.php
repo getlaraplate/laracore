@@ -76,3 +76,33 @@ it('forces case-insensitive column search on the default Db2 connection only', f
 
     expect($column()->isSearchForcedCaseInsensitive())->toBeNull();
 });
+
+it('drops the vector wheres of a semantic search on Db2 and keeps the keyword match', function (string $field, bool $paginate): void {
+    $builder = null;
+
+    $sql = Db2PretendConnection::capture(static function () use ($field, $paginate, &$builder): void {
+        $model = (new DatabaseEngineSQLiteVectorSearchUser)->setConnection('db2_pretend');
+        $builder = new ScoutBuilder($model, 'mario');
+        $builder->where($field, [1.0, 0.0, 0.0]);
+        $builder->where('username', 'mario');
+
+        if ($paginate) {
+            (new DatabaseEngine)->paginateUsingDatabase($builder, 15, 'page', 1);
+
+            return;
+        }
+
+        (new DatabaseEngine)->search($builder);
+    });
+
+    $all = implode("\n", $sql);
+
+    expect($all)->not->toContain('embedding')->not->toContain('"vector"')
+        ->and($all)->toContain('LIKE LOWER(?)')->toContain('and username = ?')
+        ->and($builder->wheres)->toHaveCount(2);
+})->with([
+    'embedding search' => ['embedding', false],
+    'vector search' => ['vector', false],
+    'embedding paginate' => ['embedding', true],
+    'vector paginate' => ['vector', true],
+]);

@@ -44,6 +44,8 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
      * The cosine behind the `_score` of a vector match, for a `cosine` profile only. MySQL and SQLite
      * score with the cosine itself; pgvector scores `1 / (1 + distance)` with the cosine distance
      * `1 - cosine`. Other similarity functions are not computed here as such, so they give none.
+     *
+     * It deliberately reads the driver of the default connection: it receives no model to ask.
      */
     #[Override]
     public function vectorSimilarity(float $score, VectorProfile $profile): ?float
@@ -177,13 +179,13 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
             ];
         }
 
-        return parent::search($builder);
+        return parent::search($this->withoutVectorWheres($builder));
     }
 
     public function paginateUsingDatabase(Builder $builder, $perPage, $pageName, $page): LengthAwarePaginator
     {
         if (! $this->runsVectorSearch($builder)) {
-            return parent::paginateUsingDatabase($builder, $perPage, $pageName, $page);
+            return parent::paginateUsingDatabase($this->withoutVectorWheres($builder), $perPage, $pageName, $page);
         }
 
         $page = (int) ($page ?: Paginator::resolveCurrentPage($pageName));
@@ -771,5 +773,30 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
     private function runsVectorSearch(Builder $builder): bool
     {
         return $this->isVectorSearch($builder) && ! Db2Drivers::is($builder->modelConnectionType());
+    }
+
+    /**
+     * The builder a keyword search runs on: on Db2 the vector wheres of a semantic search (`vector`, `embedding`
+     * and the model's vector field) are dropped, because Scout would compile them as column constraints. Other
+     * drivers, and the caller's builder, are left untouched: the filtering is done on a clone.
+     *
+     * @param  Builder<covariant Model>  $builder
+     * @return Builder<covariant Model>
+     */
+    private function withoutVectorWheres(Builder $builder): Builder
+    {
+        if (! Db2Drivers::is($builder->modelConnectionType())) {
+            return $builder;
+        }
+
+        $vector_fields = ['vector', 'embedding', $this->resolveVectorField($builder->model)];
+        $copy = clone $builder;
+        $copy->wheres = array_filter(
+            $builder->wheres,
+            static fn (mixed $where, int|string $key): bool => ! in_array(is_array($where) ? ($where['field'] ?? $key) : $key, $vector_fields, true),
+            ARRAY_FILTER_USE_BOTH,
+        );
+
+        return $copy;
     }
 }
