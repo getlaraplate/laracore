@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - 2026-11-26
+
+### 🚀 Features
+
+- *(core)* Move a subtree to the parent its column names, so plain saves converge
+
 ## [2.1.0] - 2026-11-26
 
 ### 🚀 Features
