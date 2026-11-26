@@ -9,7 +9,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Cache\Labels\LabelledCache;
@@ -200,7 +199,9 @@ final class DynamicContentsService
                 ->whereNull("{$presettables_table}.deleted_at")
                 ->whereNull("{$presets_table}.deleted_at")
                 ->where("{$entities_table}.type", $type->toScalar())
-                ->addSelect("{$presettables_table}.*", DB::raw("CASE WHEN {$presets_table}.is_default THEN 1 ELSE 0 END + CASE WHEN {$entities_table}.is_default THEN 1 ELSE 0 END as order_score"))
+                ->addSelect("{$presettables_table}.*")
+                // A flag compared to a bound true, not used as a predicate: Db2 has no boolean predicate in a CASE.
+                ->selectRaw("CASE WHEN {$presets_table}.is_default = ? THEN 1 ELSE 0 END + CASE WHEN {$entities_table}.is_default = ? THEN 1 ELSE 0 END as order_score", [true, true])
                 ->orderBy('order_score', 'desc')
                 ->get(),
         );

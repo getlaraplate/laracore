@@ -1389,6 +1389,20 @@ class CrudService
     }
 
     /**
+     * Select a facet group's key and the distinct count of the counted column under the aliases the page reads.
+     * Both columns go through the grammar, as the builder would quote them: a key that is a reserved word
+     * (`id`, `type` on Db2) is otherwise left bare in the raw select.
+     */
+    private static function selectFacetCounts(BaseQueryBuilder $query, string $key, string $counted): BaseQueryBuilder
+    {
+        $grammar = $query->getGrammar();
+
+        return $query
+            ->selectRaw($grammar->wrap($key) . ' as facet_key')
+            ->selectRaw('count(distinct ' . $grammar->wrap($counted) . ') as aggregate');
+    }
+
+    /**
      * Narrow a modifications query to the requests on $model's table the user may decide on: the
      * table's `approve` ACL restricts which records, and a pending create, which has no record yet
      * for the ACL to read, stays in. A trashed record awaiting a restore, or one hidden while its
@@ -1708,8 +1722,7 @@ class CrudService
 
         $page_query = $searched($pivot_query()->whereIn($qualified_foreign, $filtered_ids()))
             ->groupBy($qualified_related)
-            ->selectRaw($qualified_related . ' as facet_key')
-            ->selectRaw('count(distinct ' . $qualified_foreign . ') as aggregate');
+            ->tap(static fn (BaseQueryBuilder $query): BaseQueryBuilder => self::selectFacetCounts($query, $qualified_related, $qualified_foreign));
 
         $this->orderRelationFacet($page_query, $qualified_related, $facet->sort, $label);
 
@@ -1775,8 +1788,7 @@ class CrudService
 
         $page_query = $searched($joined()->whereIn($qualified_pk, $filtered_ids()))
             ->groupBy($qualified_group)
-            ->selectRaw($qualified_group . ' as facet_key')
-            ->selectRaw('count(distinct ' . $qualified_pk . ') as aggregate');
+            ->tap(static fn (BaseQueryBuilder $query): BaseQueryBuilder => self::selectFacetCounts($query, $qualified_group, $qualified_pk));
 
         $this->orderRelationFacet($page_query, $qualified_group, $facet->sort, $qualified_group);
 
@@ -1797,8 +1809,7 @@ class CrudService
                 ->whereIn($qualified_pk, $acl_ids())
                 ->whereIn($qualified_group, $page_keys)
                 ->groupBy($qualified_group)
-                ->selectRaw($qualified_group . ' as facet_key')
-                ->selectRaw('count(distinct ' . $qualified_pk . ') as aggregate')
+                ->tap(static fn (BaseQueryBuilder $query): BaseQueryBuilder => self::selectFacetCounts($query, $qualified_group, $qualified_pk))
                 ->get();
 
             foreach ($total_rows as $row) {
@@ -2178,8 +2189,7 @@ class CrudService
             ->whereIn($qualified_foreign, $acl_ids)
             ->whereIn($qualified_related, $page_keys)
             ->groupBy($qualified_related)
-            ->selectRaw($qualified_related . ' as facet_key')
-            ->selectRaw('count(distinct ' . $qualified_foreign . ') as aggregate')
+            ->tap(static fn (BaseQueryBuilder $query): BaseQueryBuilder => self::selectFacetCounts($query, $qualified_related, $qualified_foreign))
             ->get();
 
         $totals = [];

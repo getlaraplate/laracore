@@ -20,18 +20,27 @@ final readonly class BaselinePolicy
 {
     public function __construct(private VersionEpochs $epochs) {}
 
+    /**
+     * The `capture` and key columns of the raw select go through the grammar: both are reserved words on Db2.
+     */
     public function isDue(VersionSetRoot $root): bool
     {
         $version_set = new VersionSet;
         $version_set->setConnection($root->connectionName());
 
-        $latest = $version_set->newQuery()
-            ->toBase()
+        $query = $version_set->newQuery()->toBase();
+        $grammar = $query->getGrammar();
+
+        $latest = $query
             ->where('root_type', $root->type())
             ->where('root_id', $root->id())
             ->where('root_table_ref', $root->tableName())
             ->selectRaw(
-                'max(case when kind = ? and capture = ? then id end) as latest_baseline, max(case when capture <> ? then id end) as latest_partial',
+                sprintf(
+                    'max(case when kind = ? and %1$s = ? then %2$s end) as latest_baseline, max(case when %1$s <> ? then %2$s end) as latest_partial',
+                    $grammar->wrap('capture'),
+                    $grammar->wrap($version_set->getKeyName()),
+                ),
                 [VersionSetKind::Baseline->value, VersionCaptureQuality::Atomic->value, VersionCaptureQuality::Atomic->value],
             )
             ->first();

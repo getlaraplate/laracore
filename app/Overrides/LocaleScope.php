@@ -80,7 +80,7 @@ final class LocaleScope implements Scope
                         $q->where('locale', $locale)
                             ->orWhere('locale', $default_locale);
                     })
-                        ->orderByRaw('CASE WHEN locale = ? THEN 0 ELSE 1 END', [$locale]);
+                        ->orderByRaw(sprintf('CASE WHEN %s = ? THEN 0 ELSE 1 END', $query->getGrammar()->wrap('locale')), [$locale]);
                 } else {
                     $query->where('locale', $locale);
                 }
@@ -92,6 +92,8 @@ final class LocaleScope implements Scope
 
     /**
      * Eager load translation with fallback logic.
+     *
+     * The `locale` column of the preference order goes through the grammar: it is a reserved word on Db2.
      *
      * @param  Builder<covariant Model>  $builder
      */
@@ -106,7 +108,8 @@ final class LocaleScope implements Scope
         $builder->with(['translation' => function ($query) use ($current_locale, $default_locale, $fallback_enabled, $any_locale): void { // @pest-ignore-type
             if ($any_locale) {
                 // Carica traduzione corrente, poi quella di default, poi una qualsiasi
-                $query->orderByRaw('CASE WHEN locale = ? THEN 0 WHEN locale = ? THEN 1 ELSE 2 END', [$current_locale, $default_locale])
+                $locale_column = $query->getGrammar()->wrap('locale');
+                $query->orderByRaw(sprintf('CASE WHEN %1$s = ? THEN 0 WHEN %1$s = ? THEN 1 ELSE 2 END', $locale_column), [$current_locale, $default_locale])
                     ->orderBy('id');
             } elseif ($fallback_enabled) {
                 // Carica traduzione corrente, se non esiste usa quella di default
@@ -115,7 +118,7 @@ final class LocaleScope implements Scope
                     $q->where('locale', $current_locale)
                         ->orWhere('locale', $default_locale);
                 })
-                    ->orderByRaw('CASE WHEN locale = ? THEN 0 ELSE 1 END', [$current_locale]);
+                    ->orderByRaw(sprintf('CASE WHEN %s = ? THEN 0 ELSE 1 END', $query->getGrammar()->wrap('locale')), [$current_locale]);
             } else {
                 // Carica SOLO traduzione corrente (null se non esiste)
                 $query->where('locale', $current_locale);

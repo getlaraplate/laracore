@@ -10,6 +10,8 @@ use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\LocaleScope;
 use Modules\Core\Services\PerModelSettingResolver;
 use Modules\Core\Tests\Fixtures\FakeTranslatableModel;
+use Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation;
+use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 
 function configureFakeTranslatableFallback(bool $enabled): void
 {
@@ -298,6 +300,7 @@ it('apply invokes whereHas closure for default locale branch', function (): void
 
         return true;
     }))->andReturnSelf();
+    $relation_query->shouldReceive('getGrammar')->andReturn((new FakeTranslatableModel)->getConnection()->getQueryGrammar());
     $relation_query->shouldReceive('orderByRaw')->once()->andReturnSelf();
 
     $builder = Mockery::mock(Illuminate\Database\Eloquent\Builder::class);
@@ -400,7 +403,8 @@ it('forLocale fallback eager-load orders current locale first', function (): voi
 
         return true;
     }))->andReturnSelf();
-    $query->shouldReceive('orderByRaw')->once()->with('CASE WHEN locale = ? THEN 0 ELSE 1 END', ['it'])->andReturnSelf();
+    $query->shouldReceive('getGrammar')->andReturn($model->getConnection()->getQueryGrammar());
+    $query->shouldReceive('orderByRaw')->once()->with('CASE WHEN "locale" = ? THEN 0 ELSE 1 END', ['it'])->andReturnSelf();
 
     $translation_loader($query);
 
@@ -446,7 +450,7 @@ function fakeTranslatedOnlyInDefaultLocale(string $title): int
 {
     $id = (new FakeTranslatableModel)->newQueryWithoutScopes()->insertGetId(['created_at' => now(), 'updated_at' => now()]);
 
-    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+    FakeTranslatableModelTranslation::query()->create([
         'fake_translatable_model_id' => $id,
         'locale' => LocaleContext::getDefault(),
         'title' => $title,
@@ -481,7 +485,7 @@ it('keeps every record visible when the reader picked a content locale, showing 
     configureFakeTranslatableFallback(false);
     $untranslated = fakeTranslatedOnlyInDefaultLocale('Only in the default locale');
     $translated = fakeTranslatedOnlyInDefaultLocale('Default text');
-    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+    FakeTranslatableModelTranslation::query()->create([
         'fake_translatable_model_id' => $translated,
         'locale' => 'de',
         'title' => 'Deutscher Text',
@@ -500,7 +504,7 @@ it('falls back to the locale the default language setting names, once the settin
     configureFakeTranslatableFallback(true);
     config(['app.available_locales' => ['en', 'it', 'de']]);
     $id = (new FakeTranslatableModel)->newQueryWithoutScopes()->insertGetId(['created_at' => now(), 'updated_at' => now()]);
-    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+    FakeTranslatableModelTranslation::query()->create([
         'fake_translatable_model_id' => $id,
         'locale' => 'it',
         'title' => 'Solo italiano',
@@ -523,7 +527,7 @@ it('shows the text of any locale in the backoffice when neither the content loca
     configureFakeTranslatableFallback(false);
     $other_locale = LocaleContext::getDefault() === 'fr' ? 'es' : 'fr';
     $id = (new FakeTranslatableModel)->newQueryWithoutScopes()->insertGetId(['created_at' => now(), 'updated_at' => now()]);
-    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+    FakeTranslatableModelTranslation::query()->create([
         'fake_translatable_model_id' => $id,
         'locale' => $other_locale,
         'title' => 'Only in another locale',
@@ -542,7 +546,7 @@ it('prefers the default locale over any other in the backoffice when the content
     configureFakeTranslatableFallback(false);
     $other_locale = LocaleContext::getDefault() === 'fr' ? 'es' : 'fr';
     $id = fakeTranslatedOnlyInDefaultLocale('Default text');
-    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+    FakeTranslatableModelTranslation::query()->create([
         'fake_translatable_model_id' => $id,
         'locale' => $other_locale,
         'title' => 'Text in another locale',
@@ -557,7 +561,7 @@ it('still hides a record translated only in another locale outside the backoffic
     configureFakeTranslatableFallback(true);
     $other_locale = LocaleContext::getDefault() === 'fr' ? 'es' : 'fr';
     $id = (new FakeTranslatableModel)->newQueryWithoutScopes()->insertGetId(['created_at' => now(), 'updated_at' => now()]);
-    Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation::query()->create([
+    FakeTranslatableModelTranslation::query()->create([
         'fake_translatable_model_id' => $id,
         'locale' => $other_locale,
         'title' => 'Only in another locale',
@@ -566,4 +570,35 @@ it('still hides a record translated only in another locale outside the backoffic
     LocaleContext::set('de');
 
     expect(FakeTranslatableModel::query()->find($id))->toBeNull();
+});
+
+it('quotes the reserved locale column in every translation order it builds on Db2', function (): void {
+    $orders = [];
+
+    Db2PretendConnection::capture(function () use (&$orders): void {
+        $model = (new FakeTranslatableModel)->setConnection('db2_pretend');
+        $order_of = static function (Closure $loader) use ($model): string {
+            $relation = $model->hasOne(FakeTranslatableModelTranslation::class);
+            $loader($relation);
+
+            return $relation->toSql();
+        };
+
+        $builder = $model->newQuery();
+        $this->scope->extend($builder);
+        $orders[] = $order_of($builder->forLocale('it', true)->getEagerLoads()['translation']);
+
+        $eager_load = new ReflectionMethod(LocaleScope::class, 'eagerLoadTranslation');
+
+        foreach ([[true, false], [false, true]] as [$fallback_enabled, $any_locale]) {
+            $builder = $model->newQuery();
+            $eager_load->invoke($this->scope, $builder, 'it', 'en', $fallback_enabled, $any_locale);
+            $orders[] = $order_of($builder->getEagerLoads()['translation']);
+        }
+    });
+
+    expect($orders)->toHaveCount(3)
+        ->and($orders[0])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 ELSE 1 END')
+        ->and($orders[1])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 ELSE 1 END')
+        ->and($orders[2])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 WHEN "LOCALE" = ? THEN 1 ELSE 2 END');
 });

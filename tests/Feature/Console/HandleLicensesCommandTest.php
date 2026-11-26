@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
+use Easi\DB2\Database\ReservedWords;
 use Illuminate\Console\OutputStyle;
 use Laravel\Prompts\ConfirmPrompt;
 use Laravel\Prompts\SelectPrompt;
@@ -353,4 +354,27 @@ it('reports a group of licenses as perpetual, active or expired by its expiry', 
     expect(HandleLicensesCommand::statusOf(null))->toBe('perpetual')
         ->and(HandleLicensesCommand::statusOf(CarbonImmutable::parse('2026-11-01')))->toBe('expired')
         ->and(HandleLicensesCommand::statusOf(CarbonImmutable::parse('2027-01-01')))->toBe('active');
+});
+
+it('counts each expiry group under an alias that is no Db2 reserved word', function (): void {
+    License::factory()->count(2)->create(['valid_to' => null]);
+
+    SelectPrompt::fallbackWhen(true);
+    SelectPrompt::fallbackUsing(static fn (): string => 'list');
+
+    $connection = (new License)->getConnection();
+    $connection->flushQueryLog();
+    $connection->enableQueryLog();
+
+    $command = licensesCommandWithOutput();
+    expect($command->handle())->toBeIn([0, 1]);
+
+    $grouping = collect($connection->getQueryLog())
+        ->pluck('query')
+        ->first(static fn (string $query): bool => str_contains($query, 'group by'));
+    $connection->disableQueryLog();
+
+    expect($grouping)->toBeString()
+        ->and(preg_match('/ as "?(\w+)"?/', (string) $grouping, $alias))->toBe(1)
+        ->and(ReservedWords::contains($alias[1]))->toBeFalse();
 });

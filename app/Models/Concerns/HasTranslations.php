@@ -177,6 +177,8 @@ trait HasTranslations
     /**
      * Get the translation for current locale (with conditional fallback).
      *
+     * The `locale` column of the preference order goes through the grammar: it is a reserved word on Db2.
+     *
      * @return HasOne<TTranslationModel>
      */
     public function translation(): HasOne
@@ -192,7 +194,7 @@ trait HasTranslations
         // would read as missing data. What it writes never comes from this relation.
         if (LocaleContext::getContentLocale() !== null) {
             $relation->orderByRaw(
-                'CASE WHEN locale = ? THEN 0 WHEN locale = ? THEN 1 ELSE 2 END',
+                sprintf('CASE WHEN %1$s = ? THEN 0 WHEN %1$s = ? THEN 1 ELSE 2 END', $relation->getGrammar()->wrap('locale')),
                 [$current_locale, $default_locale],
             )->orderBy('id');
         } elseif ($fallback_enabled) {
@@ -201,7 +203,7 @@ trait HasTranslations
                 $query->where('locale', $current_locale)
                     ->orWhere('locale', $default_locale);
             })
-                ->orderByRaw('CASE WHEN locale = ? THEN 0 ELSE 1 END', [$current_locale]);
+                ->orderByRaw(sprintf('CASE WHEN %s = ? THEN 0 ELSE 1 END', $relation->getGrammar()->wrap('locale')), [$current_locale]);
         } else {
             // Se fallback disabilitato: SOLO traduzione corrente (null se non esiste)
             $relation->where('locale', $current_locale);
@@ -519,7 +521,7 @@ trait HasTranslations
                     $sub_q->where('locale', $locale)
                         ->orWhere('locale', $default_locale);
                 })
-                    ->orderByRaw('CASE WHEN locale = ? THEN 0 ELSE 1 END', [$locale]);
+                    ->orderByRaw(sprintf('CASE WHEN %s = ? THEN 0 ELSE 1 END', $q->getGrammar()->wrap('locale')), [$locale]);
             } else {
                 $q->where('locale', $locale);
             }
@@ -547,7 +549,7 @@ trait HasTranslations
                     $sub_q->where('locale', $locale)
                         ->orWhere('locale', $default_locale);
                 })
-                    ->orderByRaw('CASE WHEN locale = ? THEN 0 ELSE 1 END', [$locale]);
+                    ->orderByRaw(sprintf('CASE WHEN %s = ? THEN 0 ELSE 1 END', $q->getGrammar()->wrap('locale')), [$locale]);
             } else {
                 $q->where('locale', $locale);
             }

@@ -154,6 +154,8 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     }
 
     /**
+     * The `locale` column of the preference order goes through the grammar: it is a reserved word on Db2.
+     *
      * @return HasOne<TaxonomyTranslation>
      */
     public function translation(): HasOne
@@ -169,7 +171,7 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
                 $query->where('locale', $current_locale)
                     ->orWhere('locale', $default_locale);
             })
-                ->orderByRaw('CASE WHEN locale = ? THEN 0 ELSE 1 END', [$current_locale]);
+                ->orderByRaw(sprintf('CASE WHEN %s = ? THEN 0 ELSE 1 END', $relation->getGrammar()->wrap('locale')), [$current_locale]);
         } else {
             $relation->where('locale', $current_locale);
         }

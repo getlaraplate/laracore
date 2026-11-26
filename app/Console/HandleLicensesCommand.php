@@ -11,7 +11,6 @@ use function Laravel\Prompts\text;
 
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Modules\Core\Models\License;
@@ -52,7 +51,8 @@ final class HandleLicensesCommand extends Command
                 $valid_to = null;
 
                 $licenses_groups = License::query()->groupBy('valid_to')
-                    ->select(DB::raw('valid_to'), DB::raw('count(*) as count'))
+                    ->select('valid_to')
+                    ->selectRaw('count(*) as licenses_count')
                     ->lazy(100);
                 $licenses_count = $licenses_groups->reduce(static fn (int $total, License $group): int => $total + self::groupCount($group), 0);
 
@@ -127,11 +127,12 @@ final class HandleLicensesCommand extends Command
     }
 
     /**
-     * The `count(*)` alias of a group of licenses sharing an expiry.
+     * The `count(*)` alias of a group of licenses sharing an expiry: `licenses_count`, since `count` is a reserved
+     * word on Db2.
      */
     private static function groupCount(License $group): int
     {
-        $count = $group->getAttribute('count');
+        $count = $group->getAttribute('licenses_count');
 
         return is_numeric($count) ? (int) $count : 0;
     }

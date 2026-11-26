@@ -12,12 +12,15 @@ use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Version;
 use Modules\Core\Models\VersionSet;
+use Modules\Core\Tests\Stubs\Database\Db2ConnectionStubModel;
+use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 use Modules\Core\Tests\Stubs\Versioning\Relations\VersionedRelationRoot;
 use Modules\Core\Tests\Stubs\Versioning\Relations\VersionedRelationSubject;
 use Modules\Core\Tests\Stubs\Versioning\SoftDeletedVersionedArticle;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocument;
 use Modules\Core\Tests\Stubs\Versioning\TranslatedDocumentTranslation;
 use Modules\Core\Tests\Stubs\Versioning\VersionedArticle;
+use Modules\Core\Versioning\BaselinePolicy;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
 use Modules\Core\Versioning\Data\VersionChange;
@@ -366,4 +369,17 @@ it('leaves the baseline image out of the history listing and keeps the rows of t
         ->and($set->baseline_from_sequence)->toBe(2)
         ->and($document->history()->where('version_set_id', $set->getKey())->get()->pluck('sequence')->all())->toBe([1])
         ->and($document->history()->where('relation_path', null)->get()->last()->change_type)->toBe(VersionChangeType::Created);
+});
+
+it('quotes the reserved capture and id columns when it looks for the latest baseline on Db2', function (): void {
+    $sql = Db2PretendConnection::capture(static function (): void {
+        $root = new Db2ConnectionStubModel;
+        $root->setAttribute('id', 7);
+
+        expect(app(BaselinePolicy::class)->isDue(VersionSetRoot::forModel($root)))->toBeTrue();
+    });
+
+    expect($sql)->toHaveCount(1)
+        ->and($sql[0])->toContain('max(case when kind = ? and "CAPTURE" = ? then "ID" end) as latest_baseline')
+        ->and($sql[0])->toContain('max(case when "CAPTURE" <> ? then "ID" end) as latest_partial');
 });

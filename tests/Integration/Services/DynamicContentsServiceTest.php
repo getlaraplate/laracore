@@ -8,6 +8,7 @@ use App\Models\Preset as AppPreset;
 use Modules\Core\Models\Pivot\Presettable;
 use Modules\Core\Models\Preset;
 use Modules\Core\Services\DynamicContentsService;
+use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 use Modules\Core\Tests\Support\AppDynamicEntities;
 
 beforeEach(function (): void {
@@ -68,4 +69,14 @@ it('returns the target class unchanged when local and target share the same modu
     $resolved = dynamic_contents_invoke_get_module_model_class(Presettable::class, Presettable::class);
 
     expect($resolved)->toBe(Presettable::class);
+});
+
+it('scores the default presets and entities by comparing their flags, as Db2 has no boolean predicate', function (): void {
+    $sql = Db2PretendConnection::capture(static function (): void {
+        DynamicContentsService::getInstance()->fetchAvailablePresettables(EntityType::Pages);
+    });
+
+    expect(implode("\n", $sql))
+        ->toContain('CASE WHEN core_presets.is_default = ? THEN 1 ELSE 0 END + CASE WHEN core_entities.is_default = ? THEN 1 ELSE 0 END as order_score')
+        ->not->toContain('is_default THEN');
 });

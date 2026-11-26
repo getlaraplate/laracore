@@ -175,3 +175,26 @@ it('searches and sorts a relation facet by the related label', function (): void
     expect($searched->distinctValues)->toBe(1)
         ->and(collect($searched->values)->pluck('key')->all())->toBe([$editor->id]);
 });
+
+it('quotes the raw facet columns through the grammar, so Db2 quotes a key that is a reserved word', function (): void {
+    $admin = facet_rel_superadmin();
+    User::factory()->create()->assignRole(Role::factory()->create(['name' => 'editor', 'guard_name' => 'web']));
+    $connection = (new User)->getConnection();
+    $connection->flushQueryLog();
+    $connection->enableQueryLog();
+
+    facet_rel_service($admin, null, new FacetQuery(groupBy: 'roles', relation: 'roles', fields: ['name'], labelField: 'name'));
+    facet_rel_service($admin, null, new FacetQuery(groupBy: 'license.valid_to'));
+
+    $facet_queries = collect($connection->getQueryLog())
+        ->pluck('query')
+        ->filter(static fn (string $query): bool => str_contains($query, ' as facet_key'))
+        ->values();
+    $connection->disableQueryLog();
+    $users = (new User)->getTable();
+
+    expect($facet_queries)->not->toBeEmpty()
+        ->and($facet_queries->every(static fn (string $query): bool => preg_match('/(^|[\s(,])\w+\.\w+ as facet_key/', $query) === 0))->toBeTrue()
+        ->and($facet_queries->every(static fn (string $query): bool => preg_match('/count\(distinct \w+\.\w+\)/', $query) === 0))->toBeTrue()
+        ->and($facet_queries->contains(static fn (string $query): bool => str_contains($query, 'count(distinct "' . $users . '"."id") as aggregate')))->toBeTrue();
+});

@@ -8,6 +8,8 @@ use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Models\Concerns\HasTranslations;
 use Modules\Core\Overrides\LocaleScope;
 use Modules\Core\Tests\Fixtures\FakeTranslatableModel;
+use Modules\Core\Tests\Fixtures\FakeTranslatableModelTranslation;
+use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 
 beforeEach(function (): void {
     HasTranslations::resetLocaleCache();
@@ -286,4 +288,39 @@ it('returns the earliest translation as the original', function (): void {
 
 it('returns no original translation for a model without translations', function (): void {
     expect(FakeTranslatableModel::query()->create([])->getOriginalTranslation())->toBeNull();
+});
+
+it('quotes the reserved locale column in every translation order it builds on Db2', function (): void {
+    // Warm the fallback setting on SQLite: the pretend connection answers no query.
+    expect((new FakeTranslatableModel)->translationFallbackEnabledBySettings())->toBeTrue();
+    $orders = [];
+
+    Db2PretendConnection::capture(static function () use (&$orders): void {
+        $model = (new FakeTranslatableModel)->setConnection('db2_pretend');
+        $order_of = static function (Closure $loader) use ($model): string {
+            $relation = $model->hasOne(FakeTranslatableModelTranslation::class);
+            $loader($relation);
+
+            return $relation->toSql();
+        };
+
+        LocaleContext::set('it');
+        $orders[] = $model->translation()->toSql();
+
+        LocaleContext::setContentLocale('it');
+        $orders[] = $model->translation()->toSql();
+        LocaleContext::setContentLocale(null);
+
+        foreach (['forLocale', 'withTranslation'] as $scope) {
+            $builder = $model->newQueryWithoutScopes();
+            $model->callNamedScope($scope, [$builder, 'it', true]);
+            $orders[] = $order_of($builder->getEagerLoads()['translation']);
+        }
+    });
+
+    expect($orders)->toHaveCount(4)
+        ->and($orders[0])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 ELSE 1 END')
+        ->and($orders[1])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 WHEN "LOCALE" = ? THEN 1 ELSE 2 END')
+        ->and($orders[2])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 ELSE 1 END')
+        ->and($orders[3])->toContain('order by CASE WHEN "LOCALE" = ? THEN 0 ELSE 1 END');
 });

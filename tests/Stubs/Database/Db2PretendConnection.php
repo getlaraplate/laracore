@@ -26,7 +26,7 @@ final class Db2PretendConnection
             static fn (): PDO => throw new LogicException('No PDO in a pretend connection'),
             '',
             '',
-            ['driver' => $driver, 'schema' => 'laraplate', 'prefix' => '', 'quote_reserved_words' => true],
+            ['driver' => $driver, 'name' => self::CONNECTION_NAME, 'schema' => 'laraplate', 'prefix' => '', 'quote_reserved_words' => true],
         );
     }
 
