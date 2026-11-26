@@ -57,14 +57,19 @@ it('gives the permissions table plain name columns, one trigger, two indexes and
     expect($triggers)->toHaveCount(1)
         ->and($triggers[0])->toContain('NO CASCADE BEFORE INSERT OR UPDATE ON')
         ->and($triggers[0])->toContain('REFERENCING NEW AS N FOR EACH ROW BEGIN ATOMIC')
-        ->and($triggers[0])->toContain('SET N.connection_name = REGEXP_REPLACE(N.name,')
-        ->and($triggers[0])->toContain('SET N.table_name = REGEXP_REPLACE(N.name,')
-        ->and($triggers[0])->toContain('SET N.module_name = REGEXP_REPLACE(N.name,')
+        ->and($triggers[0])->toContain("IF NOT REGEXP_LIKE(N.name, '^\\w+\\.\\w+\\.\\w+$') THEN SIGNAL SQLSTATE '75001' SET MESSAGE_TEXT = 'Invalid permission name'; END IF;")
+        ->and($triggers[0])->toContain("SET N.connection_name = REGEXP_SUBSTR(N.name, '[^.]+', 1, 1);")
+        ->and($triggers[0])->toContain("SET N.table_name = REGEXP_SUBSTR(N.name, '[^.]+', 1, 2);")
+        ->and($triggers[0])->toContain("SET N.module_name = REGEXP_SUBSTR(REGEXP_SUBSTR(N.name, '[^.]+', 1, 2), '^[A-Za-z0-9]*');")
+        ->and($triggers[0])->not->toContain('\\1')
+        ->and($triggers[0])->not->toContain('REGEXP_REPLACE')
+        ->and(implode("\n", $sql))->not->toContain('CHECK (REGEXP_LIKE')
+        ->and(mb_strpos($triggers[0], 'IF NOT REGEXP_LIKE'))->toBeLessThan(mb_strpos($triggers[0], 'SET N.connection_name'))
         ->and($triggers[0])->toEndWith('END');
 
     $positions = [];
 
-    foreach (['ADD COLUMN connection_name', 'ADD COLUMN module_name', 'permissions_name_parts_trigger', '_ref_IDX', '_module_name_IDX', 'CHECK (REGEXP_LIKE('] as $needle) {
+    foreach (['ADD COLUMN connection_name', 'ADD COLUMN module_name', 'permissions_name_parts_trigger', '_ref_IDX', '_module_name_IDX'] as $needle) {
         $found = array_keys(array_filter($sql, static fn (string $statement): bool => str_contains($statement, $needle)));
         expect($found)->not->toBeEmpty();
         $positions[$needle] = $found[0];
@@ -73,24 +78,29 @@ it('gives the permissions table plain name columns, one trigger, two indexes and
     expect($positions['ADD COLUMN connection_name'])->toBeLessThan($positions['ADD COLUMN module_name'])
         ->and($positions['ADD COLUMN module_name'])->toBeLessThan($positions['permissions_name_parts_trigger'])
         ->and($positions['permissions_name_parts_trigger'])->toBeLessThan($positions['_ref_IDX'])
-        ->and($positions['_ref_IDX'])->toBeLessThan($positions['_module_name_IDX'])
-        ->and($positions['_module_name_IDX'])->toBeLessThan($positions['CHECK (REGEXP_LIKE(']);
-
-    $check = core_db2_normalised($sql, 'CHECK (REGEXP_LIKE(');
-
-    expect($check[0])->toContain("CHECK (REGEXP_LIKE(name, '^\\w+\\.\\w+\\.\\w+$'))");
+        ->and($positions['_ref_IDX'])->toBeLessThan($positions['_module_name_IDX']);
 });
 
 it('derives the permission columns like PostgreSQL on Db2', function (): void {
     $migration = require base_path('Modules/Core/database/migrations/2024_03_15_224941_create_permission_tables.php');
 
-    $apply = static fn (string $pattern, string $replacement, string $name): string => preg_replace('~' . $pattern . '~', $replacement, $name);
+    // The same pattern constants as the trigger: REGEXP_SUBSTR(name, part, 1, n) is the n-th match of the part pattern.
+    $part = static function (string $name, int $occurrence) use ($migration): string {
+        preg_match_all('~' . $migration::DB2_PART_PATTERN . '~', $name, $matches);
 
-    expect($apply($migration::DB2_CONNECTION_PATTERN, '\1', 'default.core_users.select'))->toBe('default')
-        ->and($apply($migration::DB2_TABLE_PATTERN, '\2', 'default.core_users.select'))->toBe('core_users')
-        ->and($apply($migration::DB2_MODULE_PATTERN, '\1', 'default.core_users.select'))->toBe('core')
-        ->and($apply($migration::DB2_MODULE_PATTERN, '\1', 'default.sao_tickets.update'))->toBe('sao')
-        ->and($apply($migration::DB2_MODULE_PATTERN, '\1', 'default.settings.update'))->toBe('settings')
+        return $matches[0][$occurrence - 1] ?? '';
+    };
+    $module = static function (string $name) use ($migration, $part): string {
+        preg_match('~' . $migration::DB2_MODULE_PATTERN . '~', $part($name, $migration::DB2_TABLE_OCCURRENCE), $found);
+
+        return $found[0] ?? '';
+    };
+
+    expect($part('default.core_users.select', $migration::DB2_CONNECTION_OCCURRENCE))->toBe('default')
+        ->and($part('default.core_users.select', $migration::DB2_TABLE_OCCURRENCE))->toBe('core_users')
+        ->and($module('default.core_users.select'))->toBe('core')
+        ->and($module('default.sao_tickets.update'))->toBe('sao')
+        ->and($module('default.settings.update'))->toBe('settings')
         ->and(preg_match('~' . $migration::DB2_NAME_PATTERN . '~', 'default.core_users.select'))->toBe(1)
         ->and(preg_match('~' . $migration::DB2_NAME_PATTERN . '~', 'core_users.select'))->toBe(0);
 });
@@ -102,7 +112,8 @@ it('creates the presettables triggers in Db2 SQL PL', function (): void {
 
     $triggers = core_db2_normalised($sql, 'CREATE OR REPLACE TRIGGER trg_');
 
-    expect($sql)->toContain('ALTER TABLE core_presettables ALTER COLUMN fields_snapshot SET NOT NULL')
+    expect(implode("\n", $sql))->not->toContain('SET NOT NULL')
+        ->and(implode("\n", $sql))->toMatch('/fields_snapshot[^,]*not null/i')
         ->and($triggers)->toHaveCount(4)
         ->and($triggers[0])->toContain('trg_presettables_version')
         ->and($triggers[0])->toContain('NO CASCADE BEFORE INSERT ON')

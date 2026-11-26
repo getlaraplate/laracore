@@ -10,17 +10,18 @@ use Modules\Core\Support\Db2Drivers;
 return new class() extends Migration
 {
     /**
-     * Db2 name parts, `connection.table.action`. Each pattern captures one part in group 1 or 2 of the whole
-     * name, so a single REGEXP_REPLACE gives the PostgreSQL value; the module is the table's prefix before the
-     * first underscore.
+     * Db2 name parts, `connection.table.action`, taken with REGEXP_SUBSTR (no back reference): the connection is
+     * the first dot-separated part, the table the second, the module the table's prefix before the first underscore.
      */
     public const string DB2_NAME_PATTERN = '^\\w+\\.\\w+\\.\\w+$';
 
-    public const string DB2_CONNECTION_PATTERN = '^(\\w+)\\.(\\w+)\\.(\\w+)$';
+    public const string DB2_PART_PATTERN = '[^.]+';
 
-    public const string DB2_TABLE_PATTERN = '^(\\w+)\\.(\\w+)\\.(\\w+)$';
+    public const int DB2_CONNECTION_OCCURRENCE = 1;
 
-    public const string DB2_MODULE_PATTERN = '^\\w+\\.([A-Za-z0-9]*)\\w*\\.\\w+$';
+    public const int DB2_TABLE_OCCURRENCE = 2;
+
+    public const string DB2_MODULE_PATTERN = '^[A-Za-z0-9]*';
 
     /**
      * Run the migrations.
@@ -102,23 +103,26 @@ return new class() extends Migration
             $wrapped_module_name = $grammar->wrap('module_name');
             $wrapped_name_trigger = $grammar->wrap("{$permissions_table}_name_parts_trigger");
 
+            // The name is validated first: an invalid one is refused here instead of failing on the VARCHAR(50) columns.
+            $table_part = sprintf("REGEXP_SUBSTR(N.%s, '%s', 1, %d)", $wrapped_name, self::DB2_PART_PATTERN, self::DB2_TABLE_OCCURRENCE);
             $connection->unprepared(sprintf(
-                "CREATE OR REPLACE TRIGGER %s NO CASCADE BEFORE INSERT OR UPDATE ON %s REFERENCING NEW AS N FOR EACH ROW BEGIN ATOMIC SET N.%s = REGEXP_REPLACE(N.%s, '%s', '\\1'); SET N.%s = REGEXP_REPLACE(N.%s, '%s', '\\2'); SET N.%s = REGEXP_REPLACE(N.%s, '%s', '\\1'); END",
+                "CREATE OR REPLACE TRIGGER %s NO CASCADE BEFORE INSERT OR UPDATE ON %s REFERENCING NEW AS N FOR EACH ROW BEGIN ATOMIC IF NOT REGEXP_LIKE(N.%s, '%s') THEN SIGNAL SQLSTATE '75001' SET MESSAGE_TEXT = 'Invalid permission name'; END IF; SET N.%s = REGEXP_SUBSTR(N.%s, '%s', 1, %d); SET N.%s = %s; SET N.%s = REGEXP_SUBSTR(%s, '%s'); END",
                 $wrapped_name_trigger,
                 $wrapped_permissions_table,
+                $wrapped_name,
+                self::DB2_NAME_PATTERN,
                 $wrapped_connection_name,
                 $wrapped_name,
-                self::DB2_CONNECTION_PATTERN,
+                self::DB2_PART_PATTERN,
+                self::DB2_CONNECTION_OCCURRENCE,
                 $wrapped_table_name,
-                $wrapped_name,
-                self::DB2_TABLE_PATTERN,
+                $table_part,
                 $wrapped_module_name,
-                $wrapped_name,
+                $table_part,
                 self::DB2_MODULE_PATTERN,
             ));
             $connection->statement("CREATE INDEX {$wrapped_reference_index} ON {$wrapped_permissions_table} (connection_name, table_name)");
             $connection->statement("CREATE INDEX {$wrapped_module_index} ON {$wrapped_permissions_table} (module_name)");
-            $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD CONSTRAINT {$wrapped_name_check} CHECK (REGEXP_LIKE({$wrapped_name}, '" . self::DB2_NAME_PATTERN . "'))");
         } elseif ($driver_family === 'sqlite') {
             // SQLite doesn't support regexp_replace in generated columns, so we use regular columns with triggers
             $connection->statement("ALTER TABLE {$wrapped_permissions_table} ADD COLUMN connection_name TEXT");

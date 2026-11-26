@@ -35,7 +35,8 @@ return new class extends Migration
             $table->unsignedBigInteger('entity_id')->nullable(false)->comment('The entity that the entity preset relation belongs to');
             $table->unsignedInteger('version')->default(1)
                 ->comment('Incremental version number scoped to preset+entity');
-            $table->json('fields_snapshot')->nullable()
+            // Db2 creates the column NOT NULL at once: altering it afterwards leaves a Db2 LUW table reorg-pending.
+            $table->json('fields_snapshot')->nullable(! Db2Drivers::is($connection->getDriverName()))
                 ->comment('Frozen snapshot of the fields configuration at this version');
             $table->timestamp('created_at')->nullable()->useCurrent();
 
@@ -75,9 +76,6 @@ return new class extends Migration
         }
 
         if (Db2Drivers::is($this->connection()->getDriverName())) {
-            // The Db2 schema grammar cannot modify a column, so the constraint is set with the native statement.
-            $this->connection()->statement('ALTER TABLE ' . $this->table(CoreTables::Presettables->value) . ' ALTER COLUMN ' . $this->identifier('fields_snapshot') . ' SET NOT NULL');
-
             return;
         }
 
