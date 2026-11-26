@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Setting;
 use Modules\Core\Models\User;
 
@@ -47,4 +48,16 @@ it('quotes and finds a reserved-word column', function (): void {
 
     expect($reloaded->name)->toBe($name)
         ->and($reloaded->value)->toBe('stored');
+})->group('db2');
+
+it('reads indexes and foreign keys back through the catalog', function (): void {
+    $table = CoreTables::Taxonomies->value;
+    $indexes = collect(Schema::getIndexes($table))
+        ->mapWithKeys(static fn (array $index): array => [mb_strtolower((string) $index['name']) => array_map('mb_strtolower', $index['columns'])]);
+    $foreign_keys = collect(Schema::getForeignKeys($table))
+        ->mapWithKeys(static fn (array $foreign_key): array => [implode(',', array_map('mb_strtolower', $foreign_key['columns'])) => mb_strtolower((string) $foreign_key['foreign_table'])]);
+
+    expect($indexes->get($table . '_is_active_idx'))->toBe(['is_active'])
+        ->and($foreign_keys->get('entity_id'))->toBe(CoreTables::Entities->value)
+        ->and($foreign_keys->get('parent_id'))->toBe($table);
 })->group('db2');

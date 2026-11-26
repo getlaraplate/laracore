@@ -904,7 +904,8 @@ Tagged tests:
 | Module | Test | Covers |
 |--------|------|--------|
 | application | `tests/Feature/Db2/Db2MigrateFreshTest` | `migrate:fresh --seed` exits 0 (bare test case, no wrapping transaction) |
-| Core | `Feature/Db2/Db2SchemaTest` | transaction rollback, schema introspection of `users`, reserved-word column `value` |
+| application | `tests/Feature/Db2/Db2UnicodeRoundTripTest` | `città €✓ 日本` written and read back through a varchar and a text column |
+| Core | `Feature/Db2/Db2SchemaTest` | transaction rollback, schema introspection of `users`, indexes and foreign keys of `core_taxonomies`, reserved-word column `value` |
 | Core | `Feature/Db2/Db2QueueRoundTripTest` | a job pushed on the database queue and worked off |
 | Core | `Feature/Helpers/ModuleDatabaseActivatorChoicesTest` | `insertOrIgnore` through `ModuleDatabaseActivator` |
 | Core | `Feature/Authorization/InheritedPermissionTest` | permission and role columns |
