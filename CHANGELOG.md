@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-11-26
+
+### 🚀 Features
+
+- *(core)* Serialize closure-table writers and link parents missing from the closure
+
+### 🐛 Bug Fixes
+
+- *(core)* Take the hierarchy lock with a locking read before the snapshot read
+
 ## [2.0.1] - 2026-11-25
 
 ### 🐛 Bug Fixes
