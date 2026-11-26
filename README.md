@@ -67,6 +67,15 @@ Then, you can install the module by running the following command:
 php artisan module:install Core
 ```
 
+### IBM Db2 for i
+
+The `db2` connection (`config/database.php`) uses the `easi-power/laravel-db2` fork. It is registered only when `pdo_odbc` is loaded. To use it:
+
+-   install unixODBC and the `pdo_odbc` PHP extension;
+-   install the IBM i Access ODBC driver, an IBM download that is never committed to the repository;
+-   create the library with `CREATE SCHEMA`, so its tables are journaled, and set `DB_SCHEMA` to it;
+-   keep the commit mode at `*CHG` (`DB2_COMMIT_MODE=2`) or stricter.
+
 ## Keeping the `.env` aligned with `.env.example`
 
 A `.env` starts from `.env.example`. When an update adds variables to the example, the `.env` files already deployed do not get them. Run, after every update and on the production `.env`:
@@ -97,6 +106,11 @@ LOCKING_CAN_BE_UNLOCKED=						#comma separated list of classes exempt when the a
 
 #database
 DB_EMULATE_PREPARES=false						#pgsql: one round trip per query instead of prepare + execute (Overrides\PostgresConnection binds booleans for it)
+DB_SCHEMA=										#db2: the library (schema) that holds the tables; also the ODBC default library
+DB2_DRIVER=db2_ibmi_odbc						#db2: driver of the db2 connection (db2_ibmi_odbc, db2_ibmi_ibm, db2_expressc_odbc)
+DB2_ODBC_DRIVER={IBM i Access ODBC Driver}		#db2: name of the installed ODBC driver
+DB2_COMMIT_MODE=2								#db2: ODBC CommitMode, 2 = *CHG (commitment control; use *CHG or stricter)
+DB2_SERVER_VERSION=7.5							#db2: server version reported to the framework, spares a PDO server-version read
 
 #https
 FORCE_HTTPS=false								#enables HTTPS

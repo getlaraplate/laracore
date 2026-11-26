@@ -8,6 +8,7 @@ use Barryvdh\LaravelIdeHelper\IdeHelperServiceProvider;
 use BladeUI\Icons\Factory as IconFactory;
 use Carbon\CarbonImmutable;
 use Closure;
+use Easi\DB2\DB2ServiceProvider;
 use Elastic\Client\ClientBuilderInterface;
 use Elastic\Elasticsearch\Client as ElasticsearchClient;
 use Filament\Commands\FileGenerators\Resources\Pages\ResourceCreateRecordPageClassGenerator;
@@ -347,6 +348,12 @@ final class CoreServiceProvider extends ModuleServiceProvider
             && class_exists($oci8_validation_provider)) {
             $this->app->register($oci8_provider);
             $this->app->register($oci8_validation_provider);
+        }
+
+        $db2_provider = DB2ServiceProvider::class;
+
+        if (extension_loaded('pdo_odbc') && class_exists($db2_provider)) {
+            $this->app->register($db2_provider);
         }
 
         $this->registerMigrationOverrides();
