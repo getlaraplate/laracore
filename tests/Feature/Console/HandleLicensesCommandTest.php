@@ -359,15 +359,18 @@ it('reports a group of licenses as perpetual, active or expired by its expiry', 
 it('counts each expiry group under an alias that is no Db2 reserved word', function (): void {
     License::factory()->count(2)->create(['valid_to' => null]);
 
+    // Add none: the run reads the expiry groups, then stops at the requested number with success.
     SelectPrompt::fallbackWhen(true);
-    SelectPrompt::fallbackUsing(static fn (): string => 'list');
+    SelectPrompt::fallbackUsing(static fn (): string => 'add');
+    TextPrompt::fallbackWhen(true);
+    TextPrompt::fallbackUsing(static fn (): string => '0');
 
     $connection = (new License)->getConnection();
     $connection->flushQueryLog();
     $connection->enableQueryLog();
 
     $command = licensesCommandWithOutput();
-    expect($command->handle())->toBeIn([0, 1]);
+    expect($command->handle())->toBe(0);
 
     $grouping = collect($connection->getQueryLog())
         ->pluck('query')
@@ -376,5 +379,9 @@ it('counts each expiry group under an alias that is no Db2 reserved word', funct
 
     expect($grouping)->toBeString()
         ->and(preg_match('/ as "?(\w+)"?/', (string) $grouping, $alias))->toBe(1)
-        ->and(ReservedWords::contains($alias[1]))->toBeFalse();
+        ->and(ReservedWords::contains($alias[1]))->toBeFalse()
+        // Ordered by the grouped column: the key order lazy() adds by default is neither grouped nor aggregated,
+        // which Db2, PostgreSQL and MySQL with ONLY_FULL_GROUP_BY refuse.
+        ->and((string) $grouping)->toMatch('/order by "valid_to" asc/')
+        ->and((string) $grouping)->not->toMatch('/order by [^)]*"id"/');
 });

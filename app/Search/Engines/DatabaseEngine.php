@@ -268,14 +268,12 @@ final class DatabaseEngine extends BaseDatabaseEngine implements IReportsVectorS
             }
 
             foreach ([...$options->requiredTerms, ...$options->requiredPhrases] as $required) {
-                $query->where(function (EloquentBuilder $required_query) use ($builder, $columns, $required): void {
+                $query->where(function (EloquentBuilder $required_query) use ($builder, $columns, $required, $driver, $compiler): void {
                     foreach ($columns as $column) {
                         $qualified = $builder->model->qualifyColumn($column);
                         $wrapped = $required_query->getQuery()->getGrammar()->wrap($qualified);
-                        $required_query->orWhereRaw(
-                            sprintf('LOWER(%s) LIKE LOWER(?)', $wrapped),
-                            ['%' . $required . '%'],
-                        );
+                        $like = $compiler->like($driver, $wrapped, '%' . $required . '%');
+                        $required_query->orWhereRaw($like['sql'], $like['bindings']);
                     }
                 });
             }

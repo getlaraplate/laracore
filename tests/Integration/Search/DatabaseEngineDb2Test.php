@@ -9,6 +9,7 @@ use Illuminate\Database\SQLiteConnection;
 use Illuminate\Support\Facades\DB;
 use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Search\Engines\DatabaseEngine;
+use Modules\Core\Search\Services\TextMatchOptionsResolver;
 use Modules\Core\Support\Db2Drivers;
 use Modules\Core\Tests\Stubs\Database\Db2ConnectionStubModel;
 use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
@@ -58,7 +59,7 @@ it('compiles the portable keyword match on a Db2 model and skips the vector arm'
         (new DatabaseEngine)->search($builder);
     }, $driver);
 
-    expect(implode("\n", $sql))->toContain('LOWER(')->toContain('LIKE LOWER(?)');
+    expect(implode("\n", $sql))->toContain('LOWER(')->toContain('LIKE ?')->not->toContain('LOWER(?)');
 })->with(Db2Drivers::DRIVERS);
 
 it('keeps the vector path on a driver that has one', function (): void {
@@ -102,7 +103,7 @@ it('drops the vector wheres of a semantic search on Db2 and keeps the keyword ma
     $all = implode("\n", $sql);
 
     expect($all)->not->toContain('embedding')->not->toContain('"vector"')
-        ->and($all)->toContain('LIKE LOWER(?)')->toContain('and username = ?')
+        ->and($all)->toContain(') LIKE ?')->not->toContain('LOWER(?)')->toContain('and username = ?')
         ->and($builder->wheres)->toHaveCount(2);
 })->with([
     'embedding search' => ['embedding', false],
@@ -110,3 +111,25 @@ it('drops the vector wheres of a semantic search on Db2 and keeps the keyword ma
     'embedding paginate' => ['embedding', true],
     'vector paginate' => ['vector', true],
 ]);
+
+it('binds the required terms lower-cased, with no function around the marker, on Db2', function (): void {
+    $sql = '';
+    $bindings = [];
+
+    Db2PretendConnection::capture(static function () use (&$sql, &$bindings): void {
+        $model = (new DatabaseEngineSQLiteVectorSearchUser)->setConnection('db2_pretend');
+        $builder = new ScoutBuilder($model, 'consulente +Milano "Mario Rossi"');
+        $builder->options[TextMatchOptionsResolver::BUILDER_OPTION] = app(TextMatchOptionsResolver::class)
+            ->resolve('consulente +Milano "Mario Rossi"', 'tolerant')->options->toEngineArray();
+
+        $query = (new ReflectionMethod(DatabaseEngine::class, 'initializeSearchQuery'))
+            ->invoke(new DatabaseEngine, $builder, ['username', 'email'], [], []);
+        $sql = $query->toSql();
+        $bindings = $query->getBindings();
+    });
+
+    expect($sql)->toContain('LOWER(users.username) LIKE ?')
+        ->and($sql)->not->toContain('LOWER(?)')
+        ->and($bindings)->toContain('consulente%', '%milano%', '%mario rossi%')
+        ->and($bindings)->not->toContain('%Milano%');
+});

@@ -84,7 +84,27 @@ it('compiles a portable database fallback for every database driver', function (
     expect($compiled['sql'])->toBe('LOWER("documents"."title") LIKE LOWER(?)')
         ->and($compiled['bindings'])->toBe(['fattura%'])
         ->and($compiled['degraded'])->toBeTrue();
-})->with(['mysql', 'mariadb', 'sqlite', 'oracle', 'db2_ibmi_odbc', 'db2_ibmi_ibm', 'db2_expressc_odbc']);
+})->with(['mysql', 'mariadb', 'sqlite', 'oracle']);
+
+it('lower-cases the pattern in PHP on Db2, which refuses an untyped marker inside LOWER', function (string $driver): void {
+    $compiled = (new DatabaseTextMatchCompiler())->compile(
+        $driver,
+        '"documents"."title"',
+        'Fattura È',
+        new TextMatchOptions(),
+    );
+
+    expect($compiled['sql'])->toBe('LOWER("documents"."title") LIKE ?')
+        ->and($compiled['bindings'])->toBe(['fattura è%'])
+        ->and($compiled['degraded'])->toBeTrue();
+})->with(Modules\Core\Support\Db2Drivers::DRIVERS);
+
+it('keeps the database case folding of the pattern on every other driver', function (): void {
+    $compiled = (new DatabaseTextMatchCompiler())->compile('sqlite', '"documents"."title"', 'Fattura È', new TextMatchOptions());
+
+    expect($compiled['sql'])->toBe('LOWER("documents"."title") LIKE LOWER(?)')
+        ->and($compiled['bindings'])->toBe(['Fattura È%']);
+});
 
 it('compiles postgres trigram matching when typo tolerance is available', function (): void {
     $compiled = (new DatabaseTextMatchCompiler())->compile(

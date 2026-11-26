@@ -50,9 +50,12 @@ final class HandleLicensesCommand extends Command
                 $number = 0;
                 $valid_to = null;
 
+                // Ordered by the grouped column: without an order lazy() orders by the key, which is neither
+                // grouped nor aggregated and is refused by Db2, PostgreSQL and MySQL with ONLY_FULL_GROUP_BY.
                 $licenses_groups = License::query()->groupBy('valid_to')
                     ->select('valid_to')
                     ->selectRaw('count(*) as licenses_count')
+                    ->orderBy('valid_to')
                     ->lazy(100);
                 $licenses_count = $licenses_groups->reduce(static fn (int $total, License $group): int => $total + self::groupCount($group), 0);
 
