@@ -8,6 +8,7 @@ use Barryvdh\LaravelIdeHelper\IdeHelperServiceProvider;
 use BladeUI\Icons\Factory as IconFactory;
 use Carbon\CarbonImmutable;
 use Closure;
+use Easi\DB2\Database\ReservedWords;
 use Easi\DB2\DB2ServiceProvider;
 use Elastic\Client\ClientBuilderInterface;
 use Elastic\Elasticsearch\Client as ElasticsearchClient;
@@ -449,6 +450,38 @@ final class CoreServiceProvider extends ModuleServiceProvider
     }
 
     /**
+     * Whether a Filament column searches case-insensitively by Filament's `lower()` expression: true on a Db2
+     * model, null (Filament's default) everywhere else.
+     *
+     * Filament builds `lower({column})` from the raw column name, bypassing the grammar. On Db2 that loses the
+     * quoting of a reserved word, breaks a `->` JSON path, and applies `lower()` to an integer key, so those
+     * columns keep the default search.
+     */
+    private static function forcesDb2CaseInsensitiveSearch(Column $column): ?bool
+    {
+        $model = $column->hasTable() ? $column->getTable()->getModel() : null;
+
+        if (! is_string($model) || ! is_a($model, Model::class, true)) {
+            return null;
+        }
+
+        $instance = new $model;
+
+        if (! Db2Drivers::is($instance->getConnection()->getDriverName())) {
+            return null;
+        }
+
+        $name = $column->getName();
+        $last_segment = Str::afterLast($name, '.');
+
+        if (str_contains($name, '->') || ReservedWords::contains($last_segment) || $last_segment === $instance->getKeyName()) {
+            return null;
+        }
+
+        return true;
+    }
+
+    /**
      * Register Core's own importable entities into the shared registry. Other
      * modules register theirs the same way from their providers' boot.
      */
@@ -650,15 +683,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
 
         Column::configureUsing(
             static fn (Column $column): Column => $column->forceSearchCaseInsensitive(
-                static function () use ($column): ?bool {
-                    $model = $column->hasTable() ? $column->getTable()->getModel() : null;
-
-                    if (! is_string($model) || ! is_a($model, Model::class, true)) {
-                        return null;
-                    }
-
-                    return Db2Drivers::is((new $model)->getConnection()->getDriverName()) ? true : null;
-                },
+                static fn (): ?bool => self::forcesDb2CaseInsensitiveSearch($column),
             ),
         );
 

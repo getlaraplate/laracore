@@ -11,6 +11,7 @@ use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Services\TextMatchOptionsResolver;
 use Modules\Core\Support\Db2Drivers;
+use Modules\Core\Tests\Stubs\Database\Db2CodeKeyStubModel;
 use Modules\Core\Tests\Stubs\Database\Db2ConnectionStubModel;
 use Modules\Core\Tests\Stubs\Database\Db2PretendConnection;
 use Modules\Core\Tests\Stubs\Search\DatabaseEngineSQLiteVectorSearchUser;
@@ -81,6 +82,23 @@ it('forces case-insensitive column search when the table model is on a Db2 conne
         expect($column(Db2ConnectionStubModel::class)->isSearchForcedCaseInsensitive())->toBeTrue();
     });
 });
+
+it('leaves Filament\'s default search for Db2 columns lower() would break', function (string $name, string $model, ?bool $expected): void {
+    $column = TextColumn::make($name)->searchable()->table(
+        Table::make(Mockery::mock(HasTable::class))->query(static fn () => $model::query()),
+    );
+
+    Db2PretendConnection::capture(static function () use ($column, $expected): void {
+        expect($column->isSearchForcedCaseInsensitive())->toBe($expected);
+    });
+})->with([
+    'reserved word' => ['type', Db2ConnectionStubModel::class, null],
+    'qualified reserved word' => ['category.type', Db2ConnectionStubModel::class, null],
+    'json path' => ['meta->color', Db2ConnectionStubModel::class, null],
+    'id key' => ['id', Db2ConnectionStubModel::class, null],
+    'non-reserved key' => ['code', Db2CodeKeyStubModel::class, null],
+    'plain string column' => ['title', Db2ConnectionStubModel::class, true],
+]);
 
 it('drops the vector wheres of a semantic search on Db2 and keeps the keyword match', function (string $field, bool $paginate): void {
     $builder = null;
