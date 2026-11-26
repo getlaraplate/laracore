@@ -8,6 +8,8 @@ use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
 use Modules\Core\Services\Authorization\AuthorizationService;
 
+uses()->group('db2');
+
 /**
  * Roles inherit from one another, and `Role::hasPermission()` and `Role::getAllPermissions()` both
  * walk that chain. The user-level check did not: Spatie's `hasPermissionTo` asks whether the user

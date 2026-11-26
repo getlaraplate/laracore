@@ -882,6 +882,39 @@ lifecycle — and the `Integration` suite globs it.
 the way through. Run it as `php -d memory_limit=-1 vendor/bin/pest --compact`, or per
 suite.
 
+**Db2 test group:** the `db2` Pest group collects the tests that exercise what differs on a
+Db2 for i connection: schema build and introspection, real rollbacks, reserved-word columns,
+`insertOrIgnore`, JSON path wheres, soft deletes with `is_deleted`, a live unique index, the
+permission columns, a `/app` CRUD round trip and a queue round trip. The tag changes nothing
+in the default suite: tagged tests keep running on SQLite under `phpunit.xml` like any other.
+`phpunit.db2.xml` (application root) selects the group and sets `DB_CONNECTION=db2` without
+forcing `DB_HOST`, `DB_PORT`, `DB_URL` or `DB_READ_HOSTS`, so the connection comes from the
+shell or `.env` (`DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`,
+`DB_PREFIX`, `DB_SCHEMA`). The environment guard refuses a remote `DB_HOST` unless
+`ALLOW_REMOTE_TEST_DATABASE=1` is set knowingly.
+
+```bash
+composer test:db2                    # vendor/bin/pest -c phpunit.db2.xml --group=db2
+vendor/bin/pest --group=db2          # the same tests on SQLite, default configuration
+```
+
+Tagged tests:
+
+| Module | Test | Covers |
+|--------|------|--------|
+| application | `tests/Feature/Db2/Db2MigrateFreshTest` | `migrate:fresh --seed` exits 0 (bare test case, no wrapping transaction) |
+| Core | `Feature/Db2/Db2SchemaTest` | transaction rollback, schema introspection of `users`, reserved-word column `value` |
+| Core | `Feature/Db2/Db2QueueRoundTripTest` | a job pushed on the database queue and worked off |
+| Core | `Feature/Helpers/ModuleDatabaseActivatorChoicesTest` | `insertOrIgnore` through `ModuleDatabaseActivator` |
+| Core | `Feature/Authorization/InheritedPermissionTest` | permission and role columns |
+| Core | `Integration/SoftDeletes/SoftDeletesSwitchTest` | soft deletes with `is_deleted` |
+| CMS | `Feature/Models/CategoryTest` | taxonomy hierarchy and translation order |
+| ERP | `Feature/Services/MovementPostingServiceTest` | `meta->erp_role` JSON path where |
+| MES | `Feature/Machine/IdempotentWriterTest` | `insertOrIgnore` and its per-row fallback |
+| Shop | `Feature/ProductStoredPropertyFilterTest` | `/app` CRUD list with filters on extended content |
+| AI | `Feature/MediaAnalysis/MediaAnalysisModelTest` | live unique index on the content hash |
+| SAO | `Feature/Models/ProjectTest` | project model round trip |
+
 ### Code Quality Tools
 
 ```bash

@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Cache;
 use Modules\Core\Helpers\ModuleDatabaseActivator;
 use Modules\Core\Models\Module;
 
+uses()->group('db2');
+
 beforeEach(function (): void {
     config()->set('modules.cache.enabled', false);
     Cache::forget('modules_db_activator_statuses');

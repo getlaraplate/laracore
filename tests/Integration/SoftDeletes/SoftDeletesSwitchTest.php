@@ -13,6 +13,8 @@ use Modules\Core\Models\Setting;
 use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
 use Modules\Core\Tests\Stubs\SoftDeletesStubModel;
 
+uses()->group('db2');
+
 /*
  * Switching a table's soft deletes off deletes the rows in its bin for good: the settings page asks first with their
  * count, any save that switches it off queues the purge, and the purge does nothing when soft deletes are back on.
