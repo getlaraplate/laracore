@@ -73,7 +73,7 @@ The `db2` connection (`config/database.php`) uses the `easi-power/laravel-db2` f
 
 -   install unixODBC and the `pdo_odbc` PHP extension;
 -   install the IBM i Access ODBC driver, an IBM download that is never committed to the repository;
--   create the library with `CREATE SCHEMA`, so its tables are journaled, and set `DB_SCHEMA` to it;
+-   create the library with `CREATE SCHEMA`, so its tables are journaled, and set `DB_SCHEMA` to it: on Db2 for i `DB_SCHEMA` is the library that holds the tables, while `DB_DATABASE` is the relational database (RDB) name from `WRKRDBDIRE`, or empty for the local one. The application's Db2 tests stop at once when `DB_SCHEMA` is empty;
 -   keep the commit mode at `*CHG` (`DB2_COMMIT_MODE=2`) or stricter.
 
 ## Keeping the `.env` aligned with `.env.example`
