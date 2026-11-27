@@ -73,6 +73,7 @@ use UnexpectedValueException;
  * @property \Carbon\CarbonImmutable|null $updated_at
  * @property string $username The username of the user
  * @property string|null $lang The language of the user
+ * @property string|null $timezone The IANA timezone of the user, for example Europe/Rome
  * @property string|null $last_login_at The last login date of the user
  * @property int|null $license_id The license assigned to the user
  * @property string|null $two_factor_recovery_codes The two factor recovery codes of the user
@@ -152,6 +153,7 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
         'email',
         'password',
         'lang',
+        'timezone',
         'email_verified_at',
         'license_id',
         'social_id',
@@ -515,6 +517,7 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
         // would need to be added there or we use array-based rules for now
         $rules[self::DEFAULT_RULE] = array_merge($rules[self::DEFAULT_RULE], [
             'lang' => ['nullable', 'in:' . implode(',', config('app.available_locales', translations()))],
+            'timezone' => ['nullable', 'timezone:all'],
             'locked_at' => ['nullable', 'date'],
         ]);
 
