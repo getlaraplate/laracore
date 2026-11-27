@@ -63,6 +63,7 @@ use Modules\Core\Cache\Labels\MeasuredLabelIndex;
 use Modules\Core\Cache\Labels\PendingLabelFlushes;
 use Modules\Core\Console\PruneCacheLabelsCommand;
 use Modules\Core\Console\PruneMediaDraftsCommand;
+use Modules\Core\Console\PruneSearchQueryStatsCommand;
 use Modules\Core\Console\WarmCacheCommand;
 use Modules\Core\Contracts\BootSampler;
 use Modules\Core\Contracts\ICacheLabelIndex;
@@ -400,6 +401,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
             $schedule = $this->app->make(Schedule::class);
 
             $schedule->command(PruneMediaDraftsCommand::class)->daily()->onOneServer();
+            $schedule->command(PruneSearchQueryStatsCommand::class)->daily()->onOneServer();
 
             // Housekeeping only: expiry is evaluated on read, so a missed run changes nothing.
             $schedule->command(ModelLockSweepCommand::class)->everyFiveMinutes()->onOneServer();
