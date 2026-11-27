@@ -118,6 +118,9 @@ final class CoreDatabaseSeeder extends Seeder implements DeclaresSeedDependencie
             self::setting('search.adaptive_tuning', false, SettingTypeEnum::Boolean, 'search', 'Apply the committed retrieval tuning profile (config/search_tuning.php) per query class; off keeps the fixed planner values'),
             self::setting('search.max_retries', 2, SettingTypeEnum::Integer, 'search', 'Most times a search request may ask to search again after a poor result (the retry parameter is clamped to this)'),
             self::setting('search.deep_per_minute', 6, SettingTypeEnum::Integer, 'search', 'Deep searches one person may start per minute; beyond it the search is served as fast and says rate_limited'),
+            self::setting('search.registry.enabled', false, SettingTypeEnum::Boolean, 'search', 'Record daily aggregates of what guests and readers search (no user, IP or session; queries holding an email, a UUID, an identifier or a number are never stored)'),
+            self::setting('search.registry.retention_days', 90, SettingTypeEnum::Integer, 'search', 'Days the search registry keeps its daily aggregates before they are pruned'),
+            self::setting('search.registry.low_results_threshold', 5, SettingTypeEnum::Integer, 'search', 'A search that returns fewer results than this counts as a low-result search in the registry'),
             self::setting('search.debug_timings', false, SettingTypeEnum::Boolean, 'search', 'Developer diagnostics: add per-stage search timings (intent, plan, vector, ensemble, total, in ms) to the search response meta'),
         ];
     }
