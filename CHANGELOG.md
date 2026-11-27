@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-11-27
+
+### 🚀 Features
+
+- *(tests)* Add db2-spike.php for testing DB2 ODBC connections and schema management
+
 ## [2.2.1] - 2026-11-27
 
 ### 🐛 Bug Fixes
