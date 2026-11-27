@@ -113,8 +113,8 @@ Nested calls restore the previous state rather than switching the guard back on 
 
 **A revert checks the lock of the whole record before it writes.** The guard sees one model's row, and a
 revert also rewrites the record's translations and relations, which carry no lock of their own: a revert
-that changed only a title would leave the row clean and walk past it. `HasVersions::revertToVersion()`
-therefore asks `HasLocks::blocksWritesByCurrentUser()` first, after the version set has reread the row
+that changed only a title would leave the row clean and walk past it. A revert (`RevisionReverter`, behind
+`revertToRevision()` and `revertToVersion()`) therefore asks `HasLocks::blocksWritesByCurrentUser()` first, after the version set has reread the row
 under `FOR UPDATE`, so a lock taken since the model was loaded counts too, and throws
 `LockedModelException` before anything is written. The rule is the guard's: the holder of a lease may
 revert, anybody else is refused, a freeze refuses everybody, and only a forced unlock (`forceUnlock()`,
