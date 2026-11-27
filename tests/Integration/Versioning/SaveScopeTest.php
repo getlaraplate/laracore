@@ -132,7 +132,7 @@ it('lets the save of a revert join the revert scope instead of opening its own',
     $document->update(['code' => 'changed']);
     $before = VersionSet::query()->max('id');
 
-    $document->revertToVersion($created->getKey());
+    $document->revertToVersion($created->getKey(), (int) $document->currentRevision());
 
     $set = VersionSet::query()->where('id', '>', $before)->sole();
 

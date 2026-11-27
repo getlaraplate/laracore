@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Versioning;
 
+use Illuminate\Database\Eloquent\Model;
 use LogicException;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionSetKind;
@@ -76,6 +77,24 @@ final class ActiveVersionSet
     public function options(): VersionSetOptions
     {
         return $this->options;
+    }
+
+    /**
+     * Whether this set is a revert: the context in which a change restores what was, so nothing derived from it, such
+     * as an automatic translation, is redone (D36). It lives as long as the revert and ends with it, also on failure.
+     */
+    public function isRevert(): bool
+    {
+        return $this->options->kind === VersionSetKind::Revert;
+    }
+
+    /**
+     * Whether this set is a revert of that very instance: its own save is then the revert writing, which a guard of
+     * ordinary writes reads differently (a record in the bin may be reverted, and the revert has its own permission).
+     */
+    public function isRevertOf(Model $model): bool
+    {
+        return $this->isRevert() && $this->root->model() === $model;
     }
 
     public function connectionName(): string

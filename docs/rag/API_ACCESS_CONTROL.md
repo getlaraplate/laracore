@@ -171,8 +171,13 @@ keys and aggregates.
 - **Pending modifications** (`modifications`, the values somebody proposed and nobody approved) are readable only by a
   caller holding the parent entity's `update` or `approve` permission on the request's guard: others get the relation
   omitted when it is appended or default, and `403`/`401` when explicitly requested.
-- **History** (`/api/v1/history/{entity}`) needs the entity's `update` or `approve` permission, like the pending
-  modifications, because versions hold pre-publication drafts. The `record` is serialized through the model, so hidden
+- **History** (`/api/v1/history/{entity}`) needs the entity's `select` and `history` permissions, or `revert`, which
+  implies `history` (D27): versions show who changed what and the past values, pre-publication drafts included.
+  **Revert** (`/api/v1/revert/{entity}`) needs `revert`, and is looked up within that permission's ACL; the save of
+  the revert is governed by `revert`, so a writer needs no `update` for it. The pending modifications that the history
+  answer could carry stay for who holds `update` or `approve`. Both verbs are
+  generated for every versioned model (`permissions:refresh`), and are noted as inert while the table's versioning is
+  switched off. The `record` is serialized through the model, so hidden
   attributes and the media projection apply; history rows carry no nested copy of the record. Tree and history reads apply
   the root entity's ACL to the nodes and versions they return.
 - **Partial relations are declared.** On `detail`, a relation the related ACL narrowed carries
@@ -379,6 +384,9 @@ backoffice refuses the flag on an account named like the guest.
    anonymous `/app` session read those entities. The anonymous user is cached (`anonymous_user.{name}`): clear the cache
    after seeding if it was cached before its roles existed.
 5. CMS search indexes need a rebuild (see the CMS README).
+6. Reading a record's history needs `history` (or `revert`) since the revert landed; `update` or `approve` no longer
+   grants it. No seeded role read the history through them, but a role you created that did now needs `history` granted
+   after `php artisan permissions:refresh`.
 
 ## FAQ prompts for RAG
 

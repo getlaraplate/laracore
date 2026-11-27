@@ -29,7 +29,7 @@ it('marks a revert as a Revert version set pointing at the restored set', functi
 
     $target = $article->versions()->orderBy('id')->firstOrFail();
 
-    $article->revertToVersion($target->getKey());
+    $article->revertToVersion($target->getKey(), (int) $article->currentRevision());
 
     $revert_version = Version::query()->latest('id')->firstOrFail();
     $revert_set = VersionSet::query()->findOrFail($revert_version->version_set_id);

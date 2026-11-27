@@ -257,7 +257,8 @@ final class ModificationVoteService
 
         return $modification->modifiable()
             ->withoutGlobalScope(PendingDeletionStrategy::HIDE_SCOPE)
-            ->when($modification->operation === Operation::Restore, static fn (Builder $query): Builder => $query->withTrashed())
+            // A restore targets a trashed record, and so may a revert, which leaves the bin alone.
+            ->when(in_array($modification->operation, [Operation::Restore, Operation::Revert], true), static fn (Builder $query): Builder => $query->withTrashed())
             ->first();
     }
 

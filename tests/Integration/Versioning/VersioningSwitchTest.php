@@ -7,6 +7,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
@@ -249,7 +250,7 @@ it('reverts to the baseline written after versioning is back on, translations in
     $anchor = $baseline->versions()->whereNull('relation_path')->where('version_strategy', VersionStrategy::SNAPSHOT->value)->sole();
     $document->update(['code' => 'later']);
 
-    $document->revertToVersion($anchor->getKey());
+    $document->revertToVersion($anchor->getKey(), (int) $document->currentRevision());
 
     $document->refresh();
 
@@ -274,9 +275,46 @@ it('writes a baseline with every link at the first save after versioning is back
         ->and($untouched->currentRevision())->toBeNull();
 
     $root->update(['title' => 'Third']);
-    $root->restoreToRevision($baseline->getKey(), (int) $root->currentRevision());
+    $root->revertToRevision($baseline->getKey(), (int) $root->currentRevision(), RevertMode::Scalar);
     $root->refresh();
 
     expect($root->title)->toBe('Second')
         ->and($root->categories()->orderBy('position')->pluck('name')->all())->toBe(['A', 'B']);
+});
+
+it('reverts the translations to a baseline image, replaying from the image only', function (): void {
+    $document = TranslatedDocument::query()->create(['code' => 'doc', 'title' => 'Title']);
+    $document->setTranslation('it', ['title' => 'Titolo', 'body' => 'Testo']);
+    $document->save();
+    switch_off_and_on(TranslatedDocument::TABLE);
+    $document->update(['code' => 'anchored']);
+    $baseline = (int) switch_sets_of($document)->sole()->getKey();
+    $locales = $document->translations()->orderBy('locale')->get()->mapWithKeys(fn (TranslatedDocumentTranslation $translation): array => [$translation->locale => $translation->only(['title', 'body'])])->all();
+
+    $document->setTranslation('it', ['title' => 'Titolo nuovo']);
+    $document->setTranslation('fr', ['title' => 'Titre', 'body' => 'Corps']);
+    $document->refresh();
+
+    $document->revertToRevision($baseline, (int) $document->currentRevision(), RevertMode::OwnedPart);
+
+    expect($document->translations()->orderBy('locale')->get()->mapWithKeys(fn (TranslatedDocumentTranslation $translation): array => [$translation->locale => $translation->only(['title', 'body'])])->all())
+        ->toBe($locales);
+});
+
+it('reverts the links to a baseline image, replaying from the image only', function (): void {
+    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
+    [$a, $b, $c] = collect(['A', 'B', 'C'])->map(fn (string $name): VersionedRelationSubject => VersionedRelationSubject::query()->create(['name' => $name]))->all();
+    $root->categories()->attach($a->getKey(), ['position' => 1]);
+    $root->categories()->attach($b->getKey(), ['position' => 2]);
+    switch_off_and_on(VersionedRelationRoot::TABLE);
+    $root->update(['title' => 'Second']);
+    $baseline = (int) switch_sets_of($root)->sole()->getKey();
+
+    $root->categories()->detach($a->getKey());
+    $root->categories()->attach($c->getKey(), ['position' => 3]);
+
+    $report = $root->revertToRevision($baseline, (int) $root->currentRevision(), RevertMode::Link);
+
+    expect($root->categories()->orderBy('position')->pluck('name')->all())->toBe(['A', 'B'])
+        ->and($report->restoredRelations)->toBe(['categories']);
 });

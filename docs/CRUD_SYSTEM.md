@@ -23,7 +23,7 @@ The CRUD system provides a **dynamic, entity-agnostic** API for Create, Read, Up
 
 ```mermaid
 flowchart TD
-    controller["CrudController<br/>routes HTTP requests to CrudService<br/>list(): ListRequest → ListRequestData<br/>detail(): DetailRequest → DetailRequestData<br/>insert(): ModifyRequest → ModifyRequestData<br/>update(): ModifyRequest → ModifyRequestData<br/>delete(): ModifyRequest → ModifyRequestData<br/>history(): HistoryRequest → HistoryRequestData<br/>tree(): TreeRequest → TreeRequestData"]
+    controller["CrudController<br/>routes HTTP requests to CrudService<br/>list(): ListRequest → ListRequestData<br/>detail(): DetailRequest → DetailRequestData<br/>insert(): ModifyRequest → ModifyRequestData<br/>update(): ModifyRequest → ModifyRequestData<br/>delete(): ModifyRequest → ModifyRequestData<br/>history(): HistoryRequest → HistoryRequestData<br/>revert(): RevertRequest → RevertRequestData<br/>tree(): TreeRequest → TreeRequestData"]
     service["CrudService<br/>orchestrates CRUD operations<br/>uses AuthorizationService for permissions and ACL<br/>uses QueryBuilder for query preparation<br/>returns CrudResult with data and metadata"]
     auth["AuthorizationService<br/>ensurePermission()<br/>injectAclFilters()<br/>applyAclFiltersToQuery()"]
     qb["QueryBuilder<br/>prepareQuery()<br/>applyFilters()"]
@@ -52,7 +52,8 @@ flowchart TD
 |----------|--------|-------------|
 | `/api/v1/select/{module}/{entity}` | GET, POST | List records with filtering/pagination |
 | `/api/v1/detail/{module}/{entity}` | GET | Get single record by primary key |
-| `/api/v1/history/{module}/{entity}` | GET | Get record with version history (needs `update` or `approve` on the entity) |
+| `/api/v1/history/{module}/{entity}` | GET | Get record with version history (needs `select` and `history` or `revert` on the entity) |
+| `/api/v1/revert/{module}/{entity}` | POST | Revert one record to a revision (needs `revert`; see [Revert Route](#revert-route)) |
 | `/api/v1/tree/{module}/{entity}` | GET | Get hierarchical record (ancestors/descendants) |
 | `/api/v1/aggregate/{module}/{entity}` | GET, POST | Counts, sums, averages, minima and maxima, by group or time bucket (see [Aggregate Route](#aggregate-route)) |
 
@@ -80,6 +81,14 @@ pivot rows untouched, additions and removals are computed on the visible subset,
 an id the writer cannot read (hidden or nonexistent) answers `403` and rolls the save back. A
 relation whose related entity the writer may not select at all cannot be synced. Parts of the
 parent (`IsPartOfParent`) sync as before. See [Related records](#related-records).
+
+**The membership the form loaded.** A form that shows a relation sends, next to its new ids, the ids it loaded:
+`{ "id": 5, "relations": { "tags": [1, 3] }, "expected_relations": { "tags": [1, 2] } }`. Inside the write, the record
+locked, each synced relation that has an expected list is compared with the related records the writer can read now,
+order ignored; a difference answers `409` and writes nothing, the record's columns included (D40). It is per
+relation: a tag added meanwhile by somebody else does not block a save that changes only the categories, and a
+relation sent without an expected list syncs as before. `lock_version` keeps protecting the record's own fields and is
+not raised by a relation change.
 
 #### Role-scoped ACLs and dynamic placeholders
 
@@ -352,8 +361,8 @@ hits through the same relation handling.
 - **Pending modifications.** The `modifications` relation holds proposed, unapproved values. It is returned
   only to a caller holding the parent entity's `update` or `approve` permission on the request's guard,
   token abilities included: others get it omitted when appended or default, `403`/`401` when requested.
-- **History.** `GET /api/v1/history/{module}/{entity}` needs the entity's `update` or `approve` permission,
-  because versions hold pre-publication drafts. The `record` is serialized through the model (hidden
+- **History.** `GET /api/v1/history/{module}/{entity}` needs the entity's `select` and `history` permissions
+  (`revert` implies `history`), because versions show who changed what and the past values, drafts included. The `record` is serialized through the model (hidden
   attributes and media projection apply) and history rows carry no nested copy of it.
 - **Partial relations.** On `detail`, a relation the related ACL narrowed is declared in
   `meta.relations.{name}.hidden`, the number of related records left out, so a client can warn before
@@ -729,7 +738,7 @@ the request (two tokens carry different abilities) and the locale of the request
 answers without querying.
 
 **Permission check on a hit.** A hit still runs `CrudService::authorizeCachedRead()`: the `select` permission on the
-entity, the right to see pending changes for a history read, and the permission on every relation the request names.
+entity, the right to read the history (`history` or `revert`) for a history read, and the permission on every relation the request names.
 A caller who lost a permission is refused even when no invalidation reached the entry.
 
 **Opting a model in.** Before a model gets `HasCache`, check what its ACL filters can name. ACL filters are runtime
@@ -1652,3 +1661,26 @@ Contract covered by `tests/Feature/Controllers/CrudFreshnessTest.php`.
 - [API access control](./rag/API_ACCESS_CONTROL.md) - Guards, tokens, default roles, related records, media projection
 - [Permissions](./PERMISSIONS.md) - Permission system
 - [Roles](./ROLES.md) - Role hierarchy
+
+## Revert Route
+
+`POST /api/v1/revert/{module}/{entity}` reverts one record to a revision of its history,
+as one `Revert` version set (Core `docs/rag/MODULE.md`, *Reverting to a revision*).
+
+```json
+{ "id": 5, "revision": 120, "expected_revision": 131, "mode": "complete", "force": false }
+```
+
+- `revision`: the version set to go back to; `expected_revision`: the record's current revision as the client read it
+  (`currentRevision()`, the latest `version_set_id` of its history). `mode` is `scalar`, `link`, `owned_part` or
+  `complete` (default); `force` skips a referenced record that no longer exists instead of refusing.
+- Needs `revert` on the entity; the record is looked up within the `revert` permission's ACL, the bin included, and a
+  revert leaves the bin alone. A record outside the ACL answers `404` like a missing one.
+- `200`: `data.record` is the record after the revert, `data.revert` holds `target_revision`, `revision` (the revert set,
+  null when nothing changed), `mode`, `partial`, `restored_relations`, `skipped_columns`, `skipped_subjects`.
+- `202`: the model asks approval of the writer, and the revert became one request (`data.modification`,
+  `data.operation` `revert`); approving it runs the revert with the expected revision it carries.
+- `409`: the record moved past `expected_revision`. `422`: the revert is refused, `data.reason` naming why (`not-a-revision-of-this-record`,
+  `no-complete-anchor`, `incomplete-coverage`, `not-atomic`, `epoch-changed`, `unsupported-relation`, `not-versioned`)
+  or a referenced record is gone without `force`. `423`: somebody else holds the record's lock.
+

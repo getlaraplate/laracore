@@ -61,6 +61,10 @@ final class ModifyRequest extends CrudRequest implements IParsableRequest
             'relations' => ['sometimes', 'array'],
             'relations.*' => ['array'],
             'relations.*.*' => ['integer'],
+            // The membership the form loaded, per relation it syncs: a sync is refused when it changed (D40).
+            'expected_relations' => ['sometimes', 'array'],
+            'expected_relations.*' => ['array'],
+            'expected_relations.*.*' => ['integer'],
         ];
 
         /** @phpstan-ignore method.notFound */

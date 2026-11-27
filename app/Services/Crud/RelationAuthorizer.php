@@ -189,6 +189,16 @@ final class RelationAuthorizer
     }
 
     /**
+     * Whether the caller may read the history of a record: it holds `history`, or `revert`, which implies it (D27), on
+     * the request's guard and within the abilities of its token. Reading the record itself (`select`) is checked apart.
+     */
+    public function mayReadHistory(Request $request, Model $record): bool
+    {
+        return $this->allows($request, $record, ActionEnum::History->value)
+            || $this->allows($request, $record, ActionEnum::Revert->value);
+    }
+
+    /**
      * {@see maySeePendingChanges()} for a model serializing itself (the approvals preview), which has no request of
      * its own. With no acting user (console, queue) there is no caller to hide them from.
      */

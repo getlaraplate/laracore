@@ -28,9 +28,12 @@ final class VersionedDocument extends Model implements IVersionedModel
 
     protected $guarded = [];
 
-    protected VersionStrategy $versionStrategy = VersionStrategy::DIFF;
+    protected ?VersionStrategy $versionStrategy = VersionStrategy::DIFF;
 
-    public function useVersionStrategy(VersionStrategy $strategy): void
+    /**
+     * Null leaves the choice to the table's setting, off when there is none.
+     */
+    public function useVersionStrategy(?VersionStrategy $strategy): void
     {
         $this->versionStrategy = $strategy;
     }

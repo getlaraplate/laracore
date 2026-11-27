@@ -428,7 +428,7 @@ trait HasTranslations
 
             // Emit event instead of dispatching job directly
             // AI listener will handle the translation job
-            event(new TranslatedModelSaved($model));
+            event(TranslatedModelSaved::ofCurrentSave($model));
         });
 
         static::updated(function (Model $model): void {
@@ -444,7 +444,7 @@ trait HasTranslations
 
             // Emit event instead of dispatching job directly
             // AI listener will handle the translation job
-            event(new TranslatedModelSaved($model, [], true));
+            event(TranslatedModelSaved::ofCurrentSave($model, [], true));
         });
     }
 

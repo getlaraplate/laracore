@@ -62,6 +62,9 @@ final readonly class PermissionEnforcement
             ActionEnum::Restore->value => $this->isOff(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table_name)
                 ? $this->inert('soft_deletes', $table_name)
                 : null,
+            ActionEnum::History->value, ActionEnum::Revert->value => $this->isOff(CoreDatabaseSeeder::VERSIONING_NAME_PREFIX, $table_name)
+                ? $this->inert('versioning', $table_name)
+                : null,
             ActionEnum::Delete->value => $this->isOff(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $table_name)
                 ? $this->changed('hard_delete', $table_name)
                 : null,
@@ -118,6 +121,10 @@ final readonly class PermissionEnforcement
     {
         if ($prefix === CoreDatabaseSeeder::LOCK_NAME_PREFIX) {
             return class_uses_trait($model, HasLocks::class) && $model->locksEnabledBySettings();
+        }
+
+        if ($prefix === CoreDatabaseSeeder::VERSIONING_NAME_PREFIX) {
+            return method_exists($model, 'getVersionStrategy') && $model->getVersionStrategy() !== false;
         }
 
         return class_uses_trait($model, SoftDeletes::class)

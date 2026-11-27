@@ -425,6 +425,7 @@ return [
             'inert' => 'Nicht angewendet',
             'locking' => 'Die Datensatzsperre ist für :table ausgeschaltet, daher gewährt diese Berechtigung nichts, bis sie wieder eingeschaltet wird.',
             'soft_deletes' => 'Das logische Löschen ist für :table ausgeschaltet, daher gibt es nichts wiederherzustellen und diese Berechtigung gewährt nichts, bis es wieder eingeschaltet wird.',
+            'versioning' => 'Die Versionierung ist für :table ausgeschaltet, daher gibt es keinen Verlauf zum Lesen oder Zurücksetzen und diese Berechtigung gewährt nichts, bis sie wieder eingeschaltet wird.',
         ],
     ],
     'sections' => [

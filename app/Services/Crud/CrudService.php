@@ -37,6 +37,7 @@ use LogicException;
 use Modules\Core\Approvals\PendingDeletionStrategy;
 use Modules\Core\Authorization\RetrievedSelectGuard;
 use Modules\Core\Cache\Repository as CacheRepository;
+use Modules\Core\Casts\ActionEnum;
 use Modules\Core\Casts\ColumnType;
 use Modules\Core\Casts\CrudRequestData;
 use Modules\Core\Casts\DetailRequestData;
@@ -45,6 +46,7 @@ use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\HistoryRequestData;
 use Modules\Core\Casts\ListRequestData;
 use Modules\Core\Casts\ModifyRequestData;
+use Modules\Core\Casts\RevertRequestData;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\SelectRequestData;
@@ -110,6 +112,7 @@ use Modules\Core\Support\ComputedColumnGuard;
 use Modules\Core\Support\PermissionName;
 use Modules\Core\Support\ReadableColumnGuard;
 use Modules\Core\Support\RelationGuard;
+use Modules\Core\Versioning\Exceptions\MembershipConflictException;
 use ReflectionMethod;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
@@ -713,6 +716,57 @@ class CrudService
         };
     }
 
+    /**
+     * Reverts one record to a revision (D56, D62): `revert` on the entity and the record within its ACL, in the bin
+     * included, since a revert leaves the bin alone (D61). A revert that needs approval answers 202 with the request.
+     */
+    public function revert(RevertRequestData $requestData): CrudResult
+    {
+        $model = $requestData->model;
+
+        throw_unless($this->hasHistory($model), BadMethodCallException::class, sprintf("'%s' doesn't have history handling", $requestData->mainEntity));
+        $this->assertCrudWriteAllowed($model, 'update');
+
+        $permission_name = $this->auth->ensurePermission(
+            $requestData->request,
+            $model->getTable(),
+            ActionEnum::Revert->value,
+            $model->getConnectionName(),
+        );
+
+        $query = $this->queryOfRequestedKey($model, $requestData->request, 'revert');
+        $traits = class_uses_recursive($model::class);
+
+        if (in_array(CoreSoftDeletes::class, $traits, true)) {
+            $query->withoutGlobalScope(CustomSoftDeletingScope::class);
+        } elseif (in_array(EloquentSoftDeletes::class, $traits, true)) {
+            $query->withoutGlobalScope(SoftDeletingScope::class);
+        }
+
+        $this->auth->applyAclFiltersToQuery($query, $permission_name);
+        $record = $query->sole();
+
+        /** @var Model&HasVersions $record */
+        $report = $record->revertToRevision($requestData->revision, $requestData->expectedRevision, $requestData->mode, $requestData->force);
+
+        if ($report->pendingRequest instanceof Modification) {
+            return $this->capturedResult([$report->pendingRequest]);
+        }
+
+        return new CrudResult(data: [
+            'record' => $record->fresh() ?? $record,
+            'revert' => [
+                'target_revision' => $report->targetRevision,
+                'revision' => $report->revision,
+                'mode' => $report->mode->value,
+                'partial' => $report->isPartial(),
+                'restored_relations' => $report->restoredRelations,
+                'skipped_columns' => $report->skippedColumns,
+                'skipped_subjects' => $report->skippedSubjects,
+            ],
+        ]);
+    }
+
     public function history(HistoryRequestData $requestData): CrudResult
     {
         $model = $requestData->model;
@@ -727,11 +781,11 @@ class CrudService
             $model->getConnectionName(),
         );
 
-        // The versions hold the values as they were before they were published, and the raw attributes of the
-        // record: they are editorial data, for who may change or approve the entity, as the pending changes are.
-        // The answer is the same whether the record is hidden by its ACL or does not exist, because it comes first.
+        // The history shows who changed what and the past values: it needs `history` (or `revert`, which implies
+        // it) besides `select` (D27). The answer is the same whether the record is hidden by its ACL or does not
+        // exist, because it comes first.
         throw_unless(
-            $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model),
+            $this->relationAuthorizer()->mayReadHistory($requestData->request, $model),
             AuthorizationException::class,
             'User not allowed to access this resource',
         );
@@ -756,7 +810,9 @@ class CrudService
             }
         });
 
-        if (! preview() && $this->useHasApproval($model)) {
+        // The proposed values waiting for approval are for who may change or approve the record, not for every reader
+        // of its history.
+        if (! preview() && $this->useHasApproval($model) && $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model)) {
             $query->with('modifications');
         }
 
@@ -868,7 +924,7 @@ class CrudService
 
     /**
      * The permission checks a read runs before it queries, for a response served from the cache: the select
-     * permission on the entity, the right to see pending changes for a history read, and the permission on every
+     * permission on the entity, the right to read the history for a history read, and the permission on every
      * relation the request names. A lost permission refuses a cached response even when no invalidation reached it.
      *
      * @throws AuthorizationException when the caller may no longer read what the request asks for
@@ -887,7 +943,7 @@ class CrudService
 
         if ($requestData instanceof HistoryRequestData) {
             throw_unless(
-                $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model),
+                $this->relationAuthorizer()->mayReadHistory($requestData->request, $model),
                 AuthorizationException::class,
                 'User not allowed to access this resource',
             );
@@ -939,6 +995,7 @@ class CrudService
         $changes = $requestData->changes;
         $discarded_values = $this->removeNonFillableProperties($model, $changes);
         $relations = $this->resolveSyncableRelations($model, $requestData->relations, $requestData->request);
+        $expected_relations = array_intersect_key($requestData->expectedRelations, $relations);
 
         $updated_records = new Collection();
         $captured = [];
@@ -946,7 +1003,7 @@ class CrudService
         $lock_version = $this->requestedLockVersion($requestData);
         $request = $requestData->request;
 
-        $model->getConnection()->transaction(function () use ($found_records, $updated_records, $changes, $relations, $lock_version, $request, &$found_count, &$captured): void {
+        $model->getConnection()->transaction(function () use ($found_records, $updated_records, $changes, $relations, $expected_relations, $lock_version, $request, &$found_count, &$captured): void {
             foreach ($found_records as $found_record) {
                 $found_count++;
 
@@ -957,7 +1014,10 @@ class CrudService
                 }
 
                 // The record and its relations are one revision of it (D42).
-                $write = function () use ($found_record, $changes, $relations, $request, &$captured): bool {
+                $write = function () use ($found_record, $changes, $relations, $expected_relations, $request, &$captured): bool {
+                    // Compared before any write, the record locked by its revision scope (D40).
+                    $this->assertExpectedMembership($request, $found_record, $expected_relations);
+
                     /** @psalm-suppress InvalidArgument */
                     $mutated = (bool) $found_record->update($changes);
                     $pending = $mutated ? null : $this->pendingRequestOf($found_record);
@@ -2401,6 +2461,66 @@ class CrudService
         }
 
         return $resolved;
+    }
+
+    /**
+     * Refuses the save when a relation it syncs no longer holds the related records the client loaded, compared on the
+     * records the writer can read, order ignored (D40). A relation without an expected membership is not compared.
+     *
+     * @param  array<string, mixed>  $expected
+     *
+     * @throws MembershipConflictException
+     */
+    private function assertExpectedMembership(Request $request, Model $record, array $expected): void
+    {
+        foreach ($expected as $name => $ids) {
+            $relation = $record->{$name}();
+
+            if (! $relation instanceof BelongsToMany || ! is_array($ids)) {
+                continue;
+            }
+
+            $normalize = static function (array $values): array {
+                $strings = array_map(static fn (mixed $value): string => is_scalar($value) ? (string) $value : '', $values);
+                sort($strings);
+
+                return array_values(array_unique($strings));
+            };
+            $current = $this->readableAttachedIds($request, $record, $relation);
+
+            throw_if(
+                $normalize($ids) !== $normalize($current),
+                new MembershipConflictException($name, array_values($ids), $current),
+            );
+        }
+    }
+
+    /**
+     * The ids attached through a relation that the writer can read: what a form showed it.
+     *
+     * @param  BelongsToMany<Model, Model>  $relation
+     * @return list<int|string>
+     */
+    private function readableAttachedIds(Request $request, Model $record, BelongsToMany $relation): array
+    {
+        /** @var list<int|string> $attached */
+        $attached = $relation->newPivotQuery()->pluck($relation->getRelatedPivotKeyName())->all();
+        $related = $relation->getRelated();
+        $key = $relation->getRelatedKeyName();
+        $visible = $this->relationAuthorizer()->visibleKeysQuery($request, $record, $related, $key);
+
+        if (! $visible instanceof Builder || $attached === []) {
+            return $attached;
+        }
+
+        /** @var list<int|string> $readable */
+        $readable = $related->newQueryWithoutScopes()
+            ->whereIn($related->qualifyColumn($key), $attached)
+            ->whereIn($related->qualifyColumn($key), $visible->toBase())
+            ->pluck($key)
+            ->all();
+
+        return $readable;
     }
 
     /**

@@ -45,7 +45,7 @@ it('refuses a revert of a record locked by somebody else, before any write', fun
     $this->article->lockBy(User::factory()->create(), now()->addHour());
     $this->actingAs(User::factory()->create());
 
-    expect(fn () => $this->article->revertToVersion($this->target->getKey()))->toThrow(LockedModelException::class)
+    expect(fn () => $this->article->revertToVersion($this->target->getKey(), (int) $this->article->currentRevision()))->toThrow(LockedModelException::class)
         ->and($this->article->fresh()->title)->toBe('Second')
         ->and(revert_sets())->toBe(0);
 });
@@ -54,7 +54,7 @@ it('refuses a revert of a frozen record to everybody', function (): void {
     $this->article->lock();
     $this->actingAs(User::factory()->create());
 
-    expect(fn () => $this->article->revertToVersion($this->target->getKey()))->toThrow(LockedModelException::class)
+    expect(fn () => $this->article->revertToVersion($this->target->getKey(), (int) $this->article->currentRevision()))->toThrow(LockedModelException::class)
         ->and($this->article->fresh()->title)->toBe('Second');
 });
 
@@ -63,7 +63,7 @@ it('refuses a revert that would leave the record row unchanged, since the rest o
     $this->article->lockBy(User::factory()->create(), now()->addHour());
     $this->actingAs(User::factory()->create());
 
-    expect(fn () => $this->article->revertToVersion($this->target->getKey()))->toThrow(LockedModelException::class)
+    expect(fn () => $this->article->revertToVersion($this->target->getKey(), (int) $this->article->currentRevision()))->toThrow(LockedModelException::class)
         ->and(revert_sets())->toBe(0);
 });
 
@@ -71,7 +71,7 @@ it('refuses a revert when the lock was taken after the record was loaded', funct
     VersionedLockableArticle::query()->findOrFail($this->article->getKey())->lockBy(User::factory()->create(), now()->addHour());
     $this->actingAs(User::factory()->create());
 
-    expect(fn () => $this->article->revertToVersion($this->target->getKey()))->toThrow(LockedModelException::class)
+    expect(fn () => $this->article->revertToVersion($this->target->getKey(), (int) $this->article->currentRevision()))->toThrow(LockedModelException::class)
         ->and($this->article->fresh()->title)->toBe('Second');
 });
 
@@ -80,7 +80,7 @@ it('lets the holder of the lease revert', function (): void {
     $this->article->lockBy($holder, now()->addHour());
     $this->actingAs($holder);
 
-    $this->article->revertToVersion($this->target->getKey());
+    $this->article->revertToVersion($this->target->getKey(), (int) $this->article->currentRevision());
 
     expect($this->article->fresh()->title)->toBe('First')
         ->and(revert_sets())->toBe(1);
@@ -91,7 +91,7 @@ it('reverts once the lock has been forcibly lifted', function (): void {
     $this->article->forceUnlock();
     $this->actingAs(User::factory()->create());
 
-    $this->article->revertToVersion($this->target->getKey());
+    $this->article->revertToVersion($this->target->getKey(), (int) $this->article->currentRevision());
 
     expect($this->article->fresh()->title)->toBe('First');
 });

@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\SoftDeletes as BaseSoftDeletes;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Overrides\CustomSoftDeletingScope;
 use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 
 /**
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
@@ -197,7 +198,10 @@ trait SoftDeletes
         static::addGlobalScope(new CustomSoftDeletingScope());
 
         static::updating(function (self $model): void {
-            throw_if($model->trashed(), AuthorizationException::class, 'Cannot update a softdeleted model');
+            // A revert of the record is the one write a record in the bin takes: it leaves the bin alone (D61).
+            $reverting = resolve(VersionSetManagerInterface::class)->current()?->isRevertOf($model) === true;
+
+            throw_if($model->trashed() && ! $reverting, AuthorizationException::class, 'Cannot update a softdeleted model');
         });
 
         static::saving(function (self $model): void {

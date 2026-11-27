@@ -19,8 +19,10 @@ use Modules\Core\Support\PermissionName;
 use Modules\Core\Tests\Fixtures\PermissionsRefreshForcedHardDeleteModel;
 use Modules\Core\Tests\Fixtures\PermissionsRefreshForcedUnlockableModel;
 use Modules\Core\Tests\Fixtures\PermissionsRefreshLockableModel;
+use Modules\Core\Tests\Fixtures\PermissionsRefreshNeverVersionedModel;
 use Modules\Core\Tests\Fixtures\PermissionsRefreshPlainModel;
 use Modules\Core\Tests\Stubs\Console\ConstructorConfiguredPermissionsModel;
+use Modules\Core\Tests\Stubs\Versioning\VersionedDocument;
 use Symfony\Component\Console\Application as SymfonyConsoleApplication;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
@@ -641,4 +643,21 @@ it('generates no permission for the version history, which is read only through 
     runPermissionsRefreshForCoverage([]);
 
     expect(Permission::query()->where('table_name', $table)->count())->toBe(0);
+});
+
+it('creates history and revert on both guards for a versioned model only (D26, D27)', function (): void {
+    fakeDeclaredPermissions([]);
+    HelpersCache::setModels('active', [
+        VersionedDocument::class,
+        PermissionsRefreshPlainModel::class,
+        PermissionsRefreshNeverVersionedModel::class,
+    ]);
+
+    runPermissionsRefreshForCoverage([]);
+
+    foreach ([ActionEnum::History, ActionEnum::Revert] as $verb) {
+        expect(Permission::query()->where('name', permissionNameForModel(VersionedDocument::class, $verb))->pluck('guard_name')->sort()->values()->all())->toBe(['api', 'web'])
+            ->and(Permission::query()->where('name', permissionNameForModel(PermissionsRefreshPlainModel::class, $verb))->exists())->toBeFalse()
+            ->and(Permission::query()->where('name', permissionNameForModel(PermissionsRefreshNeverVersionedModel::class, $verb))->exists())->toBeFalse();
+    }
 });

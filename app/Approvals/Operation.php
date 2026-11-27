@@ -19,6 +19,12 @@ enum Operation: string
     case Restore = 'restore';
 
     /**
+     * A revert of the record to a revision (D62): the request carries the revision, the expected revision, the mode
+     * and the force flag in `modifications`, not a diff.
+     */
+    case Revert = 'revert';
+
+    /**
      * Whether approving this operation removes the record, softly or for good.
      */
     public function isDeletion(): bool
@@ -28,7 +34,7 @@ enum Operation: string
 
     /**
      * Whether the modification carries a diff. Deletions and restores do not: they name a
-     * record and an intent, and `modifications` stays empty.
+     * record and an intent, and `modifications` stays empty. A revert names its revision there.
      */
     public function carriesDiff(): bool
     {

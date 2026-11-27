@@ -13,11 +13,13 @@ use Illuminate\Database\Eloquent\SoftDeletes as EloquentSoftDeletes;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 use InvalidArgumentException;
+use LogicException;
 use Modules\Core\Approvals\Operation;
 use Modules\Core\Approvals\PendingDeletionLock;
 use Modules\Core\Approvals\PendingDeletionStrategy;
 use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Casts\CrudExecutor;
+use Modules\Core\Enums\RevertMode;
 use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Models\Approval;
 use Modules\Core\Models\Modification;
@@ -310,6 +312,49 @@ trait HasApprovals
         return $this->shouldCapture($operation) && $this->requiresApprovalForOperation($operation);
     }
 
+    /**
+     * Turn a revert into a request waiting for approval (D62): one request per record and revert asked (revision,
+     * expected revision, mode, force), joined by whoever asks for the same revert again, its author and quorum kept. Approving it runs the revert with the
+     * expected revision it carries.
+     *
+     * @param  array{revision: int, expected_revision: int, mode: string, force: bool}  $request
+     * @return Modification|null the pending request, or null when the author's own credit completed the quorum and the
+     *                           revert already ran
+     */
+    public function captureRevertRequest(array $request): ?Modification
+    {
+        // The whole request is the key: asking again for the same revert joins it, a different one (another mode,
+        // force, or expected revision) is a request of its own, so nobody rewrites a request others voted on.
+        $md5 = md5(implode('|', [Operation::Revert->value, static::class, ModelKey::of($this), $request['revision'], $request['expected_revision'], $request['mode'], $request['force'] ? 'force' : '']));
+        $existing = $this->modifications()->activeOnly()->where('operation', Operation::Revert->value)->where('md5', $md5)->first();
+
+        $modification = $existing ?? new Modification();
+        $modification->active = true;
+        $modification->operation = Operation::Revert;
+        $modification->modifications = $request;
+        $modification->md5 = $md5;
+
+        if ($existing === null) {
+            $modification->approvers_required = $this->approversRequired;
+            $modification->disapprovers_required = $this->disapproversRequired;
+
+            $modifier = $this->modifier();
+
+            if ($modifier !== null) {
+                $modification->modifier()->associate($modifier);
+            }
+
+            $this->modifications()->save($modification);
+        } else {
+            $modification->save();
+        }
+
+        $this->applyAuthorApproveCredit($modification);
+        $this->pendingModification = $modification->active ? $modification : null;
+
+        return $this->pendingModification;
+    }
+
     public function pendingOperationRequest(Operation $operation): ?Modification
     {
         return $this->modifications()->activeOnly()->where('operation', $operation->value)->first();
@@ -366,6 +411,7 @@ trait HasApprovals
                     Operation::Delete => $this->delete(),
                     Operation::ForceDelete => method_exists($this, 'forceDelete') ? $this->forceDelete() : $this->delete(),
                     Operation::Restore => $this->restore(),
+                    Operation::Revert => $this->applyApprovedRevert($modification),
                     default => null,
                 };
             } finally {
@@ -454,7 +500,12 @@ trait HasApprovals
         $preview = $this->attributesToArray();
 
         /** @var Modification $modification */
-        foreach ($this->modifications()->activeOnly()->oldest()->select(['modifications'])->cursor() as $modification) {
+        foreach ($this->modifications()->activeOnly()->oldest()->select(['operation', 'modifications'])->cursor() as $modification) {
+            // Only creates and updates carry a diff: a revert request carries what it reverts to.
+            if (! $modification->operation->carriesDiff()) {
+                continue;
+            }
+
             /** @phpstan-ignore property.notFound */
             foreach ($modification->modifications as $key => $mod) {
                 $preview[$key] = $mod['modified'];
@@ -589,6 +640,28 @@ trait HasApprovals
         if ((int) $modification->approversRemaining <= 0) {
             resolve(ModificationVoteService::class)->applyAuthorCredit($modification, $this);
         }
+    }
+
+    /**
+     * Runs an approved revert with what its request carries. A record changed since the request refuses it with a
+     * conflict, which rolls the vote back: the request stays pending.
+     */
+    private function applyApprovedRevert(Modification $modification): void
+    {
+        $request = $modification->modifications;
+
+        throw_unless(
+            method_exists($this, 'revertToRevision') && is_array($request) && is_numeric($request['revision'] ?? null) && is_numeric($request['expected_revision'] ?? null),
+            LogicException::class,
+            'A revert request names a revision and an expected revision of a versioned record.',
+        );
+
+        $this->revertToRevision(
+            (int) $request['revision'],
+            (int) $request['expected_revision'],
+            RevertMode::tryFrom(is_string($request['mode'] ?? null) ? $request['mode'] : '') ?? RevertMode::Complete,
+            (bool) ($request['force'] ?? false),
+        );
     }
 
     /**

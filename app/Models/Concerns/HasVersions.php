@@ -19,20 +19,22 @@ use Illuminate\Support\Arr;
 use Modules\Core\Contracts\ILockableModel;
 use Modules\Core\Contracts\IOptimisticLockableModel;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
+use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionChangeType;
-use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Enums\VersionStrategy;
-use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Models\RecordOrigin;
 use Modules\Core\Models\Version;
 use Modules\Core\Services\PerModelSettingResolver;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Contracts\VersionWriterInterface;
+use Modules\Core\Versioning\Data\RevertReport;
 use Modules\Core\Versioning\Data\VersionChange;
 use Modules\Core\Versioning\Data\VersionSetOptions;
 use Modules\Core\Versioning\Data\VersionSetRoot;
+use Modules\Core\Versioning\Exceptions\RevertRefusedException;
 use Modules\Core\Versioning\HardDeleteCoordinator;
 use Modules\Core\Versioning\NeverVersionedModels;
+use Modules\Core\Versioning\RevisionReverter;
 use Modules\Core\Versioning\VersionStrategyCache;
 
 // use Illuminate\Database\Eloquent\Relations\Pivot;
@@ -504,41 +506,42 @@ trait HasVersions
     }
 
     /**
-     * Reverting is an append-only, first-class operation: it opens a `Revert` version set
-     * that points at the restored set, so a rollback is never mistaken for an ordinary edit.
-     * The reverting save still writes a normal `Updated` record inside that set.
+     * The current revision of the record: the latest version set that wrote a row of it, its own columns, its
+     * translations or its links. A revert takes it back as the expected revision, so a change made since the caller
+     * read it is refused instead of overwritten.
      */
-    public function revertToVersion(int|string $id): bool
+    public function currentRevision(): ?int
     {
-        $version = $this->versions()->whereKey($id)->firstOrFail();
-        // The record reverted is this one: the relation would not find a record in the bin, and the set locks
-        // this instance.
-        $version->setRelation('versionable', $this);
+        $max = $this->versions()->max('version_set_id');
 
-        return (bool) app(VersionSetManagerInterface::class)->run(
-            VersionSetRoot::forModel($this),
-            function () use ($version): bool {
-                // Checked here, after the set has reread the row under lock, so a lock taken since this model
-                // was loaded counts too. The write guard alone is not enough: it sees the record's own row,
-                // and a revert also writes its translations and relations, which carry no lock of their own.
-                throw_if(
-                    method_exists($this, 'blocksWritesByCurrentUser') && $this->blocksWritesByCurrentUser(),
-                    LockedModelException::class,
-                    'This model is locked',
-                );
+        return $max === null ? null : (int) $max;
+    }
 
-                return (bool) $version->revert();
-            },
-            new VersionSetOptions(
-                kind: VersionSetKind::Revert,
-                actor: $this->getVersionUserId(),
-                // The column is nullable, and VersionSetOptions itself refuses a null
-                // on a revert; passing it through keeps that check where it belongs.
-                revertedFrom: is_numeric($version_set_id = $version->getAttribute('version_set_id'))
-                    ? (int) $version_set_id
-                    : null,
-            ),
-        );
+    /**
+     * Revert the record to revision `$revision` as one `Revert` set pointing at it, append-only (D56). The checks run
+     * under the record's lock: the lock of D39, `$expectedRevision` against the current revision, the mode's own
+     * checks (D48). `$force` skips a referenced record that no longer exists and reports it.
+     */
+    public function revertToRevision(int $revision, int $expectedRevision, RevertMode $mode = RevertMode::Complete, bool $force = false): RevertReport
+    {
+        return resolve(RevisionReverter::class)->revert($this, $revision, $expectedRevision, $mode, $force);
+    }
+
+    /**
+     * A scalar revert to the revision of one row of the record's own columns (D56). A row of a translation or a link
+     * is refused: its fields are not the record's columns.
+     */
+    public function revertToVersion(int|string $versionId, int $expectedRevision): RevertReport
+    {
+        $version = $this->versions()->whereKey($versionId)->firstOrFail();
+
+        throw_if($version->getAttribute('relation_path') !== null, RevertRefusedException::class, RevertRefusedException::NOT_A_ROOT_ROW);
+
+        $revision = $version->getAttribute('version_set_id');
+
+        throw_unless(is_numeric($revision), RevertRefusedException::class, RevertRefusedException::NOT_A_REVISION_OF_THIS_RECORD);
+
+        return $this->revertToRevision((int) $revision, $expectedRevision, RevertMode::Scalar);
     }
 
     /**

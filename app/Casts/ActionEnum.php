@@ -21,6 +21,16 @@ enum ActionEnum: string
     case Unlock = 'unlock';
 
     /**
+     * Read the history of a versioned record, besides `select` (D27).
+     */
+    case History = 'history';
+
+    /**
+     * Revert a versioned record to a revision; implies `history` (D26).
+     */
+    case Revert = 'revert';
+
+    /**
      * returns if is a read action.
      */
     public static function isReadAction(string $action): bool

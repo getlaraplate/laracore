@@ -4,19 +4,11 @@ declare(strict_types=1);
 
 namespace Modules\Core\Models\Concerns;
 
-use Closure;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
 use Modules\Core\Enums\VersionChangeType;
-use Modules\Core\Enums\VersionSetKind;
-use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use Modules\Core\Versioning\Data\RelationDescriptor;
-use Modules\Core\Versioning\Data\RestoreReport;
-use Modules\Core\Versioning\Data\VersionSetOptions;
-use Modules\Core\Versioning\Data\VersionSetRoot;
-use Modules\Core\Versioning\Exceptions\AggregateRestoreConflictException;
-use Modules\Core\Versioning\Exceptions\MissingRestoreSubjectException;
 
 /**
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
@@ -67,78 +59,6 @@ trait HasVersionedRelations
     public function hasRegisteredRelations(): bool
     {
         return $this->registeredRelations() !== [];
-    }
-
-    /**
-     * The current aggregate revision: the latest version set that touched this root. Callers pass it
-     * back as the expected revision on a restore, so a concurrent change is rejected instead of clobbered.
-     */
-    public function currentRevision(): ?int
-    {
-        $max = $this->versions()->max('version_set_id');
-
-        return $max === null ? null : (int) $max;
-    }
-
-    /**
-     * Restore the aggregate to the state represented by revision `$targetSetId`, as a single, reversible
-     * `Revert` version set. Scalars and every declared `reference` relation are reset to that revision;
-     * owned relations are out of scope for this milestone. The restore is rejected when the aggregate has
-     * moved past `$expectedSetId`. A referenced subject that no longer exists aborts the restore unless
-     * `$force` is set, in which case it is skipped and reported.
-     */
-    public function restoreToRevision(int $targetSetId, int $expectedSetId, bool $force = false): RestoreReport
-    {
-        $current = $this->currentRevision();
-
-        if ($current !== $expectedSetId) {
-            throw new AggregateRestoreConflictException($expectedSetId, $current);
-        }
-
-        $targets = [];
-        $skipped = [];
-
-        foreach ($this->registeredRelations() as $descriptor) {
-            if ($descriptor->isOwned()) {
-                continue;
-            }
-
-            $relation = $descriptor->relation;
-            $existing = [];
-            $missing = [];
-
-            foreach ($this->replayMembership($relation, $targetSetId) as $entry) {
-                if ($this->referenceSubjectExists($relation, $entry['id'])) {
-                    $existing[$entry['id']] = $entry['pivot'];
-                } else {
-                    $missing[] = $entry['id'];
-                }
-            }
-
-            if ($missing !== [] && ! $force) {
-                throw new MissingRestoreSubjectException($relation, $missing);
-            }
-
-            $targets[$relation] = $existing;
-
-            if ($missing !== []) {
-                $skipped[$relation] = $missing;
-            }
-        }
-
-        $this->runInRevertScope($targetSetId, function () use ($targetSetId, $targets): void {
-            $this->restoreScalarState($targetSetId);
-
-            foreach ($targets as $relation => $normalized) {
-                $this->applyMembershipTarget($relation, $normalized);
-            }
-        });
-
-        return new RestoreReport(
-            targetRevision: $targetSetId,
-            restoredRelations: array_keys($targets),
-            skippedSubjects: $skipped,
-        );
     }
 
     /**
@@ -212,17 +132,6 @@ trait HasVersionedRelations
         return $descriptors;
     }
 
-    private function versionActor(): ?int
-    {
-        if (! method_exists($this, 'getVersionUserId')) {
-            return null;
-        }
-
-        $actor = $this->getVersionUserId();
-
-        return is_numeric($actor) ? (int) $actor : null;
-    }
-
     /**
      * Reconstruct a relation's membership by replaying its version rows in revision order, optionally
      * bounded to sets up to `$uptoSetId` (used to read the membership as of a target revision).
@@ -262,56 +171,66 @@ trait HasVersionedRelations
     }
 
     /**
-     * Bring the live relation into line with a target membership; the pivot's events write one membership row per
-     * change (D42). Assumes an active version-set scope; detaches members absent from the target and upserts the rest.
+     * Brings a registered relation into line with a target membership, compared with the links the pivot table holds
+     * now: a link missing from the target is detached, a missing one attached, one whose declared pivot columns differ
+     * updated, the others left alone. The pivot's events write one membership row per change (D42), in the scope the
+     * caller opened.
      *
-     * @param  array<int|string, array<string, mixed>>  $normalized
+     * @param  array<int|string, array<string, mixed>>  $target  related key to its declared pivot columns
      */
-    private function applyMembershipTarget(string $relation, array $normalized): void
+    public function replaceMembership(string $relation, array $target): void
     {
-        $current_ids = array_map(
-            static fn (array $entry): int|string => $entry['id'],
-            $this->versionedRelationMembership($relation),
-        );
-        $to_detach = array_diff($current_ids, array_keys($normalized));
+        $descriptor = $this->versionedRelationDescriptor($relation);
+        $pivot_columns = $descriptor?->pivotColumns ?? [];
+        $live = [];
 
-        // The pivot's events write the membership rows (D42).
-        foreach ($to_detach as $subject_id) {
+        foreach ($this->currentVersionedMembership() as $link) {
+            if ($link['relation'] === $relation) {
+                $live[$link['id']] = $link['pivot'];
+            }
+        }
+
+        foreach (array_keys(array_diff_key($live, $target)) as $subject_id) {
             $this->{$relation}()->detach($subject_id);
         }
 
-        foreach ($normalized as $subject_id => $pivot) {
-            $this->{$relation}()->syncWithoutDetaching([$subject_id => $pivot]);
+        foreach ($target as $subject_id => $pivot) {
+            $pivot = Arr::only($pivot, $pivot_columns);
+
+            if (! array_key_exists($subject_id, $live)) {
+                $this->{$relation}()->attach($subject_id, $pivot);
+            } elseif ($pivot !== [] && self::comparablePivot($pivot) !== self::comparablePivot($live[$subject_id])) {
+                $this->{$relation}()->updateExistingPivot($subject_id, $pivot);
+            }
         }
     }
 
-    private function runInRevertScope(int $targetSetId, Closure $operation): void
-    {
-        app(VersionSetManagerInterface::class)->run(
-            VersionSetRoot::forModel($this),
-            $operation,
-            new VersionSetOptions(
-                kind: VersionSetKind::Revert,
-                actor: $this->versionActor(),
-                revertedFrom: $targetSetId,
-            ),
-        );
-    }
-
-    private function restoreScalarState(int $targetSetId): void
-    {
-        $version = $this->versions()
-            ->whereNull('relation_path')
-            ->where('version_set_id', '<=', $targetSetId)
-            ->orderByDesc('version_set_id')
-            ->orderByDesc('sequence')
-            ->first();
-
-        $version?->setRelation('versionable', $this)->revert();
-    }
-
-    private function referenceSubjectExists(string $relation, int|string $subjectId): bool
+    /**
+     * Whether the record a link points at still exists, in the bin included (D25).
+     */
+    public function referenceSubjectExists(string $relation, int|string $subjectId): bool
     {
         return $this->{$relation}()->getRelated()->newQueryWithoutScopes()->whereKey($subjectId)->exists();
+    }
+
+    /**
+     * Pivot values as the database returns them and as the history stored them differ in type (`1` and `"1"`): both
+     * are compared as strings, keys sorted.
+     *
+     * @param  array<string, mixed>  $pivot
+     * @return array<string, string|null>
+     */
+    private static function comparablePivot(array $pivot): array
+    {
+        ksort($pivot);
+
+        return array_map(
+            static fn (mixed $value): ?string => match (true) {
+                $value === null => null,
+                is_scalar($value) => (string) $value,
+                default => json_encode($value, JSON_THROW_ON_ERROR),
+            },
+            $pivot,
+        );
     }
 }

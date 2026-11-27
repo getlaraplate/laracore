@@ -425,6 +425,7 @@ return [
             'inert' => 'Ni uporabljeno',
             'locking' => 'Zaklepanje zapisov je za :table izklopljeno, zato to dovoljenje ne omogoča ničesar, dokler ga znova ne vklopite.',
             'soft_deletes' => 'Logično brisanje je za :table izklopljeno, zato ni česa obnoviti in to dovoljenje ne omogoča ničesar, dokler ga znova ne vklopite.',
+            'versioning' => 'Različice so za :table izklopljene, zato ni zgodovine za branje ali povrnitev in to dovoljenje ne omogoča ničesar, dokler jih znova ne vklopite.',
         ],
     ],
     'sections' => [

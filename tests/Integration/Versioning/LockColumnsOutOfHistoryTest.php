@@ -52,7 +52,7 @@ it('leaves a live lock in place when the holder reverts', function (): void {
     $this->actingAs($holder);
     $document->update(['title' => 'Second']);
 
-    $document->revertToVersion($created->getKey());
+    $document->revertToVersion($created->getKey(), (int) $document->currentRevision());
 
     $live = $document->fresh();
 

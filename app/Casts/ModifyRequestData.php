@@ -19,6 +19,14 @@ final class ModifyRequestData extends CrudRequestData
      */
     public protected(set) array $relations = [];
 
+    /**
+     * The membership the client loaded, per relation it syncs: the sync is refused when the related records it can
+     * read are no longer these (D40).
+     *
+     * @var array<string, list<int|string>>
+     */
+    public protected(set) array $expectedRelations = [];
+
     public function __construct(ModifyRequest $request, string $mainEntity, array $validated, string|array $primaryKey, ?string $module = null)
     {
         parent::__construct($request, $mainEntity, $validated, $primaryKey, $module);
@@ -28,6 +36,12 @@ final class ModifyRequestData extends CrudRequestData
 
             if ($key === 'relations') {
                 $this->relations = is_array($value) ? $value : [];
+
+                continue;
+            }
+
+            if ($key === 'expected_relations') {
+                $this->expectedRelations = is_array($value) ? $value : [];
 
                 continue;
             }

@@ -70,16 +70,32 @@ $version->revert();            // apply and save
 
 ## Restore a model to an earlier version
 
+A revert targets a revision, the version set of a change, and takes back the revision the caller read:
+
 ```php
-$post->revertToVersion($version->id);
+$expected = $post->currentRevision();
+
+$report = $post->revertToRevision($revision, $expected);                      // complete: columns, translations, links
+$report = $post->revertToRevision($revision, $expected, RevertMode::Scalar);  // the columns only
+$report = $post->revertToRevision($revision, $expected, RevertMode::Link, force: true);
+$report = $post->revertToVersion($version->id, $expected);                    // scalar, to the revision of that row
 ```
 
-- The id must be a version of this record, otherwise `firstOrFail` raises a `ModelNotFoundException`.
-- A revert is a first-class operation: it opens a version set of kind `Revert` that points at the restored set
-  (`reverted_from_set_id`), and the save inside it writes a normal `Updated` row. History is never rewritten: a
-  rollback is one more entry, and it can itself be reverted.
-- A locked record refuses it: `LockedModelException` ("This model is locked") when the record is locked by
-  someone else. See `RECORD_LOCKING_DEVELOPER.md`.
+- `RevertMode` (`Modules\Core\Enums`): `Scalar` (the record's columns), `Link` (the membership of the registered
+  `reference` relations), `OwnedPart` (the translations, by locale), `Complete` (all three, the default).
+- `RevertReport`: `revision` (the `Revert` set written, null when nothing changed), `restoredRelations`,
+  `skippedColumns` (columns the table no longer has), `skippedSubjects` (referenced records gone, skipped with
+  `force`), `isPartial()`.
+- A revert is a first-class operation: one version set of kind `Revert` that points at the target
+  (`reverted_from_set_id`). History is never rewritten: a rollback is one more entry, and it can itself be reverted.
+- The revision must be one of the record's (checked first); every other check runs after the record is locked: `LockedModelException` when somebody else holds the record (see
+  `RECORD_LOCKING_DEVELOPER.md`), `RevisionConflictException` when the record moved past the expected revision,
+  `MissingRevertSubjectException` when a referenced record is gone and `force` is not set.
+- `RevertRefusedException` names why a revert may not run (`$reason`): `not-versioned`,
+  `not-a-revision-of-this-record`, `not-a-root-row` (`revertToVersion()` on a translation or link row),
+  `no-complete-anchor`, and for a complete revert `incomplete-coverage`, `unsupported-relation`, `not-atomic`,
+  `epoch-changed`. `RevisionReverter::completeRevertBlockers($record, $revision)` lists them without reverting.
+- Details, and why each check exists: `MODULE.md`, *Reverting to a revision*.
 
 ## Turn versioning on for a model
 
@@ -119,9 +135,10 @@ GET /api/v1/history/{module}/{entity}
 It answers with the record and its history rows (`history` relation, latest first). Rules:
 
 - The entity must have history handling, otherwise the call fails (`BadMethodCallException`).
-- The caller needs `select` on the entity and, because versions hold values as they were before publication,
-  `update` or `approve` on the record (`RelationAuthorizer::maySeePendingChanges()`). A record the caller cannot
-  see answers like a record that does not exist.
+- The caller needs `select` and `history` on the entity, or `revert`, which implies `history`
+  (`RelationAuthorizer::mayReadHistory()`): the versions show who changed what and the past values, drafts
+  included. A record the caller cannot see answers like a record that does not exist.
+- `POST /api/v1/revert/{module}/{entity}` reverts a record over HTTP with `revert`; see `CRUD_SYSTEM.md`, *Revert Route*.
 - `core_versions` has no generated permission: the history is only ever read through the record it belongs to.
 - The record is serialized through the model, so hidden attributes and the media projection apply, and history
   rows carry no nested copy of the record.

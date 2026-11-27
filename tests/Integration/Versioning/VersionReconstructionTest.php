@@ -72,7 +72,7 @@ it('reverts to the rebuilt state of a revision', function (): void {
     $third = last_version_of($document);
     $document->update(['title' => 'T3']);
 
-    $document->revertToVersion($third->getKey());
+    $document->revertToVersion($third->getKey(), (int) $document->currentRevision());
 
     expect($document->fresh()->only(['title', 'subtitle']))->toBe(['title' => 'T2', 'subtitle' => 'S2']);
 });
@@ -84,7 +84,7 @@ it('leaves a live record out of the bin when the target revision was taken while
     $in_the_bin = last_version_of($document);
     $document->restore();
 
-    $document->revertToVersion($in_the_bin->getKey());
+    $document->revertToVersion($in_the_bin->getKey(), (int) $document->currentRevision());
 
     $live = VersionedDocument::withTrashed()->findOrFail($document->getKey());
 
@@ -98,7 +98,7 @@ it('leaves a record in the bin when reverted to a revision taken before it was t
     $document->update(['title' => 'T2']);
     $document->delete();
 
-    $document->revertToVersion($before->getKey());
+    $document->revertToVersion($before->getKey(), (int) $document->currentRevision());
 
     $live = VersionedDocument::withTrashed()->findOrFail($document->getKey());
 
@@ -118,7 +118,7 @@ it('rebuilds a column that took its database default at creation (C09)', functio
     $created = last_version_of($document);
     $document->update(['status' => 'published']);
 
-    $document->revertToVersion($created->getKey());
+    $document->revertToVersion($created->getKey(), (int) $document->currentRevision());
 
     expect($document->fresh()->status)->toBe('draft');
 });

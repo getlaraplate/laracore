@@ -23,6 +23,7 @@ use Modules\Core\Overrides\ContextualValidationException;
 use Modules\Core\Overrides\ContextualValidator;
 use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Support\PermissionName;
+use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionProperty;
@@ -215,7 +216,11 @@ trait HasValidations
         });
         static::updating(function (Model $model): void {
             /** @var self $model */
-            throw_unless(static::checkUserCanDo($model, 'update'), AuthorizationException::class, 'User cannot update ' . $model->getTable());
+            // The save of a revert of this record is governed by `revert`, which a writer may hold without `update`
+            // (D26): a revert overwrites with old data, a permission of its own.
+            $operation = resolve(VersionSetManagerInterface::class)->current()?->isRevertOf($model) === true ? 'revert' : 'update';
+
+            throw_unless(static::checkUserCanDo($model, $operation), AuthorizationException::class, 'User cannot ' . $operation . ' ' . $model->getTable());
 
             if (! $model->isDirty('deleted_at') && ! $model->shouldSkipValidation()) {
                 $model->validateWithRules(CrudExecutor::UPDATE);

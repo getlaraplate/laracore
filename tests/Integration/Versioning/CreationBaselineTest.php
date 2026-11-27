@@ -68,7 +68,7 @@ it('never stores a revert set as a baseline', function (): void {
     $created = $document->versions()->firstOrFail();
     $document->update(['title' => 'After']);
 
-    $document->revertToVersion($created->getKey());
+    $document->revertToVersion($created->getKey(), (int) $document->currentRevision());
 
     expect(stored_set_kinds())->toBe([VersionSetKind::Baseline, VersionSetKind::Change, VersionSetKind::Revert]);
 });
