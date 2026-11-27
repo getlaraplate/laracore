@@ -82,6 +82,14 @@ an id the writer cannot read (hidden or nonexistent) answers `403` and rolls the
 relation whose related entity the writer may not select at all cannot be synced. Parts of the
 parent (`IsPartOfParent`) sync as before. See [Related records](#related-records).
 
+**The membership the form loaded.** A form that shows a relation sends, next to its new ids, the ids it loaded:
+`{ "id": 5, "relations": { "tags": [1, 3] }, "expected_relations": { "tags": [1, 2] } }`. Inside the write, the record
+locked, each synced relation that has an expected list is compared with the related records the writer can read now,
+order ignored; a difference answers `409` and writes nothing, the record's columns included (D40). It is per
+relation: a tag added meanwhile by somebody else does not block a save that changes only the categories, and a
+relation sent without an expected list syncs as before. `lock_version` keeps protecting the record's own fields and is
+not raised by a relation change.
+
 #### Role-scoped ACLs and dynamic placeholders
 
 An `acls.role_id` (nullable) scopes an ACL to a single role: set, it applies only to that
