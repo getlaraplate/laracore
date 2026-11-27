@@ -187,7 +187,11 @@ class CrudController extends Controller
             function () use ($requestData): CrudResult {
                 $result = $this->crudService->search($requestData);
 
-                app(SearchQueryRecorder::class)->recordAfterResponse($requestData, $result);
+                try {
+                    app(SearchQueryRecorder::class)->recordAfterResponse($requestData, $result);
+                } catch (Throwable $exception) {
+                    report($exception);
+                }
 
                 return $result;
             },
