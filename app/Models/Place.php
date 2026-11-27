@@ -122,10 +122,11 @@ class Place extends Model
     }
 
     /**
-     * Keep decimals and geometry aligned before persistence. A new {@see geolocation} set without touching the decimals
-     * (e.g. a geocoded point written through {@see Concerns\HasPlace}) wins and rewrites {@see latitude} / {@see longitude}.
-     * Otherwise the decimals win: when they differ from the cast geometry (e.g. after {@see Version::revertWithoutSaving}
-     * merged snapshot lat/lng with stale WKB, or a plain decimal edit), {@see geolocation} is rebuilt from them.
+     * Keep decimals and geometry aligned before persistence. A {@see geolocation} changed without touching the decimals
+     * (e.g. a geocoded point written through {@see Concerns\HasPlace}) wins: a new point rewrites {@see latitude} /
+     * {@see longitude}, a cleared point clears them. Otherwise the decimals win: when they differ from the cast geometry
+     * (e.g. after {@see Version::revertWithoutSaving} merged snapshot lat/lng with stale WKB, or a plain decimal edit),
+     * {@see geolocation} is rebuilt from them.
      */
     private function alignGeolocationAndDecimals(): void
     {
@@ -135,9 +136,9 @@ class Place extends Model
 
         $current = $this->geolocation;
 
-        if ($current instanceof Point && $this->isDirty('geolocation') && ! $this->isDirty(['latitude', 'longitude'])) {
-            $this->setAttribute('latitude', $current->latitude);
-            $this->setAttribute('longitude', $current->longitude);
+        if ($this->isDirty('geolocation') && ! $this->isDirty(['latitude', 'longitude'])) {
+            $this->setAttribute('latitude', $current instanceof Point ? $current->latitude : null);
+            $this->setAttribute('longitude', $current instanceof Point ? $current->longitude : null);
 
             return;
         }
