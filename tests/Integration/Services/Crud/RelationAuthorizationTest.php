@@ -92,6 +92,18 @@ function relauth_reader(array $grants): User
 }
 
 /**
+ * Gives the reader's role one more permission on the model, on the api guard.
+ *
+ * @param  class-string<Illuminate\Database\Eloquent\Model>  $model_class
+ */
+function relauth_grant(User $reader, string $model_class, string $verb): void
+{
+    $name = PermissionName::forClass($model_class, $verb);
+    Permission::query()->firstOrCreate(['name' => $name, 'guard_name' => 'web']);
+    $reader->roles->firstOrFail()->givePermissionTo(Permission::query()->firstOrCreate(['name' => $name, 'guard_name' => 'api']));
+}
+
+/**
  * The roles ACL that lets a reader see only the role named `relauth_visible`.
  */
 function relauth_visible_roles(): FiltersGroup
@@ -523,15 +535,41 @@ describe('tree and history', function (): void {
             ->and($missingResponse->status())->toBe(403);
     });
 
-    it('give no history of a record the ACL hides to an editor', function (): void {
+    it('give no history of a record the ACL hides to a reader holding history', function (): void {
         $hidden = CoreUser::factory()->create(['name' => 'relauth_hidden_user']);
         $reader = relauth_reader([CoreUser::class => new FiltersGroup([new Filter('name', ['nobody'], FilterOperator::In)], WhereClause::And)]);
-        $reader->roles->firstOrFail()->givePermissionTo(Permission::query()->firstOrCreate(['name' => PermissionName::forClass(CoreUser::class, 'update'), 'guard_name' => 'api']));
+        relauth_grant($reader, CoreUser::class, 'history');
 
         $response = $this->actingAs($reader->fresh())->getJson('/api/v1/history/core/users?' . http_build_query(['id' => $hidden->id]));
 
         expect($response->status())->toBe(404)
             ->and($response->json('data.history'))->toBeNull();
+    });
+
+    it('give the history with history or revert, never with update alone (D27)', function (string $verb, int $status): void {
+        $record = CoreUser::factory()->create(['name' => 'relauth_history_user']);
+        $reader = relauth_reader([CoreUser::class => null]);
+        relauth_grant($reader, CoreUser::class, $verb);
+
+        $response = $this->actingAs($reader->fresh())->getJson('/api/v1/history/core/users?' . http_build_query(['id' => $record->id]));
+
+        expect($response->status())->toBe($status);
+    })->with([
+        'history' => ['history', 200],
+        'revert, which implies history' => ['revert', 200],
+        'update alone' => ['update', 403],
+        'approve alone' => ['approve', 403],
+    ]);
+
+    it('refuse the history without select, whatever else is held', function (): void {
+        $record = CoreUser::factory()->create(['name' => 'relauth_history_user']);
+        $reader = relauth_reader([]);
+        relauth_grant($reader, CoreUser::class, 'history');
+        relauth_grant($reader, CoreUser::class, 'revert');
+
+        $response = $this->actingAs($reader->fresh())->getJson('/api/v1/history/core/users?' . http_build_query(['id' => $record->id]));
+
+        expect($response->status())->toBe(403);
     });
 });
 

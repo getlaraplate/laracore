@@ -19,6 +19,7 @@ use Modules\Core\Helpers\HelpersCache;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasValidity;
+use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Models\DynamicEntity;
 use Modules\Core\Models\License;
 use Modules\Core\Models\ModelEmbedding;
@@ -28,6 +29,7 @@ use Modules\Core\Models\Version;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Services\Translation\Definitions\ITranslated;
 use Modules\Core\Support\PermissionName;
+use Modules\Core\Versioning\NeverVersionedModels;
 use Override;
 use ReflectionClass;
 use Throwable;
@@ -121,6 +123,8 @@ final class PermissionsRefreshCommand extends Command
             // ActionEnum::Disapprove,
             ActionEnum::Publish,
             // ActionEnum::Unpublish,
+            ActionEnum::History,
+            ActionEnum::Revert,
         ];
 
         $changes = false;
@@ -226,6 +230,21 @@ final class PermissionsRefreshCommand extends Command
 
                 // permessi di approvazione
                 if ($permission === ActionEnum::Approve && ! class_uses_trait($model, HasApprovals::class)) {
+                    if (! in_array($permission_name, $declared_permissions, true) && in_array($permission_name, $found_permissions, true) && $permission_class::query()->where('name', $permission_name)->delete()) {
+                        if (! $quiet_mode) {
+                            $this->line(sprintf("<fg=red>Deleted</> '%s' permission", $permission_name));
+                        }
+
+                        $changes = true;
+                    }
+
+                    continue;
+                }
+
+                // The history and its revert belong to a model versioned in code. The `versioning.strategy.{table}`
+                // setting is a runtime switch and is not read here, as for locking: dropping the permission when it is
+                // off would take every grant down with it (D26, D27).
+                if (($permission === ActionEnum::History || $permission === ActionEnum::Revert) && ! $this->canBeVersioned($model)) {
                     if (! in_array($permission_name, $declared_permissions, true) && in_array($permission_name, $found_permissions, true) && $permission_class::query()->where('name', $permission_name)->delete()) {
                         if (! $quiet_mode) {
                             $this->line(sprintf("<fg=red>Deleted</> '%s' permission", $permission_name));
@@ -443,6 +462,17 @@ final class PermissionsRefreshCommand extends Command
         $in_code = $instance->locksEnabledInCode();
 
         return $in_code ?? true;
+    }
+
+    /**
+     * Whether the model keeps a history at all: it has `HasVersions` and is not one of the models never versioned
+     * (translations, comments, ratings).
+     *
+     * @param  class-string<Model>  $model
+     */
+    private function canBeVersioned(string $model): bool
+    {
+        return class_uses_trait($model, HasVersions::class) && ! NeverVersionedModels::includes($model);
     }
 
     private function checkIfBlacklisted(string $model): bool

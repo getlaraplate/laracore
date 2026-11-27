@@ -425,6 +425,7 @@ return [
             'inert' => 'Not applied',
             'locking' => 'Record locking is switched off for :table, so this permission grants nothing until it is switched back on.',
             'soft_deletes' => 'Soft deletes are switched off for :table, so there is nothing to restore and this permission grants nothing until they are switched back on.',
+            'versioning' => 'Versioning is switched off for :table, so there is no history to read or revert and this permission grants nothing until it is switched back on.',
         ],
     ],
     'sections' => [

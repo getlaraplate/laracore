@@ -425,6 +425,7 @@ return [
             'inert' => 'No aplicado',
             'locking' => 'El bloqueo de registros está desactivado para :table, así que este permiso no concede nada hasta que se vuelva a activar.',
             'soft_deletes' => 'El borrado lógico está desactivado para :table, así que no hay nada que restaurar y este permiso no concede nada hasta que se vuelva a activar.',
+            'versioning' => 'El versionado está desactivado para :table, así que no hay historial que leer ni revertir y este permiso no concede nada hasta que se vuelva a activar.',
         ],
     ],
     'sections' => [

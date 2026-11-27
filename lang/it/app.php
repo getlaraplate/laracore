@@ -425,6 +425,7 @@ return [
             'inert' => 'Non applicato',
             'locking' => 'Il blocco dei record è spento per :table, quindi questo permesso non concede niente finché non viene riacceso.',
             'soft_deletes' => 'La cancellazione logica è spenta per :table, quindi non c\'è niente da ripristinare e questo permesso non concede niente finché non viene riaccesa.',
+            'versioning' => 'Il versioning è spento per :table, quindi non c\'è uno storico da leggere o ripristinare e questo permesso non concede niente finché non viene riacceso.',
         ],
     ],
     'sections' => [

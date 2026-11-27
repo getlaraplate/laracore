@@ -184,6 +184,20 @@ it('serves a second identical detail and history without querying the table', fu
     'history of a versioned permission' => ['core.crud.history', 'permissions', static fn (): Model => Permission::factory()->create()],
 ]);
 
+it('answers 403 on a cached history once the history permission is revoked (D27)', function (): void {
+    $record = Setting::factory()->persistedWithoutApprovalCapture()->create();
+    $history = PermissionName::forModel(new Setting(), 'history');
+    [$viewer, $role] = crudResponseCacheViewer([PermissionName::forModel(new Setting(), 'select'), $history]);
+    $url = route('core.crud.history', ['module' => 'core', 'entity' => 'settings']) . '?' . http_build_query(['id' => $record->getKey()]);
+
+    $this->actingAs($viewer)->getJson($url)->assertOk();
+
+    $role->revokePermissionTo($history);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    $this->actingAs($viewer->fresh())->getJson($url)->assertForbidden();
+});
+
 it('answers 403 on a cached url once the permission is removed straight from the pivot table', function (): void {
     Setting::factory()->persistedWithoutApprovalCapture()->create();
     $permission = PermissionName::forModel(new Setting(), 'select');

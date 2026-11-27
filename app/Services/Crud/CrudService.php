@@ -727,11 +727,11 @@ class CrudService
             $model->getConnectionName(),
         );
 
-        // The versions hold the values as they were before they were published, and the raw attributes of the
-        // record: they are editorial data, for who may change or approve the entity, as the pending changes are.
-        // The answer is the same whether the record is hidden by its ACL or does not exist, because it comes first.
+        // The history shows who changed what and the past values: it needs `history` (or `revert`, which implies
+        // it) besides `select` (D27). The answer is the same whether the record is hidden by its ACL or does not
+        // exist, because it comes first.
         throw_unless(
-            $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model),
+            $this->relationAuthorizer()->mayReadHistory($requestData->request, $model),
             AuthorizationException::class,
             'User not allowed to access this resource',
         );
@@ -868,7 +868,7 @@ class CrudService
 
     /**
      * The permission checks a read runs before it queries, for a response served from the cache: the select
-     * permission on the entity, the right to see pending changes for a history read, and the permission on every
+     * permission on the entity, the right to read the history for a history read, and the permission on every
      * relation the request names. A lost permission refuses a cached response even when no invalidation reached it.
      *
      * @throws AuthorizationException when the caller may no longer read what the request asks for
@@ -887,7 +887,7 @@ class CrudService
 
         if ($requestData instanceof HistoryRequestData) {
             throw_unless(
-                $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model),
+                $this->relationAuthorizer()->mayReadHistory($requestData->request, $model),
                 AuthorizationException::class,
                 'User not allowed to access this resource',
             );
