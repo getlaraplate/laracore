@@ -19,14 +19,16 @@ One row per normalized query, locale, searched model and day (unique on those fo
 | `searches` | number of searches of that day |
 | `low_result_searches` | how many of them returned fewer results than the threshold |
 | `result_sum` | sum of the results returned |
-| `created_at`, `updated_at` | row timestamps |
+| `created_at` | time of the first recorded search of that query that day |
+| `updated_at` | time of the latest recorded search of that query that day |
 
 ## Never stored
 
 - Any user id, IP address, session id, user agent or request header: no column holds them, and the recording job receives none.
 - A query that contains an email, a UUID, a structured identifier or a number: it is discarded before anything is written, not masked.
 - An empty query, or one longer than 255 characters.
-- Result content, document ids, filters, the exact time of a search.
+- Result content, document ids, filters.
+- A per-search time. The only times kept are the `created_at` and `updated_at` of each daily row (first and latest recorded search of that query that day); no other per-search time is stored.
 
 ## Who is recorded and why
 
