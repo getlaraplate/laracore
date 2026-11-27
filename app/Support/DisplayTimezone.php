@@ -44,6 +44,18 @@ final class DisplayTimezone
     }
 
     /**
+     * The identifiers a person may choose from, each as value and label.
+     *
+     * @return array<string, string>
+     */
+    public static function options(): array
+    {
+        $identifiers = DateTimeZone::listIdentifiers();
+
+        return array_combine($identifiers, $identifiers);
+    }
+
+    /**
      * Whether the value is an IANA identifier. Offsets such as `+02:00` and abbreviations such as `CET` are
      * not: they ignore daylight saving time.
      *
