@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-11-27
+
+### 🚀 Features
+
+- *(search)* Add the search registry storage
+- *(search)* Record searches of guests and readers after the response
+- *(search)* Prune the search registry and document it
+- *(users)* Add nullable timezone column to the users table
+- *(filament)* Show date-times in the timezone of the signed in user
+- *(users)* Edit language and timezone from the profile page and the API
+- *(core)* Save the browser timezone, add DateFormatter and document dates
+
+### 🐛 Bug Fixes
+
+- *(search)* Express a null equality as a missing field on Elasticsearch
+- *(search)* Apply default search filters on every search path
+- *(search)* Never let the search registry change or fail the search response
+- *(search)* Skip a null equality on Typesense instead of failing the search
+- *(search)* Apply default search filters last through one helper
+- *(search)* Remove the PHPStan errors the registry added
+- *(import)* Store record origin source_updated_at as datetime
+
+### 📚 Documentation
+
+- *(search)* State which timestamps the registry keeps
+
+### 🧪 Testing
+
+- *(seeding)* Pick a versioning model when stamping a derived setting
+- *(core)* Pin the UTC contract of the application and the API dates
+
 ## [2.3.0] - 2026-11-27
 
 ### 🚀 Features
