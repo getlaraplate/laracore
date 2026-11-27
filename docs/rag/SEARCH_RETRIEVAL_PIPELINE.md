@@ -693,6 +693,37 @@ endpoint, without a search query. `test:perf:bench` and `perf:profile` can targe
 profile (the public API must be exposed, as `perf:crud` does with the `expose_api` setting), but none
 of the perf commands prints the response body, so the per-stage split comes from step 2.
 
+## The application search registry
+
+A daily aggregate of what guests and readers search, to find queries that return little or nothing. It is
+off by default and is switched on only after the owner approves its privacy review:
+[search-registry-privacy-review.md](./search-registry-privacy-review.md).
+
+**Who is recorded.** `SearchQueryRecorder` decides on the person, not the route: guests and readers are
+recorded; holders of the update permission of the searched model (editors) are not. A search that ended in an
+error is not recorded. `CrudController::search()` calls the recorder inside a try/catch that reports and never
+fails the search, and the write is queued after the response (`RecordSearchQueryJob`).
+
+**Normalization and exclusions.** `SearchQueryRegistry::normalize()` lowercases the query, collapses
+whitespace, strips the request words of the locale (see step 2d) and discards the query (stores nothing) when
+it is empty, longer than 255 characters, or holds a token of kind email, UUID, structured identifier or number.
+
+**What a row holds.** One row of `core_search_query_stats` (`SearchQueryStat`) per query, locale, searched
+model table and day: `searches`, `low_result_searches` (fewer results than the threshold) and `result_sum`.
+Counters are incremented in the database. No user, IP or session is stored.
+
+**Settings** (seeded in `CoreDatabaseSeeder`, edited in Filament, read as `config('core.search.registry.*')`):
+
+| Setting | Default |
+|---|---|
+| `search.registry.enabled` | `false` |
+| `search.registry.retention_days` | `90` |
+| `search.registry.low_results_threshold` | `5` |
+
+**Retention.** `php artisan search:prune-registry`, scheduled `->daily()->onOneServer()` beside
+`core:prune-media-drafts`, deletes rows whose `day` is older than today minus `retention_days`. It runs also
+with the registry off.
+
 ## What the `matching` preference does and does not affect
 
 `strict` / `balanced` / `tolerant` / `auto` resolve to granular `TextMatchOptions` and are passed

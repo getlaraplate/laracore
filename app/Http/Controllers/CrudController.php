@@ -42,6 +42,7 @@ use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Locking\Exceptions\MissingLockVersionException;
 use Modules\Core\Locking\Exceptions\StaleModelLockingException;
 use Modules\Core\Models\User;
+use Modules\Core\Search\Services\SearchQueryRecorder;
 use Modules\Core\Services\Crud\Cache\CrudResponseCache;
 use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\DomainActionDispatcher;
@@ -188,7 +189,17 @@ class CrudController extends Controller
         $requestData = $request->parsed();
 
         return $this->handleServiceCall(
-            fn (): CrudResult => $this->crudService->search($requestData),
+            function () use ($requestData): CrudResult {
+                $result = $this->crudService->search($requestData);
+
+                try {
+                    app(SearchQueryRecorder::class)->recordAfterResponse($requestData, $result);
+                } catch (Throwable $exception) {
+                    report($exception);
+                }
+
+                return $result;
+            },
             $request,
         );
     }
