@@ -177,3 +177,14 @@ it('lets a later read see the reverted record, the response cache flushed', func
 
     expect($this->actingAs($actor)->getJson($detail)->json('data.name'))->toBe('First');
 });
+
+it('governs the revert by revert, even where update is registered and not granted (D26)', function (): void {
+    [$record, $created, $current] = revert_route_record();
+    Permission::findOrCreate(PermissionName::forClass(User::class, 'update'), 'web');
+
+    revert_route_post($this, revert_route_actor(['select', 'revert']), ['id' => $record->id, 'revision' => $created, 'expected_revision' => $current])
+        ->assertOk();
+
+    expect($record->fresh()->name)->toBe('First');
+});
+

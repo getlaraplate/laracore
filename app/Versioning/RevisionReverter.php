@@ -8,12 +8,15 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Approvals\Operation;
+use Modules\Core\Approvals\PendingDeletionLock;
+use Modules\Core\Approvals\PendingDeletionStrategy;
 use Modules\Core\Enums\RelationCoverage;
 use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Enums\VersionStrategy;
+use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -53,7 +56,7 @@ final readonly class RevisionReverter
         throw_if($root->getVersionStrategy() === false, RevertRefusedException::class, RevertRefusedException::NOT_VERSIONED);
         throw_unless($this->isRevisionOf($root, $revision), RevertRefusedException::class, RevertRefusedException::NOT_A_REVISION_OF_THIS_RECORD);
 
-        if (method_exists($root, 'wouldRequireApproval') && $root->wouldRequireApproval(Operation::Revert)) {
+        if (method_exists($root, 'wouldRequireApproval') && $root->wouldRequireApproval(self::approvalOperationOf($root))) {
             return $this->requestApproval($root, $revision, $expectedRevision, $mode, $force);
         }
 
@@ -79,9 +82,13 @@ final readonly class RevisionReverter
      */
     private function requestApproval(Model $root, int $revision, int $expectedRevision, RevertMode $mode, bool $force): RevertReport
     {
-        $current = $root->currentRevision();
+        // The same checks as the revert itself, read-only: a request that could never be applied is not made. The
+        // approval runs them again, under the lock.
+        if ($this->prepare($root, $revision, $expectedRevision, $mode, $force) === null) {
+            return new RevertReport($revision, $mode, null);
+        }
 
-        throw_if($current !== $expectedRevision, new RevisionConflictException($expectedRevision, $current));
+        $current = $root->currentRevision();
 
         $pending = $root->captureRevertRequest([
             'revision' => $revision,
@@ -174,45 +181,13 @@ final readonly class RevisionReverter
     private function revertUnderLock(Model $root, int $revision, int $expectedRevision, RevertMode $mode, bool $force): RevertReport
     {
         // Every check runs here, after the set has reread the root under lock (D48).
-        throw_if(
-            method_exists($root, 'blocksWritesByCurrentUser') && $root->blocksWritesByCurrentUser(),
-            LockedModelException::class,
-            'This model is locked',
-        );
+        $plan = $this->prepare($root, $revision, $expectedRevision, $mode, $force);
 
-        $current = $root->currentRevision();
-
-        throw_if($current !== $expectedRevision, new RevisionConflictException($expectedRevision, $current));
-
-        if ($current === $revision) {
+        if ($plan === null) {
             return new RevertReport($revision, $mode, null);
         }
 
-        // Everything that can refuse the revert is decided before the first write.
-        $has_parts = self::hasTranslations($root);
-        $has_links = self::hasRegisteredRelations($root);
-
-        if ($mode === RevertMode::Complete && ($has_parts || $has_links)) {
-            $blockers = $this->completeRevertBlockers($root, $revision);
-
-            throw_if($blockers !== [], new RevertRefusedException($blockers[0] ?? RevertRefusedException::NO_COMPLETE_ANCHOR));
-        }
-
-        $anchor = null;
-
-        if (($mode->includesLinks() && $has_links) || ($mode->includesOwnedParts() && $has_parts)) {
-            $anchor = $this->anchorSet($root, $revision);
-
-            throw_unless($anchor instanceof VersionSet, RevertRefusedException::class, RevertRefusedException::NO_COMPLETE_ANCHOR);
-        }
-
-        $columns = $mode->includesColumns() ? $this->columnsAsOf($root, $revision) : null;
-        $translations = $mode->includesOwnedParts() && $has_parts && $anchor instanceof VersionSet
-            ? $this->translationsFromAnchor($root, $revision, $anchor)
-            : null;
-        [$link_targets, $skipped_subjects] = $mode->includesLinks() && $has_links && $anchor instanceof VersionSet
-            ? $this->linksAsOf($root, $revision, $anchor, $force)
-            : [[], []];
+        ['columns' => $columns, 'translations' => $translations, 'links' => $link_targets, 'skipped_subjects' => $skipped_subjects] = $plan;
 
         if ($columns !== null) {
             $this->applyColumns($root, $columns['state']);
@@ -237,6 +212,68 @@ final readonly class RevisionReverter
             skippedColumns: $columns['skipped'] ?? [],
             skippedSubjects: $skipped_subjects,
         );
+    }
+
+    /**
+     * Everything that can refuse the revert, decided before any write, and what it will write: the lock of D39, the
+     * expected revision, a deletion of the record waiting for approval, the mode's own checks, the references. Null
+     * when the record is already at the revision. Reads only.
+     *
+     * @param  Model&HasVersions  $root
+     * @return array{columns: array{state: array<string, mixed>, skipped: list<string>}|null, translations: array<string, array<string, mixed>>|null, links: array<string, array<int|string, array<string, mixed>>>, skipped_subjects: array<string, list<int|string>>}|null
+     */
+    private function prepare(Model $root, int $revision, int $expectedRevision, RevertMode $mode, bool $force): ?array
+    {
+        throw_if(
+            method_exists($root, 'blocksWritesByCurrentUser') && $root->blocksWritesByCurrentUser(),
+            LockedModelException::class,
+            'This model is locked',
+        );
+
+        $current = $root->currentRevision();
+
+        throw_if($current !== $expectedRevision, new RevisionConflictException($expectedRevision, $current));
+
+        if ($current === $revision) {
+            return null;
+        }
+
+        // A record whose deletion waits for approval refuses changes on a Block model; a revert is one.
+        if (method_exists($root, 'pendingDeletionStrategy')
+            && $root->pendingDeletionStrategy() === PendingDeletionStrategy::Block
+            && $root->modifications()->activeOnly()->whereIn('operation', [Operation::Delete->value, Operation::ForceDelete->value])->exists()) {
+            throw PendingDeletionLock::for($root::class, ModelKey::of($root));
+        }
+
+        $has_parts = self::hasTranslations($root);
+        $has_links = self::hasRegisteredRelations($root);
+
+        if ($mode === RevertMode::Complete && ($has_parts || $has_links)) {
+            $blockers = $this->completeRevertBlockers($root, $revision);
+
+            throw_if($blockers !== [], new RevertRefusedException($blockers[0] ?? RevertRefusedException::NO_COMPLETE_ANCHOR));
+        }
+
+        $anchor = null;
+
+        if (($mode->includesLinks() && $has_links) || ($mode->includesOwnedParts() && $has_parts)) {
+            $anchor = $this->anchorSet($root, $revision);
+
+            throw_unless($anchor instanceof VersionSet, RevertRefusedException::class, RevertRefusedException::NO_COMPLETE_ANCHOR);
+        }
+
+        [$links, $skipped_subjects] = $mode->includesLinks() && $has_links && $anchor instanceof VersionSet
+            ? $this->linksAsOf($root, $revision, $anchor, $force)
+            : [[], []];
+
+        return [
+            'columns' => $mode->includesColumns() ? $this->columnsAsOf($root, $revision) : null,
+            'translations' => $mode->includesOwnedParts() && $has_parts && $anchor instanceof VersionSet
+                ? $this->translationsFromAnchor($root, $revision, $anchor)
+                : null,
+            'links' => $links,
+            'skipped_subjects' => $skipped_subjects,
+        ];
     }
 
     /**
@@ -494,5 +531,20 @@ final readonly class RevisionReverter
     private static function hasRegisteredRelations(Model $root): bool
     {
         return method_exists($root, 'hasRegisteredRelations') && $root->hasRegisteredRelations();
+    }
+
+    /**
+     * The operation whose approval rule a revert follows: `Revert`, or `Update` for a model whose list of approval
+     * operations predates it and names updates only, so a revert never slips past the approval its updates ask (D26).
+     *
+     * @param  Model&HasVersions  $root
+     */
+    private static function approvalOperationOf(Model $root): Operation
+    {
+        $operations = method_exists($root, 'approvalOperations') ? $root->approvalOperations() : [];
+
+        return in_array(Operation::Revert, $operations, true) || ! in_array(Operation::Update, $operations, true)
+            ? Operation::Revert
+            : Operation::Update;
     }
 }

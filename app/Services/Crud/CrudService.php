@@ -810,7 +810,9 @@ class CrudService
             }
         });
 
-        if (! preview() && $this->useHasApproval($model)) {
+        // The proposed values waiting for approval are for who may change or approve the record, not for every reader
+        // of its history.
+        if (! preview() && $this->useHasApproval($model) && $this->relationAuthorizer()->maySeePendingChanges($requestData->request, $model)) {
             $query->with('modifications');
         }
 

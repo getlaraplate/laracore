@@ -498,7 +498,12 @@ trait HasApprovals
         $preview = $this->attributesToArray();
 
         /** @var Modification $modification */
-        foreach ($this->modifications()->activeOnly()->oldest()->select(['modifications'])->cursor() as $modification) {
+        foreach ($this->modifications()->activeOnly()->oldest()->select(['operation', 'modifications'])->cursor() as $modification) {
+            // Only creates and updates carry a diff: a revert request carries what it reverts to.
+            if (! $modification->operation->carriesDiff()) {
+                continue;
+            }
+
             /** @phpstan-ignore property.notFound */
             foreach ($modification->modifications as $key => $mod) {
                 $preview[$key] = $mod['modified'];

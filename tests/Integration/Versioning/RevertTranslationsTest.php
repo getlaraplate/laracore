@@ -65,7 +65,11 @@ it('puts the translations back by locale: changed, added later and deleted later
     $expected_translations = translations_of($document);
 
     $document->setTranslation('en', ['title' => 'Hello again']);
-    TranslatedDocumentTranslation::query()->where('translated_document_id', $document->getKey())->where('locale', 'fr')->firstOrFail()->delete();
+    // Deleted through the record, as the record's own write path does: a copy of the owner would leave this one's
+    // lock version behind.
+    $french = $document->translations()->where('locale', 'fr')->firstOrFail();
+    $french->recordOnHistoryOf($document);
+    $french->delete();
     $document->setTranslation('it', ['title' => 'Ciao', 'body' => 'Corpo']);
     $document->update(['code' => 'second']);
     $document->refresh();

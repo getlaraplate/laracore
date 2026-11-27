@@ -6,6 +6,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
 use Modules\Core\Approvals\Operation;
+use Modules\Core\Approvals\PendingDeletionLock;
 use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionSetKind;
 use Modules\Core\Models\Modification;
@@ -99,6 +100,22 @@ it('refuses the approval with a conflict when the record changed since the reque
         ->and(Modification::query()->findOrFail($request->pendingRequest->getKey())->approvals()->count())->toBe(0);
 });
 
+it('makes no request for a revert that could never be applied: a record whose deletion waits for approval', function (): void {
+    HttpContext::pretendHttpRequest();
+    Auth::login(User::factory()->create());
+    $this->document->delete();
+
+    expect(fn () => $this->document->revertToRevision($this->target, $this->expected, RevertMode::Scalar))
+        ->toThrow(PendingDeletionLock::class)
+        ->and($this->document->modifications()->activeOnly()->where('operation', Operation::Revert->value)->count())->toBe(0);
+
+    Auth::login($this->superadmin);
+
+    expect(fn () => $this->document->revertToRevision($this->target, $this->expected, RevertMode::Scalar))
+        ->toThrow(PendingDeletionLock::class)
+        ->and($this->document->fresh()->title)->toBe('Second');
+});
+
 it('reverts at once for a superadmin, and for a model that does not ask approval of a revert', function (): void {
     HttpContext::pretendHttpRequest();
     Auth::login($this->superadmin);
@@ -108,7 +125,7 @@ it('reverts at once for a superadmin, and for a model that does not ask approval
     expect($report->isPending())->toBeFalse()
         ->and($this->document->fresh()->title)->toBe('First');
 
-    VersionedApprovalDocument::$operations = [Operation::Update];
+    VersionedApprovalDocument::$operations = [Operation::Create];
     $other = VersionedApprovalDocument::query()->create(['title' => 'Draft']);
     $created = (int) $other->currentRevision();
     $other->update(['title' => 'Edited']);
@@ -117,3 +134,11 @@ it('reverts at once for a superadmin, and for a model that does not ask approval
     expect($other->revertToRevision($created, (int) $other->currentRevision(), RevertMode::Scalar)->isPending())->toBeFalse()
         ->and($other->fresh()->title)->toBe('Draft');
 });
+
+it('asks approval of a revert on a model whose approval operations predate it and name updates', function (): void {
+    VersionedApprovalDocument::$operations = [Operation::Update];
+
+    expect(revert_as_writer($this)->isPending())->toBeTrue()
+        ->and($this->document->fresh()->title)->toBe('Second');
+});
+

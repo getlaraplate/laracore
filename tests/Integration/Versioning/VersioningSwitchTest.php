@@ -281,3 +281,40 @@ it('writes a baseline with every link at the first save after versioning is back
     expect($root->title)->toBe('Second')
         ->and($root->categories()->orderBy('position')->pluck('name')->all())->toBe(['A', 'B']);
 });
+
+it('reverts the translations to a baseline image, replaying from the image only', function (): void {
+    $document = TranslatedDocument::query()->create(['code' => 'doc', 'title' => 'Title']);
+    $document->setTranslation('it', ['title' => 'Titolo', 'body' => 'Testo']);
+    $document->save();
+    switch_off_and_on(TranslatedDocument::TABLE);
+    $document->update(['code' => 'anchored']);
+    $baseline = (int) switch_sets_of($document)->sole()->getKey();
+    $locales = $document->translations()->orderBy('locale')->get()->mapWithKeys(fn (TranslatedDocumentTranslation $translation): array => [$translation->locale => $translation->only(['title', 'body'])])->all();
+
+    $document->setTranslation('it', ['title' => 'Titolo nuovo']);
+    $document->setTranslation('fr', ['title' => 'Titre', 'body' => 'Corps']);
+    $document->refresh();
+
+    $document->revertToRevision($baseline, (int) $document->currentRevision(), RevertMode::OwnedPart);
+
+    expect($document->translations()->orderBy('locale')->get()->mapWithKeys(fn (TranslatedDocumentTranslation $translation): array => [$translation->locale => $translation->only(['title', 'body'])])->all())
+        ->toBe($locales);
+});
+
+it('reverts the links to a baseline image, replaying from the image only', function (): void {
+    $root = VersionedRelationRoot::query()->create(['title' => 'First']);
+    [$a, $b, $c] = collect(['A', 'B', 'C'])->map(fn (string $name): VersionedRelationSubject => VersionedRelationSubject::query()->create(['name' => $name]))->all();
+    $root->categories()->attach($a->getKey(), ['position' => 1]);
+    $root->categories()->attach($b->getKey(), ['position' => 2]);
+    switch_off_and_on(VersionedRelationRoot::TABLE);
+    $root->update(['title' => 'Second']);
+    $baseline = (int) switch_sets_of($root)->sole()->getKey();
+
+    $root->categories()->detach($a->getKey());
+    $root->categories()->attach($c->getKey(), ['position' => 3]);
+
+    $report = $root->revertToRevision($baseline, (int) $root->currentRevision(), RevertMode::Link);
+
+    expect($root->categories()->orderBy('position')->pluck('name')->all())->toBe(['A', 'B'])
+        ->and($report->restoredRelations)->toBe(['categories']);
+});
