@@ -57,6 +57,7 @@ use Modules\Core\ApplicationContent\Contracts\ApplicationContentRetrievalProvide
 use Modules\Core\Authorization\PermissionManifest;
 use Modules\Core\Cache\CacheManager as CoreCacheManager;
 use Modules\Core\Console\PruneMediaDraftsCommand;
+use Modules\Core\Console\PruneSearchQueryStatsCommand;
 use Modules\Core\Console\WarmCacheCommand;
 use Modules\Core\Contracts\BootSampler;
 use Modules\Core\Contracts\OutboxPublisher;
@@ -372,6 +373,7 @@ final class CoreServiceProvider extends ModuleServiceProvider
             $schedule = $this->app->make(Schedule::class);
 
             $schedule->command(PruneMediaDraftsCommand::class)->daily()->onOneServer();
+            $schedule->command(PruneSearchQueryStatsCommand::class)->daily()->onOneServer();
 
             // Housekeeping only: expiry is evaluated on read, so a missed run changes nothing.
             $schedule->command(ModelLockSweepCommand::class)->everyFiveMinutes()->onOneServer();
