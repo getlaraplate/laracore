@@ -60,6 +60,17 @@ it('keeps a new point and aligns the decimals to it on a spatial driver', functi
         ->and($place->longitude)->toBe(9.19);
 });
 
+it('clears the decimals when the point is cleared on a spatial driver', function (): void {
+    $place = storedSpatialPlace(1.0, 2.0);
+
+    $place->geolocation = null;
+    runPlaceSavingListeners($place);
+
+    expect($place->geolocation)->toBeNull()
+        ->and($place->latitude)->toBeNull()
+        ->and($place->longitude)->toBeNull();
+});
+
 it('rebuilds the point from changed decimals on a spatial driver', function (): void {
     $place = storedSpatialPlace(1.0, 2.0);
 
