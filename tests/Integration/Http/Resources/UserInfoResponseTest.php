@@ -105,3 +105,13 @@ it('groups permissions under separate keys per guard for superadmin', function (
         ->and($array['permissions']['web'])->toContain('default.webperm.select')
         ->and($array['permissions']['api'])->toContain('default.apiperm.select');
 });
+
+it('exposes the user timezone and none for an anonymous caller', function (): void {
+    $user = User::factory()->create(['timezone' => 'Europe/Rome']);
+
+    $array = (new UserInfoResponse($user))->toArray(new Request);
+    $anonymous = (new UserInfoResponse(null))->toArray(new Request);
+
+    expect($array['timezone'])->toBe('Europe/Rome')
+        ->and($anonymous['timezone'])->toBeNull();
+});

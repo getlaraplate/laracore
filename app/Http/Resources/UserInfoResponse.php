@@ -42,6 +42,8 @@ final class UserInfoResponse extends JsonResource
                 // The user's explicit language preference (null when unset — the
                 // caller falls back to the browser / app default itself).
                 'lang' => $this->resource->lang,
+                // The user's IANA timezone (null when unset: the caller converts from UTC on its own).
+                'timezone' => $this->resource->timezone,
                 'groups' => $roles,
                 'canImpersonate' => $this->resource->canImpersonate(),
                 'permissions' => $permissions,
@@ -59,6 +61,7 @@ final class UserInfoResponse extends JsonResource
             'username' => 'anonymous',
             'email' => 'anonymous',
             'lang' => null,
+            'timezone' => null,
             'groups' => [],
             'canImpersonate' => false,
             'permissions' => [],

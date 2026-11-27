@@ -20,6 +20,7 @@ return new class() extends Migration
         Schema::table($users_table, function (Blueprint $table) use ($users_table): void {
             $table->string('username')->unique("{$users_table}_username_UN")->nullable(false)->comment('The username of the user');
             $table->string('lang')->nullable(true)->comment('The language of the user');
+            $table->string('timezone')->nullable(true)->comment('The IANA timezone of the user, for example Europe/Rome');
             $table->datetime('last_login_at')->nullable(true)->comment('The last login date of the user');
             $table->foreignId('license_id')->nullable()->comment('The license assigned to the user');
             $table->text('two_factor_secret')->after('password')->nullable()->comment('The two factor secret of the user');
@@ -66,6 +67,7 @@ return new class() extends Migration
             }
             $table->dropColumn('username');
             $table->dropColumn('lang');
+            $table->dropColumn('timezone');
             $table->dropColumn('last_login_at');
             MigrateUtils::timestamps(
                 $table,

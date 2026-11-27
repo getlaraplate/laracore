@@ -18,6 +18,7 @@ use Filament\Commands\FileGenerators\Resources\Schemas\ResourceFormSchemaClassGe
 use Filament\Commands\FileGenerators\Resources\Schemas\ResourceInfolistSchemaClassGenerator;
 use Filament\Commands\FileGenerators\Resources\Schemas\ResourceTableClassGenerator;
 use Filament\Forms\Components\Toggle;
+use Filament\Support\Facades\FilamentTimezone;
 use Filament\Tables\Enums\FiltersLayout;
 use Filament\Tables\Table;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -138,6 +139,7 @@ use Modules\Core\Services\SettingsCacheCoordinator;
 use Modules\Core\Services\StubOutboxPublisher;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
+use Modules\Core\Support\DisplayTimezone;
 use Modules\Core\Support\Env\ConfigCacheRefresher;
 use Modules\Core\Support\Hierarchy\ClosureTableMaintainer;
 use Modules\Core\Support\Hierarchy\DynamicEntityCascade;
@@ -640,6 +642,11 @@ final class CoreServiceProvider extends ModuleServiceProvider
         Table::configureUsing(
             static fn (Table $table): Table => $table->filtersLayout(FiltersLayout::AfterContentCollapsible),
         );
+
+        // Filament reads this for every date-time column, entry and picker that sets no timezone of its own;
+        // date-only fields keep using app.timezone, which is UTC. The closure runs per read, so it sees the
+        // user of the request.
+        FilamentTimezone::set(static fn (): string => DisplayTimezone::current());
 
         $this->app->singleton(AttributeLabelResolver::class);
         $this->app->make(AttributeLabelResolver::class)->register();

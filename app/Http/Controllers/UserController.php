@@ -107,34 +107,47 @@ final class UserController extends Controller
     }
 
     /**
-     * Persist the caller's own UI preferences and echo back the refreshed profile. Each namespace
-     * received replaces the stored one and a null removes it; the others are left as they are, so
-     * two clients or two devices cannot erase each other.
+     * Persist the caller's own UI preferences, language and timezone and echo back the refreshed profile.
+     * Each preferences namespace received replaces the stored one and a null removes it; the others are
+     * left as they are, so two clients or two devices cannot erase each other. `lang` and `timezone`
+     * are written only when sent, and a null clears them.
      */
     public function updatePreferences(UpdatePreferencesRequest $request): \Illuminate\Http\JsonResponse
     {
         /** @var User $user */
         $user = Auth::user();
 
-        $bag = $user->preferences ?? [];
+        $attributes = [];
 
-        $preferences = $request->validated('preferences');
+        if ($request->has('preferences')) {
+            $bag = $user->preferences ?? [];
 
-        foreach (is_array($preferences) ? $preferences : [] as $namespace => $value) {
-            if ($value === null) {
-                unset($bag[$namespace]);
-            } else {
-                $bag[$namespace] = $value;
+            $preferences = $request->validated('preferences');
+
+            foreach (is_array($preferences) ? $preferences : [] as $namespace => $value) {
+                if ($value === null) {
+                    unset($bag[$namespace]);
+                } else {
+                    $bag[$namespace] = $value;
+                }
+            }
+
+            if (! PreferencesBag::fits($bag)) {
+                throw ValidationException::withMessages([
+                    'preferences' => 'The preferences may not exceed ' . PreferencesBag::MAX_BYTES . ' bytes once merged.',
+                ]);
+            }
+
+            $attributes['preferences'] = $bag;
+        }
+
+        foreach (['lang', 'timezone'] as $column) {
+            if ($request->has($column)) {
+                $attributes[$column] = $request->validated($column);
             }
         }
 
-        if (! PreferencesBag::fits($bag)) {
-            throw ValidationException::withMessages([
-                'preferences' => 'The preferences may not exceed ' . PreferencesBag::MAX_BYTES . ' bytes once merged.',
-            ]);
-        }
-
-        return $this->storePreferences($request, $user, $bag);
+        return $this->storeAttributes($request, $user, $attributes);
     }
 
     /**
@@ -145,7 +158,7 @@ final class UserController extends Controller
         /** @var User $user */
         $user = Auth::user();
 
-        return $this->storePreferences($request, $user, []);
+        return $this->storeAttributes($request, $user, ['preferences' => []]);
     }
 
     /**
@@ -159,7 +172,7 @@ final class UserController extends Controller
         $bag = $user->preferences ?? [];
         unset($bag[$namespace]);
 
-        return $this->storePreferences($request, $user, $bag);
+        return $this->storeAttributes($request, $user, ['preferences' => $bag]);
     }
 
     /**
@@ -181,11 +194,11 @@ final class UserController extends Controller
      * Self-service write on the caller's own row: bypass the CRUD `update` authorization and
      * versioning events, which gate admins editing other users.
      *
-     * @param  array<string, mixed>  $bag
+     * @param  array<string, mixed>  $attributes
      */
-    private function storePreferences(Request $request, User $user, array $bag): \Illuminate\Http\JsonResponse
+    private function storeAttributes(Request $request, User $user, array $attributes): \Illuminate\Http\JsonResponse
     {
-        $user->forceFill(['preferences' => $bag])->saveQuietly();
+        $user->forceFill($attributes)->saveQuietly();
 
         return new ResponseBuilder($request)
             ->setData(($this->getUserInfoAction)($user))

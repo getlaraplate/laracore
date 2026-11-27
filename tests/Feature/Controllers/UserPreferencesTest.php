@@ -183,3 +183,70 @@ test('a user reaches only their own preferences', function (): void {
 
     expect($this->user->refresh()->preferences)->toBe(['ui' => ['a' => 1]]);
 });
+
+test('update preferences saves the language and the timezone of the caller', function (): void {
+    config(['app.available_locales' => ['en', 'it']]);
+    $this->actingAs($this->user);
+
+    $this->patchJson(route('core.auth.updatePreferences'), ['lang' => 'it', 'timezone' => 'Europe/Rome'])
+        ->assertOk()
+        ->assertJsonPath('data.lang', 'it')
+        ->assertJsonPath('data.timezone', 'Europe/Rome');
+
+    expect($this->user->refresh()->lang)->toBe('it')
+        ->and($this->user->timezone)->toBe('Europe/Rome')
+        ->and($this->user->preferences)->toBeNull();
+});
+
+test('update preferences leaves the columns it does not receive as they are', function (): void {
+    $this->user->forceFill(['lang' => 'it', 'timezone' => 'Asia/Tokyo'])->save();
+    $this->actingAs($this->user);
+
+    $this->patchJson(route('core.auth.updatePreferences'), ['preferences' => ['ui' => ['a' => 1]]])->assertOk();
+
+    expect($this->user->refresh()->lang)->toBe('it')
+        ->and($this->user->timezone)->toBe('Asia/Tokyo')
+        ->and($this->user->preferences)->toBe(['ui' => ['a' => 1]]);
+});
+
+test('update preferences clears the timezone when it is null', function (): void {
+    $this->user->forceFill(['timezone' => 'Asia/Tokyo'])->save();
+    $this->actingAs($this->user);
+
+    $this->patchJson(route('core.auth.updatePreferences'), ['timezone' => null])
+        ->assertOk()
+        ->assertJsonPath('data.timezone', null);
+
+    expect($this->user->refresh()->timezone)->toBeNull();
+});
+
+test('update preferences refuses a timezone that is not an IANA identifier', function (string $timezone): void {
+    $this->actingAs($this->user);
+
+    $this->patchJson(route('core.auth.updatePreferences'), ['timezone' => $timezone])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['timezone']);
+
+    expect($this->user->refresh()->timezone)->toBeNull();
+})->with([
+    'offset' => '+02:00',
+    'abbreviation' => 'CET',
+    'unknown name' => 'Mars/Olympus',
+]);
+
+test('update preferences refuses a language that is not available', function (): void {
+    config(['app.available_locales' => ['en', 'it']]);
+    $this->actingAs($this->user);
+
+    $this->patchJson(route('core.auth.updatePreferences'), ['lang' => 'xx'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['lang']);
+});
+
+test('update preferences refuses a request that carries nothing to update', function (): void {
+    $this->actingAs($this->user);
+
+    $this->patchJson(route('core.auth.updatePreferences'), [])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['preferences']);
+});
