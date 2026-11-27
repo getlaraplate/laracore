@@ -11,6 +11,7 @@ use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
+use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -123,12 +124,19 @@ final readonly class RevisionReverter
         }
 
         $columns = $mode->includesColumns() ? $this->columnsAsOf($root, $revision) : null;
+        $translations = $mode->includesOwnedParts() && $anchor instanceof VersionSet && method_exists($root, 'setTranslation')
+            ? $this->translationsFromAnchor($root, $revision, $anchor)
+            : null;
         [$link_targets, $skipped_subjects] = $mode->includesLinks() && $anchor instanceof VersionSet
             ? $this->linksAsOf($root, $revision, $anchor, $force)
             : [[], []];
 
         if ($columns !== null) {
             $this->applyColumns($root, $columns['state']);
+        }
+
+        if ($translations !== null) {
+            $this->applyTranslations($root, $translations);
         }
 
         foreach ($link_targets as $relation => $target) {
@@ -278,6 +286,80 @@ final readonly class RevisionReverter
             ->orderBy('version_set_id')
             ->orderBy('sequence')
             ->get();
+    }
+
+    /**
+     * The record's translations as of the revision, locale to fields, replayed from its latest complete anchor: a
+     * locale whose last row up to the revision is `deleted` is absent.
+     *
+     * @param  Model&HasVersions  $root
+     * @return array<string, array<string, mixed>>
+     *
+     * @throws RevertRefusedException when no complete anchor exists at or before the revision
+     */
+    public function translationsAsOf(Model $root, int $revision): array
+    {
+        $anchor = $this->anchorSet($root, $revision);
+
+        throw_unless($anchor instanceof VersionSet, RevertRefusedException::class, RevertRefusedException::NO_COMPLETE_ANCHOR);
+
+        return $this->translationsFromAnchor($root, $revision, $anchor);
+    }
+
+    /**
+     * @param  Model&HasVersions  $root
+     * @return array<string, array<string, mixed>>
+     */
+    private function translationsFromAnchor(Model $root, int $revision, VersionSet $anchor): array
+    {
+        $locales = [];
+
+        foreach ($this->rowsFromAnchor($root, 'translations', $revision, $anchor) as $row) {
+            $locale = $row->subject_key['locale'] ?? null;
+
+            if (! is_string($locale)) {
+                continue;
+            }
+
+            $contents = is_array($row->contents) ? $row->contents : [];
+
+            $locales[$locale] = match (true) {
+                $row->change_type === VersionChangeType::Deleted => null,
+                // The first row of a locale and its row in a baseline are complete images (D45 rule 3).
+                $row->change_type === VersionChangeType::Created, $row->getStoredVersionStrategy() === VersionStrategy::SNAPSHOT => $contents,
+                default => array_merge($locales[$locale] ?? [], $contents),
+            };
+        }
+
+        return array_filter($locales, static fn (?array $fields): bool => $fields !== null);
+    }
+
+    /**
+     * Writes each locale of the target through the record, so the translation records its row on this instance
+     * (D28), and deletes the locales the target does not hold.
+     *
+     * @param  Model&HasVersions  $root
+     * @param  array<string, array<string, mixed>>  $target
+     */
+    private function applyTranslations(Model $root, array $target): void
+    {
+        foreach ($root->translations()->get() as $translation) {
+            $locale = $translation->getAttribute('locale');
+
+            if (is_string($locale) && array_key_exists($locale, $target)) {
+                continue;
+            }
+
+            if (method_exists($translation, 'recordOnHistoryOf')) {
+                $translation->recordOnHistoryOf($root);
+            }
+
+            $translation->delete();
+        }
+
+        foreach ($target as $locale => $fields) {
+            $root->setTranslation($locale, $fields);
+        }
     }
 
     /**
