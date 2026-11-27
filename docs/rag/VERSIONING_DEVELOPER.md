@@ -135,9 +135,10 @@ GET /api/v1/history/{module}/{entity}
 It answers with the record and its history rows (`history` relation, latest first). Rules:
 
 - The entity must have history handling, otherwise the call fails (`BadMethodCallException`).
-- The caller needs `select` on the entity and, because versions hold values as they were before publication,
-  `update` or `approve` on the record (`RelationAuthorizer::maySeePendingChanges()`). A record the caller cannot
-  see answers like a record that does not exist.
+- The caller needs `select` and `history` on the entity, or `revert`, which implies `history`
+  (`RelationAuthorizer::mayReadHistory()`): the versions show who changed what and the past values, drafts
+  included. A record the caller cannot see answers like a record that does not exist.
+- `POST /api/v1/revert/{module}/{entity}` reverts a record over HTTP with `revert`; see `CRUD_SYSTEM.md`, *Revert Route*.
 - `core_versions` has no generated permission: the history is only ever read through the record it belongs to.
 - The record is serialized through the model, so hidden attributes and the media projection apply, and history
   rows carry no nested copy of the record.
