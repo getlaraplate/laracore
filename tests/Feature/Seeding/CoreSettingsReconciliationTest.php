@@ -29,13 +29,14 @@ it('seeds per-model capability settings with the resolver naming', function (): 
 });
 
 it('stamps a derived setting with the module that owns the model, not Core', function (): void {
-    // HasVersions/SoftDeletes are baked into every model via the shared
-    // Modules\Core\Overrides\Model base class (see the neighboring test's
-    // comment), so any model outside Modules\Core is guaranteed to produce a
-    // versioning.strategy.{table} row. Discover one dynamically instead of
-    // hardcoding a module name, so this does not rot if module contents change.
+    // Not every model outside Modules\Core versions: pivots, comments and
+    // translations (NeverVersionedModels) are scanned with hasVersions=false and
+    // get no versioning.strategy.{table} row. Discover a foreign model that does
+    // version dynamically instead of hardcoding a module name, so this does not
+    // rot if module contents change.
     $foreign = collect(app(ModelCapabilityScanner::class)->scan())
-        ->first(fn ($capability): bool => str_starts_with($capability->modelClass, 'Modules\\')
+        ->first(fn ($capability): bool => $capability->hasVersions
+            && str_starts_with($capability->modelClass, 'Modules\\')
             && ! str_starts_with($capability->modelClass, 'Modules\\Core\\'));
 
     expect($foreign)->not->toBeNull('Expected at least one non-Core module model to be scannable.');
