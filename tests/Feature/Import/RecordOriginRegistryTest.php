@@ -234,3 +234,18 @@ it('drops a malformed url from the source instead of failing the import', functi
 
     expect(RecordOrigin::query()->sole()->url)->toBeNull();
 });
+
+it('stores a source instant that falls in a local daylight saving gap', function (): void {
+    $user = User::factory()->perpetual()->create();
+    $source_updated_at = CarbonImmutable::parse('2025-03-30 02:45:37', 'UTC');
+
+    app(RecordOriginRegistry::class)->register(
+        $user,
+        new ExternalRecordIdentity('naxos_api@liberta', '8423', null, $source_updated_at),
+    );
+
+    $origin = RecordOrigin::query()->sole();
+
+    expect($origin->getRawOriginal('source_updated_at'))->toBe('2025-03-30 02:45:37')
+        ->and($origin->source_updated_at?->equalTo($source_updated_at))->toBeTrue();
+});
