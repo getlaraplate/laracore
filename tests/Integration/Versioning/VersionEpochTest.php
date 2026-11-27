@@ -295,7 +295,7 @@ it('keeps a baseline due after an epoch change until a set that can carry it (D3
         $table->string('subtitle')->nullable();
     });
     app(VersionEpochs::class)->flush();
-    $article->revertToVersion($created->getKey());
+    $article->revertToVersion($created->getKey(), (int) $article->currentRevision());
 
     expect(VersionSet::query()->latest('id')->firstOrFail()->kind)->toBe(VersionSetKind::Revert);
 

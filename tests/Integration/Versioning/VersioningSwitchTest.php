@@ -7,6 +7,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionSetKind;
@@ -249,7 +250,7 @@ it('reverts to the baseline written after versioning is back on, translations in
     $anchor = $baseline->versions()->whereNull('relation_path')->where('version_strategy', VersionStrategy::SNAPSHOT->value)->sole();
     $document->update(['code' => 'later']);
 
-    $document->revertToVersion($anchor->getKey());
+    $document->revertToVersion($anchor->getKey(), (int) $document->currentRevision());
 
     $document->refresh();
 
@@ -274,7 +275,7 @@ it('writes a baseline with every link at the first save after versioning is back
         ->and($untouched->currentRevision())->toBeNull();
 
     $root->update(['title' => 'Third']);
-    $root->restoreToRevision($baseline->getKey(), (int) $root->currentRevision());
+    $root->revertToRevision($baseline->getKey(), (int) $root->currentRevision(), RevertMode::Scalar);
     $root->refresh();
 
     expect($root->title)->toBe('Second')

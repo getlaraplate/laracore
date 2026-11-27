@@ -203,7 +203,7 @@ it('never writes the baseline in a revert set and writes it at the next save (D6
     $target = $document->versions()->where('relation_path', null)->oldest('id')->firstOrFail();
     write_best_effort($document, ['code' => 'second']);
 
-    $document->revertToVersion($target->getKey());
+    $document->revertToVersion($target->getKey(), (int) $document->currentRevision());
     $revert = latest_set_of($document);
 
     expect($revert->kind)->toBe(VersionSetKind::Revert)

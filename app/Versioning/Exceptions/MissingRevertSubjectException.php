@@ -6,7 +6,7 @@ namespace Modules\Core\Versioning\Exceptions;
 
 use RuntimeException;
 
-final class MissingRestoreSubjectException extends RuntimeException
+final class MissingRevertSubjectException extends RuntimeException
 {
     /**
      * @param  list<int|string>  $missingSubjects
@@ -16,7 +16,7 @@ final class MissingRestoreSubjectException extends RuntimeException
         public readonly array $missingSubjects,
     ) {
         parent::__construct(sprintf(
-            "Cannot restore relation '%s': %d referenced subject(s) no longer exist. Pass force to skip them.",
+            "Cannot revert relation '%s': %d referenced subject(s) no longer exist. Pass force to skip them.",
             $relation,
             count($missingSubjects),
         ));

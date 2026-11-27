@@ -47,7 +47,7 @@ it('labels a save outside any transaction best effort, and its scalar revert sti
 
     expect(captures_after($this->sets_before))->toBe([VersionCaptureQuality::BestEffort]);
 
-    $this->document->revertToVersion($created->getKey());
+    $this->document->revertToVersion($created->getKey(), (int) $this->document->currentRevision());
 
     expect($this->document->fresh()->title)->toBe('First');
 });
@@ -75,7 +75,7 @@ it('labels a revert atomic', function (): void {
     $this->document->update(['title' => 'Second']);
     $before = VersionSet::query()->max('id');
 
-    $this->document->revertToVersion($created->getKey());
+    $this->document->revertToVersion($created->getKey(), (int) $this->document->currentRevision());
 
     expect(captures_after($before))->toBe([VersionCaptureQuality::Atomic]);
 });
