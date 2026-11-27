@@ -37,6 +37,7 @@ use LogicException;
 use Modules\Core\Approvals\PendingDeletionStrategy;
 use Modules\Core\Authorization\RetrievedSelectGuard;
 use Modules\Core\Cache\Repository as CacheRepository;
+use Modules\Core\Casts\ActionEnum;
 use Modules\Core\Casts\ColumnType;
 use Modules\Core\Casts\CrudRequestData;
 use Modules\Core\Casts\DetailRequestData;
@@ -45,6 +46,7 @@ use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\HistoryRequestData;
 use Modules\Core\Casts\ListRequestData;
 use Modules\Core\Casts\ModifyRequestData;
+use Modules\Core\Casts\RevertRequestData;
 use Modules\Core\Casts\SearchMode;
 use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\SelectRequestData;
@@ -711,6 +713,57 @@ class CrudService
                 : $this->searchWithScout($requestData, $permission_name, readable: $readable),
             SearchMode::Basic => $this->searchWithScout($requestData, $permission_name, readable: $readable),
         };
+    }
+
+    /**
+     * Reverts one record to a revision (D56, D62): `revert` on the entity and the record within its ACL, in the bin
+     * included, since a revert leaves the bin alone (D61). A revert that needs approval answers 202 with the request.
+     */
+    public function revert(RevertRequestData $requestData): CrudResult
+    {
+        $model = $requestData->model;
+
+        throw_unless($this->hasHistory($model), BadMethodCallException::class, sprintf("'%s' doesn't have history handling", $requestData->mainEntity));
+        $this->assertCrudWriteAllowed($model, 'update');
+
+        $permission_name = $this->auth->ensurePermission(
+            $requestData->request,
+            $model->getTable(),
+            ActionEnum::Revert->value,
+            $model->getConnectionName(),
+        );
+
+        $query = $this->queryOfRequestedKey($model, $requestData->request, 'revert');
+        $traits = class_uses_recursive($model::class);
+
+        if (in_array(CoreSoftDeletes::class, $traits, true)) {
+            $query->withoutGlobalScope(CustomSoftDeletingScope::class);
+        } elseif (in_array(EloquentSoftDeletes::class, $traits, true)) {
+            $query->withoutGlobalScope(SoftDeletingScope::class);
+        }
+
+        $this->auth->applyAclFiltersToQuery($query, $permission_name);
+        $record = $query->sole();
+
+        /** @var Model&HasVersions $record */
+        $report = $record->revertToRevision($requestData->revision, $requestData->expectedRevision, $requestData->mode, $requestData->force);
+
+        if ($report->pendingRequest instanceof Modification) {
+            return $this->capturedResult([$report->pendingRequest]);
+        }
+
+        return new CrudResult(data: [
+            'record' => $record->fresh() ?? $record,
+            'revert' => [
+                'target_revision' => $report->targetRevision,
+                'revision' => $report->revision,
+                'mode' => $report->mode->value,
+                'partial' => $report->isPartial(),
+                'restored_relations' => $report->restoredRelations,
+                'skipped_columns' => $report->skippedColumns,
+                'skipped_subjects' => $report->skippedSubjects,
+            ],
+        ]);
     }
 
     public function history(HistoryRequestData $requestData): CrudResult

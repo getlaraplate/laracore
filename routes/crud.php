@@ -14,6 +14,7 @@ Route::controller(CrudController::class)->group(function (): void {
     Route::get('/tree/{module}/{entity}', 'tree')->name('tree');
     Route::match(['get', 'post'], '/search/{module}/{entity?}', 'search')->name('search');
     Route::get('/history/{module}/{entity}', 'history')->name('history');
+    Route::post('/revert/{module}/{entity}', 'revert')->name('revert');
     Route::post('/insert/{module}/{entity}', 'insert')->name('insert');
     Route::match(['patch', 'put'], '/update/{module}/{entity}', 'update')->name('replace');
     Route::match(['delete', 'post'], '/delete/{module}/{entity}', 'delete')->name('delete');

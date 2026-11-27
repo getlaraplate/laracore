@@ -35,6 +35,7 @@ use Modules\Core\Http\Requests\LatestDisapprovalRequest;
 use Modules\Core\Http\Requests\ListRequest;
 use Modules\Core\Http\Requests\ModifyRequest;
 use Modules\Core\Http\Requests\PendingApprovalsRequest;
+use Modules\Core\Http\Requests\RevertRequest;
 use Modules\Core\Http\Requests\SearchRequest;
 use Modules\Core\Http\Requests\TreeRequest;
 use Modules\Core\Locking\Exceptions\CannotUnlockException;
@@ -48,6 +49,9 @@ use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\DomainActionDispatcher;
 use Modules\Core\Services\Crud\DTOs\CrudResult;
 use Modules\Core\Services\Crud\DTOs\FacetQuery;
+use Modules\Core\Versioning\Exceptions\MissingRevertSubjectException;
+use Modules\Core\Versioning\Exceptions\RevertRefusedException;
+use Modules\Core\Versioning\Exceptions\RevisionConflictException;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 use UnexpectedValueException;
@@ -212,6 +216,16 @@ class CrudController extends Controller
             fn (): CrudResult => $this->crudService->history($requestData),
             $request,
             $requestData,
+        );
+    }
+
+    final public function revert(RevertRequest $request): Response
+    {
+        $requestData = $request->parsed();
+
+        return $this->handleServiceCall(
+            fn (): CrudResult => $this->crudService->revert($requestData),
+            $request,
         );
     }
 
@@ -608,6 +622,25 @@ class CrudController extends Controller
                 $request,
             );
         } catch (ValidationException $ex) {
+            return $this->buildResponse(
+                new CrudResult(
+                    data: null,
+                    error: $ex->getMessage(),
+                    statusCode: Response::HTTP_UNPROCESSABLE_ENTITY,
+                ),
+                $request,
+            );
+        } catch (RevisionConflictException $ex) {
+            // The record moved past the revision the client read: a revert would overwrite a change it never saw.
+            return $this->buildResponse(
+                new CrudResult(
+                    data: null,
+                    error: $ex->getMessage(),
+                    statusCode: Response::HTTP_CONFLICT,
+                ),
+                $request,
+            );
+        } catch (RevertRefusedException|MissingRevertSubjectException $ex) {
             return $this->buildResponse(
                 new CrudResult(
                     data: null,
