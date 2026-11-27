@@ -7,6 +7,7 @@ namespace Modules\Core\Versioning;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Enums\RelationCoverage;
 use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionCaptureQuality;
 use Modules\Core\Enums\VersionChangeType;
@@ -33,7 +34,10 @@ use Modules\Core\Versioning\Exceptions\RevisionConflictException;
  */
 final readonly class RevisionReverter
 {
-    public function __construct(private VersionSetManagerInterface $manager) {}
+    public function __construct(
+        private VersionSetManagerInterface $manager,
+        private VersionEpochs $epochs,
+    ) {}
 
     /**
      * @param  Model&HasVersions  $root
@@ -69,16 +73,7 @@ final readonly class RevisionReverter
      */
     public function isRevisionOf(Model $root, int $revision): bool
     {
-        $root_ref = VersionSetRoot::forModel($root);
-        $version_set = new VersionSet;
-        $version_set->setConnection($root_ref->connectionName());
-
-        return $version_set->newQuery()
-            ->whereKey($revision)
-            ->where('root_type', $root_ref->type())
-            ->where('root_id', $root_ref->id())
-            ->where('root_table_ref', $root_ref->tableName())
-            ->exists();
+        return $this->setsOf($root)->whereKey($revision)->exists();
     }
 
     /**
@@ -92,6 +87,50 @@ final readonly class RevisionReverter
     public function completeAnchorAtOrBefore(Model $root, int $revision): ?int
     {
         return $this->anchorSet($root, $revision)?->getKey();
+    }
+
+    /**
+     * Why a complete revert to the revision may not run, empty when it may (spec "Complete revert", D57): a relation
+     * not covered by tests, an owned relation a revert cannot put back, no complete anchor, a set captured less than
+     * atomically between the anchor and the revision, a revision written in another schema epoch than the current one.
+     * A record with neither translations nor registered relations has only its columns, whose revert depends on
+     * none of these.
+     *
+     * @param  Model&HasVersions  $root
+     * @return list<string> the reasons, `RevertRefusedException` constants
+     */
+    public function completeRevertBlockers(Model $root, int $revision): array
+    {
+        if (! self::hasTranslations($root) && ! self::hasRegisteredRelations($root)) {
+            return [];
+        }
+
+        $blockers = [];
+        $descriptors = method_exists($root, 'versionedRelationDescriptors') ? $root->versionedRelationDescriptors() : [];
+
+        foreach ($descriptors as $descriptor) {
+            if ($descriptor->isOwned()) {
+                $blockers[] = RevertRefusedException::UNSUPPORTED_RELATION;
+            } elseif ($descriptor->coverage !== RelationCoverage::Complete) {
+                $blockers[] = RevertRefusedException::INCOMPLETE_COVERAGE;
+            }
+        }
+
+        $anchor = $this->anchorSet($root, $revision);
+
+        if (! $anchor instanceof VersionSet) {
+            $blockers[] = RevertRefusedException::NO_COMPLETE_ANCHOR;
+        } elseif ($this->setsOf($root)->whereBetween('id', [(int) $anchor->getKey(), $revision])->where('capture', '!=', VersionCaptureQuality::Atomic)->exists()) {
+            $blockers[] = RevertRefusedException::NOT_ATOMIC;
+        }
+
+        $revision_epoch = $root->versions()->reorder()->where('version_set_id', $revision)->max('epoch_id');
+
+        if ($revision_epoch !== null && (int) $revision_epoch !== (int) $this->epochs->currentFor($root)->getKey()) {
+            $blockers[] = RevertRefusedException::EPOCH_CHANGED;
+        }
+
+        return array_values(array_unique($blockers));
     }
 
     /**
@@ -115,19 +154,28 @@ final readonly class RevisionReverter
         }
 
         // Everything that can refuse the revert is decided before the first write.
+        $has_parts = self::hasTranslations($root);
+        $has_links = self::hasRegisteredRelations($root);
+
+        if ($mode === RevertMode::Complete && ($has_parts || $has_links)) {
+            $blockers = $this->completeRevertBlockers($root, $revision);
+
+            throw_if($blockers !== [], new RevertRefusedException($blockers[0] ?? RevertRefusedException::NO_COMPLETE_ANCHOR));
+        }
+
         $anchor = null;
 
-        if ($mode->includesLinks() || $mode->includesOwnedParts()) {
+        if (($mode->includesLinks() && $has_links) || ($mode->includesOwnedParts() && $has_parts)) {
             $anchor = $this->anchorSet($root, $revision);
 
             throw_unless($anchor instanceof VersionSet, RevertRefusedException::class, RevertRefusedException::NO_COMPLETE_ANCHOR);
         }
 
         $columns = $mode->includesColumns() ? $this->columnsAsOf($root, $revision) : null;
-        $translations = $mode->includesOwnedParts() && $anchor instanceof VersionSet && method_exists($root, 'setTranslation')
+        $translations = $mode->includesOwnedParts() && $has_parts && $anchor instanceof VersionSet
             ? $this->translationsFromAnchor($root, $revision, $anchor)
             : null;
-        [$link_targets, $skipped_subjects] = $mode->includesLinks() && $anchor instanceof VersionSet
+        [$link_targets, $skipped_subjects] = $mode->includesLinks() && $has_links && $anchor instanceof VersionSet
             ? $this->linksAsOf($root, $revision, $anchor, $force)
             : [[], []];
 
@@ -367,14 +415,7 @@ final readonly class RevisionReverter
      */
     private function anchorSet(Model $root, int $revision): ?VersionSet
     {
-        $root_ref = VersionSetRoot::forModel($root);
-        $version_set = new VersionSet;
-        $version_set->setConnection($root_ref->connectionName());
-
-        $anchor = $version_set->newQuery()
-            ->where('root_type', $root_ref->type())
-            ->where('root_id', $root_ref->id())
-            ->where('root_table_ref', $root_ref->tableName())
+        $anchor = $this->setsOf($root)
             ->where('kind', VersionSetKind::Baseline)
             ->where('capture', VersionCaptureQuality::Atomic)
             ->where('id', '<=', $revision)
@@ -390,5 +431,33 @@ final readonly class RevisionReverter
         $revision_epoch = $epoch_of($revision);
 
         return $anchor_epoch !== null && $revision_epoch !== null && (int) $anchor_epoch !== (int) $revision_epoch ? null : $anchor;
+    }
+
+    /**
+     * The version sets of the record: same root class, key and table.
+     *
+     * @param  Model&HasVersions  $root
+     * @return Builder<VersionSet>
+     */
+    private function setsOf(Model $root): Builder
+    {
+        $root_ref = VersionSetRoot::forModel($root);
+        $version_set = new VersionSet;
+        $version_set->setConnection($root_ref->connectionName());
+
+        return $version_set->newQuery()
+            ->where('root_type', $root_ref->type())
+            ->where('root_id', $root_ref->id())
+            ->where('root_table_ref', $root_ref->tableName());
+    }
+
+    private static function hasTranslations(Model $root): bool
+    {
+        return method_exists($root, 'setTranslation') && method_exists($root, 'translations');
+    }
+
+    private static function hasRegisteredRelations(Model $root): bool
+    {
+        return method_exists($root, 'hasRegisteredRelations') && $root->hasRegisteredRelations();
     }
 }
