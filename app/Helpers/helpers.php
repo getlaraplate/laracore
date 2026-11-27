@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Modules\Core\Helpers\HelpersCache;
+use Modules\Core\Models\User as CoreUser;
 use Nwidart\Modules\Module;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -713,7 +714,10 @@ if (! function_exists('user_class')) {
     /**
      * Get the user model class.
      *
-     * @return class-string<User>
+     * The configured model must be Core's User or extend it: Core, and every module through it, relies on what
+     * Core's User adds to Laravel's.
+     *
+     * @return class-string<CoreUser>
      */
     function user_class(): string
     {
@@ -723,8 +727,8 @@ if (! function_exists('user_class')) {
             throw new InvalidArgumentException('User model class must be a string.');
         }
 
-        if (! is_subclass_of($model, User::class)) {
-            throw new InvalidArgumentException('Configured user model must extend ' . User::class);
+        if (! is_a($model, CoreUser::class, true)) {
+            throw new InvalidArgumentException('Configured user model must extend ' . CoreUser::class);
         }
 
         return $model;

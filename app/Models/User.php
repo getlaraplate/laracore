@@ -41,13 +41,16 @@ use Modules\Core\Casts\ActionEnum;
 use Modules\Core\Contracts\ILockableModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
 use Modules\Core\Contracts\IValidatableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\UserFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Models\Pivot\ModelHasRole;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Observers\UserObserver;
 use Modules\Core\Services\ModificationVoteService;
 use Modules\Core\SoftDeletes\SoftDeletes;
@@ -58,8 +61,39 @@ use Spatie\Permission\PermissionRegistrar;
 use Spatie\Permission\Traits\HasRoles;
 use UnexpectedValueException;
 
-#[ObservedBy([UserObserver::class])]
-class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, MustVerifyEmail, PasskeyUser
+/**
+ * @property int $id
+ * @property string $name
+ * @property string $email
+ * @property \Carbon\CarbonImmutable|null $email_verified_at
+ * @property string $password
+ * @property string|null $two_factor_secret The two factor secret of the user
+ * @property string|null $remember_token
+ * @property \Carbon\CarbonImmutable|null $created_at
+ * @property \Carbon\CarbonImmutable|null $updated_at
+ * @property string $username The username of the user
+ * @property string|null $lang The language of the user
+ * @property string|null $last_login_at The last login date of the user
+ * @property int|null $license_id The license assigned to the user
+ * @property string|null $two_factor_recovery_codes The two factor recovery codes of the user
+ * @property bool $is_first_login Whether the account still needs the first-login onboarding flow
+ * @property bool $is_service_account Whether the account is non-interactive: it has no usable password, never signs in and authenticates with API tokens only
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property \Carbon\CarbonImmutable $valid_from
+ * @property \Carbon\CarbonImmutable|null $valid_to
+ * @property array<array-key, mixed>|null $preferences Server-persisted UI preferences (theme, density, layout) synced from the SPA
+ * @property string|null $social_id The id of the user at the social login provider
+ * @property string|null $social_service The social login provider the user signed in with
+ * @property string|null $social_token The access token of the social login, encrypted
+ * @property string|null $social_refresh_token The refresh token of the social login, encrypted
+ * @property string|null $social_token_secret The token secret of an OAuth 1 social login, encrypted
+ */
+#[ObservedBy([UserObserver::class, HierarchyOwnerObserver::class])]
+class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnceHash, ILockableModel, ISoftDeletableModel, IValidatableModel, IVersionedModel, MustVerifyEmail, PasskeyUser
 {
     use HasApiTokens;
 
@@ -80,6 +114,7 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
     }
     use Notifiable;
     use PasskeyAuthenticatable;
+    use ReturnsVersionedRelations;
     use SoftDeletes {
         HasVersions::delete insteadof SoftDeletes;
         HasVersions::forceDelete insteadof SoftDeletes;
@@ -145,6 +180,9 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
         'two_factor_recovery_codes',
         'last_login_at',
         'email_verified_at',
+        'social_token',
+        'social_refresh_token',
+        'social_token_secret',
     ];
 
     public function __construct(array $attributes = [])
@@ -316,11 +354,11 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
      */
     public function canAuthenticate(?CarbonInterface $at = null): bool
     {
-        if ($this->valid_from === null && $this->valid_to === null) {
+        if ($this->getAttribute('valid_from') === null && $this->valid_to === null) {
             return true;
         }
 
-        if ($this->valid_from === null) {
+        if ($this->getAttribute('valid_from') === null) {
             return false;
         }
 
@@ -634,6 +672,9 @@ class User extends BaseUser implements FilamentUser, HasLocalePreference, HasOnc
             'is_first_login' => 'boolean',
             'is_service_account' => 'boolean',
             'preferences' => 'array',
+            'social_token' => 'encrypted',
+            'social_refresh_token' => 'encrypted',
+            'social_token_secret' => 'encrypted',
         ];
     }
 

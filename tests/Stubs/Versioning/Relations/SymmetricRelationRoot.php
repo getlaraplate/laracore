@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Versioning\Relations;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\RelationOwnership;
 use Modules\Core\Models\Concerns\HasVersionedRelations;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -15,7 +16,7 @@ use Modules\Core\Versioning\Data\RelationDescriptor;
  * A root that registers a relation to records of its own class, like `Content::related()`: a change of it touches
  * two roots, which milestone 1 does not version (D24).
  */
-final class SymmetricRelationRoot extends Model
+final class SymmetricRelationRoot extends Model implements IVersionedModel
 {
     use HasVersionedRelations;
     use HasVersions;

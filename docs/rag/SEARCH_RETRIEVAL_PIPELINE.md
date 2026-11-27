@@ -221,8 +221,9 @@ filter and the original keyword query:
 "Hits" is `AdvancedSearchResult::total`, not the page, so every page of a search picks the same window. Each interval
 reaches the engine as two column filters, `>= from` and `< the day after to` (a date-time on the last day is inside),
 AND-ed with the request filters, which stay untouched. They go through the same advanced-filters path for every engine
-(a `range` clause on Elasticsearch, a query callback on the database engine); Typesense takes the same path but the
-date filter was not tested on it. On the dated attempts the date words are taken out of the keyword query
+(a `range` clause on Elasticsearch, a query callback on the database engine, a range on the `int64` timestamp of the
+date on Typesense, see `MODULE.md`, "Search abstractions and engines"); on Typesense it was checked on the filter string
+the engine writes, not on a live cluster. On the dated attempts the date words are taken out of the keyword query
 (`DateExpressionResolver::withoutDateExpressions()`), otherwise "reports of 2024" would require the term "2024" in the
 text; when nothing else would be left the full keyword query is kept. The final run with no filter keeps the date
 words. The vector branch always embeds the full question.
@@ -461,10 +462,13 @@ translation strongly still brings out the document in Italian when Italian is re
 document exists in Italian. This is strict; the `translations.locale_fallback.*` settings govern how a
 translated model is shown elsewhere and do not apply to search.
 
-The restriction is part of the engine request, not a clean-up after it. `EnsembleSearchService` adds a
-`locales` where clause to every strategy when the model's engine implements `ILocaleFilterableEngine` and its
-index records `locales` (`filtersByLocale()`; Elasticsearch does, and a mono-language model such as a ticket
-does not). The Elasticsearch engine turns it into a document-level `terms` filter on the nearest-vector search,
+The restriction is part of the engine request, not a clean-up after it. `RequestedLocale::apply()` adds a
+`locales` where clause when the model's engine implements `ILocaleFilterableEngine` and its index records
+`locales` (`filtersByLocale()`; Elasticsearch does, and a mono-language model such as a ticket does not). Every
+search path calls it: `EnsembleSearchService` on every strategy of the orchestrated path, and
+`CrudService::searchWithScout()` on the basic one. The basic path used to leave it out, so on Elasticsearch it
+returned documents in another language that the orchestrated and auto paths kept out, and matched the text on
+the fields of every language. The Elasticsearch engine turns it into a document-level `terms` filter on the nearest-vector search,
 on the keyword search and on the text half of a hybrid search, whose hits are added to the vector ones. Applied
 only after the top results are fetched, the documents of another language took the first places and were then
 dropped, and a request for five results returned one to four. An engine without the capability is left alone:
@@ -485,6 +489,50 @@ service) and then the model's own `IAuthorizesSearchRehydration` guard, so a hit
 returned (a strategy that dropped the filters, an index out of date) is dropped there. The cost is that such a
 hit takes a place in the page. The CMS and SAO application-content providers have always reloaded through an
 authorized query.
+
+A model's default search filters reach the engine on every path: the ones it declares
+(`ProvidesDefaultSearchFilters`), and, on a host of extenders (`IExtendableModel`, such as CMS `Content`), its type
+column `IS NULL`, derived from the host contract (`DefaultSearchFilters::of()`), so the rows extenders own stay out.
+The basic path puts them on the Scout builder (`CrudService::searchWithScout()`). `AdvancedSearchService::search()`
+joins them to the filters its caller passes, ahead of them (`DefaultSearchFilters::merge()`), so the orchestrated
+and auto paths and every direct caller of the service, such as the CMS application-content provider of the in-app
+assistant, inherit them. A caller passes only its own filters and never adds the defaults itself. They used to reach
+the engine on the basic path only: on the others an extended content that matched the query came back from the
+engine, took a place in the page and was dropped on reload by the hiding scope, so the page held fewer records than
+asked for. The merged tree gives the Scout builder the same calls in the same order as the basic path, so an explicit
+request filter on the same field behaves the same on both: an equality replaces the default on Elasticsearch and
+Typesense, which keep one equality per field, and is ANDed with it on the database engine; any other condition is
+ANDed with it everywhere. A default field must be filterable in the model's search schema, since the orchestrated
+path applies it through the same constraint applier as the request filters. An equality on null is `must_not
+exists` on Elasticsearch and the null placeholder on Typesense (see `MODULE.md`, "Search abstractions and engines").
+
+**Extended rows.** Two searches replace the host's exclusion of extended rows, never join it (`$hostRows` of
+`DefaultSearchFilters::merge()` and `AdvancedSearchService::search()`), and the constraint applier then removes the
+host's hiding scope from the engine's database queries and from the hydration of the hits, so the rows the filters
+select survive them (spec `2026-11-17-extended-entity-search-design.md`):
+
+- **An extender** (`/search/shop/products`) runs on the index of its host, kept to its alias, with its own
+  permission and ACL (XS1, XS2). `ExtenderFilterTranslator` maps a request filter, an ACL condition and a sort to the
+  host index by one rule (XS10): an attribute the extender mounts from its host to the host field of the same name, an
+  own column the extender indexes as filterable to `extension.<column>`. A request filter or sort it cannot map
+  answers 400; an ACL condition it cannot map is left out of the engine. The hits reload as extenders by their host
+  key, under the extender's whole ACL, in the order of the engine.
+- **A host opened with `with_extended`** (`/search/cms/contents?with_extended=true`) keeps a plain row, or a row of an
+  alias whose table the user may `select` with the part of that extender's ACL the index can apply (XS3 to XS5). The
+  reload applies the host ACL to every row and each extender's whole ACL to its rows, then upcasts the extended rows.
+
+| Constraint | Basic | Orchestrated, Auto, direct `AdvancedSearchService` callers |
+|---|---|---|
+| Default search filters, host exclusion of extended rows | engine (builder `where()`) | engine (merged into the filters) |
+| Alias condition of an extender, readable aliases of `with_extended` | engine, in place of the host exclusion; reload | engine, in place of the host exclusion; reload |
+| ACL row filters | engine, then reload | engine, then reload |
+| Extender ACL (extender search, `with_extended`) | engine for the translatable part, then reload whole | engine for the translatable part, then reload whole |
+| Request filters | engine; scopes and relation filters on reload | engine; scopes and relation filters on reload |
+| Requested locale (`locales`) | engine, when the engine filters by locale | engine, when the engine filters by locale |
+
+`SearchPathEligibilityContractTest` runs Basic, Orchestrated and Auto on the same rows, filters and user and
+requires the same records from each, on a host opened to its extenders and on an extender too. The database engine has no locale field, so `RequestedLocaleSearchPathTest`
+covers the locale: on an engine that filters by locale, every path hands it the `locales` restriction, once.
 
 The text is matched on the fields of the requested language only (`title.it`, `subtitle.it`, `content.it`, with
 the title boosted), analysed with that language's analyser; fields with no language (`entity`, `preset`, ...)
@@ -645,37 +693,6 @@ endpoint, without a search query. `test:perf:bench` and `perf:profile` can targe
 profile (the public API must be exposed, as `perf:crud` does with the `expose_api` setting), but none
 of the perf commands prints the response body, so the per-stage split comes from step 2.
 
-## Eligibility on every path
-
-A model that implements `ProvidesDefaultSearchFilters` declares equality filters that every search of it
-carries (CMS `Content` uses `extended_type => null` to keep extended contents out of the generic search).
-They apply on every search path: Basic mode, and every strategy of the orchestrated modes (keyword,
-vector and hybrid, so `auto` too). One helper, `Modules\Core\Search\Support\DefaultSearchFilters`,
-adds them to the Scout builder of `CrudService::searchWithScout()` and of each strategy of
-`EnsembleSearchService`, always after the request constraints, so a request filter cannot widen a
-default:
-
-- where the engine ANDs the constraints (the database engine's keyword path, Scout's Typesense filter),
-  a request filter that contradicts the default finds nothing;
-- where the engine reads the constraints as a `field => value` map (`ScoutWheres::map()`: Elasticsearch,
-  the database engine's vector candidates, the Typesense vector search), the default, written last, keeps
-  the field.
-
-A contradictory request filter can therefore give an empty result on one engine or strategy and the
-defaulted set on another, but never a row the default excludes. A surface that must reach rows a default
-excludes searches its own model, not the generic search of the defaulted one. Callers of
-`AdvancedSearchService`, such as the CRUD orchestrated path and the CMS content retrieval provider,
-inherit this with no code of their own.
-
-How a `null` default is read depends on the engine:
-
-- Elasticsearch: a `null` equality means "field missing" (`bool.must_not.exists`).
-- Database engine: a `null` equality is `IS NULL`.
-- Typesense: there is no filter for a missing or `null` field. `TypesenseEngine` skips a `null` equality
-  wherever it builds a filter (the keyword parameters handed to Scout, the vector search filter and
-  `buildSearchFilters()`) instead of failing the search, so a model whose default is `null` is searched
-  without that filter there. Extended contents are not excluded on Typesense.
-
 ## The application search registry
 
 A daily aggregate of what guests and readers search, to find queries that return little or nothing. It is
@@ -829,6 +846,21 @@ feature is on and a queue worker runs; `ai:embeddings:repair` does not detect su
 The steps by hand, for a single model or an engine the command does not cover: `scout:sync-mapping "{Model}"`, then
 `scout:reindex "{Model}"` and `scout:check-index "{Model}"`; when the mapping cannot be patched,
 `scout:delete-index "{Model}"`, `scout:index "{Model}"` and `scout:import "{Model}"`.
+
+### Syncing recent changes (`scout:sync`)
+
+`scout:sync {model} {--id=} {--from=}` sends a model's records to its index again, without rebuilding anything. It
+takes the records `scout:import` would index, trashed ones included, and narrows them:
+
+- `--id`: that record only;
+- `--from`: the records updated after that date;
+- neither: the records updated after the last indexing, as the model's engine reports it. When the engine cannot tell
+  (an engine other than Core's own, an empty index, a failed lookup), every record is synced.
+
+Each record is indexed again, except a trashed one, which is removed from the index unless `scout.soft_delete` keeps
+trashed documents flagged in it, as Scout does when a record is deleted. With `scout.queue` on, the work is queued.
+The model must implement `ISearchableModel`, which every model with Core's `Searchable` trait declares (PHPStan and the
+app test `SearchableModelsImplementTheContractTest` check it).
 
 ## FAQ prompts for RAG
 

@@ -6,9 +6,11 @@ namespace Modules\Core\Services\Geocoding;
 
 use Closure;
 use Exception;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Contracts\Geocoding\GeocodingResult;
 use Modules\Core\Contracts\Geocoding\IGeocodingService;
 use Override;
@@ -129,15 +131,13 @@ abstract class AbstractGeocodingService implements IGeocodingService
     protected function rememberGeocodingThroughCache(string $cache_key, int $ttl_seconds, Closure $resolver): mixed
     {
         try {
-            return Cache::remember($cache_key, $ttl_seconds, function () use ($cache_key, $ttl_seconds, $resolver): mixed {
-                $value = $resolver();
-
-                if (method_exists(Cache::getStore(), 'tags')) {
-                    Cache::tags(['geocoding'])->put($cache_key, $value, $ttl_seconds);
-                }
-
-                return $value;
-            });
+            return resolve(LabelledCache::class)->remember(
+                CacheManager::key('geocoding', $cache_key),
+                [CacheLabel::geocoding()],
+                $ttl_seconds,
+                $resolver,
+                static fn (mixed $value): bool => $value !== null,
+            );
         } catch (Exception $exception) {
             Log::error('Geocoding cache error: ' . $exception->getMessage());
 

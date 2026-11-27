@@ -6,7 +6,6 @@ use Elastic\Elasticsearch\Client as ElasticsearchClient;
 use GuzzleHttp\HandlerStack;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes as BaseSoftDeletes;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
@@ -330,172 +329,68 @@ it('normalizeCronJobs gives parameters and both flags to an entry cached before 
 });
 
 it('registerCommandSchedules reads cached cron jobs without database calls', function (): void {
+    CronJob::factory()->create(['command' => 'cron-probe:prune', 'is_active' => true]);
+    $table = (new CronJob())->getTable();
+
+    // The first load reads the table and stores the list in the label index.
+    invokePrivate($this->provider, 'registerCommandSchedules');
+    runLastBootedCallback();
+
+    $connection = (new CronJob())->getConnection();
+    $connection->flushQueryLog();
+    $connection->enableQueryLog();
+    $probe_events = static fn (): int => count(array_filter(
+        app(Illuminate\Console\Scheduling\Schedule::class)->events(),
+        static fn (Illuminate\Console\Scheduling\Event $event): bool => str_contains((string) $event->command, 'cron-probe:prune'),
+    ));
+    $scheduled_before = $probe_events();
+
+    invokePrivate($this->provider, 'registerCommandSchedules');
+    runLastBootedCallback();
+
+    $cron_queries = array_filter(
+        $connection->getQueryLog(),
+        static fn (array $query): bool => str_contains((string) $query['query'], $table),
+    );
+    $connection->disableQueryLog();
+
+    // The second load scheduled the cached cron job without reading its table.
+    expect($cron_queries)->toBe([])
+        ->and($probe_events())->toBeGreaterThan($scheduled_before);
+});
+
+it('registerCommandSchedules serves the cron list from the index and reloads it after a cron job is saved', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    $cron = CronJob::factory()->create(['command' => 'cron-probe:prune', 'is_active' => true]);
+    $index->stores = [];
+
+    invokePrivate($this->provider, 'registerCommandSchedules');
+    runLastBootedCallback();
+    invokePrivate($this->provider, 'registerCommandSchedules');
+    runLastBootedCallback();
+
+    expect($index->stores)->toHaveCount(1)
+        ->and($index->stores[0]['lookup']->dependencies->labels)->toBe(['table:core_cron_jobs'])
+        ->and($index->stores[0]['ttl'])->toBe((int) config('cache.duration.long'));
+
+    $cron->update(['schedule' => '*/5 * * * *']);
+    invokePrivate($this->provider, 'registerCommandSchedules');
+    runLastBootedCallback();
+
+    expect($index->stores)->toHaveCount(2);
+});
+
+it('registerCommandSchedules schedules the cron list found in the index without reading the database', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
     $cache_key = (new ReflectionClass(CronJob::class))->newInstanceWithoutConstructor()->getTable();
-    Cache::put($cache_key, []);
+    $lookup = $index->lookup($cache_key, new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::table($cache_key)]));
+    $index->store($lookup, [['command' => 'cron-probe:prune', 'schedule' => '* * * * *']], 60);
 
     invokePrivate($this->provider, 'registerCommandSchedules');
-    runLastBootedCallback();
 
-    expect(true)->toBeTrue();
-});
-
-it('registerCommandSchedules uses tagged cache hit and schedules cached commands', function (): void {
-    $cache_key = (new ReflectionClass(CronJob::class))->newInstanceWithoutConstructor()->getTable();
-    $cached_crons = [['command' => 'inspire', 'schedule' => '* * * * *']];
-
-    $tagged_cache = new class($cached_crons, $cache_key)
-    {
-        public function __construct(private array $crons, private string $key) {}
-
-        public function has(string $key): bool
-        {
-            return $key === $this->key;
-        }
-
-        public function get(string $key): array
-        {
-            return $key === $this->key ? $this->crons : [];
-        }
-
-        public function put(string $key, array $value): void {}
-    };
-
-    $cache_store = new class()
-    {
-        public function supportsTags(): bool
-        {
-            return true;
-        }
-
-        public function getCacheTags(): array
-        {
-            return ['core'];
-        }
-    };
-
-    Cache::shouldReceive('store')->atLeast()->once()->andReturn($cache_store);
-    Cache::shouldReceive('tags')->with(['core'])->andReturn($tagged_cache);
-
-    $schedule = app()->make(Illuminate\Console\Scheduling\Schedule::class);
-    $initial_count = count($schedule->events());
-
-    invokePrivate($this->provider, 'registerCommandSchedules');
-    runLastBootedCallback();
-
-    expect(count($schedule->events()))->toBeGreaterThan($initial_count);
-});
-
-it('registerCommandSchedules stores loaded crons into tagged cache on miss', function (): void {
-    $cron = CronJob::factory()->create([
-        'command' => 'inspire',
-        'schedule' => '* * * * *',
-        'is_active' => true,
-    ]);
-    $cache_key = $cron->getTable();
-    $put_called = false;
-
-    $tagged_cache = new class($cache_key, $put_called)
-    {
-        public function __construct(private string $key, public bool &$put_called) {}
-
-        public function has(string $key): bool
-        {
-            return false;
-        }
-
-        public function get(string $key): array
-        {
-            return [];
-        }
-
-        public function put(string $key, array $value): void
-        {
-            if ($key === $this->key && $value !== []) {
-                $this->put_called = true;
-            }
-        }
-    };
-
-    $cache_store = new class()
-    {
-        public function supportsTags(): bool
-        {
-            return true;
-        }
-
-        public function getCacheTags(): array
-        {
-            return ['core'];
-        }
-    };
-
-    Cache::shouldReceive('store')->atLeast()->once()->andReturn($cache_store);
-    Cache::shouldReceive('tags')->with(['core'])->andReturn($tagged_cache);
-
-    invokePrivate($this->provider, 'registerCommandSchedules');
-    runLastBootedCallback();
-
-    expect($put_called)->toBeTrue();
-});
-
-it('registerCommandSchedules stores loaded crons into default cache when tags unsupported', function (): void {
-    $cron = CronJob::factory()->create([
-        'command' => 'inspire',
-        'schedule' => '* * * * *',
-        'is_active' => true,
-    ]);
-    $cache_key = $cron->getTable();
-    $put_called = false;
-
-    $cache_store = new class()
-    {
-        public function supportsTags(): bool
-        {
-            return false;
-        }
-    };
-
-    Cache::shouldReceive('store')->atLeast()->once()->andReturn($cache_store);
-    Cache::shouldReceive('has')->with($cache_key)->atLeast()->once()->andReturnFalse();
-    Cache::shouldReceive('put')->withArgs(function (string $key, array $value) use ($cache_key, &$put_called): bool {
-        $ok = $key === $cache_key && $value !== [];
-
-        if ($ok) {
-            $put_called = true;
-        }
-
-        return $ok;
-    })->atLeast()->once();
-
-    invokePrivate($this->provider, 'registerCommandSchedules');
-    runLastBootedCallback();
-
-    expect($put_called)->toBeTrue();
-});
-
-it('registerCommandSchedules reads crons from default cache when tags unsupported and key exists', function (): void {
-    $cache_key = (new ReflectionClass(CronJob::class))->newInstanceWithoutConstructor()->getTable();
-    $cached_crons = [['command' => 'inspire', 'schedule' => '* * * * *']];
-
-    $cache_store = new class()
-    {
-        public function supportsTags(): bool
-        {
-            return false;
-        }
-    };
-
-    Cache::shouldReceive('store')->atLeast()->once()->andReturn($cache_store);
-    Cache::shouldReceive('has')->with($cache_key)->atLeast()->once()->andReturnTrue();
-    Cache::shouldReceive('get')->with($cache_key)->atLeast()->once()->andReturn($cached_crons);
-
-    $schedule = app()->make(Illuminate\Console\Scheduling\Schedule::class);
-    $initial_count = count($schedule->events());
-
-    invokePrivate($this->provider, 'registerCommandSchedules');
-    runLastBootedCallback();
-
-    expect(count($schedule->events()))->toBeGreaterThan($initial_count);
+    expect(scheduledCronProbes())->toHaveCount(1);
 });
 
 it('configureUrls forces https in production when enabled', function (): void {

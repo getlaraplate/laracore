@@ -16,9 +16,9 @@ use Modules\Core\Database\Factories\EntityFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasActivation;
-use Modules\Core\Models\Concerns\HasPath;
 use Modules\Core\Models\Concerns\HasSlug;
 use Modules\Core\Observers\DynamicContentMetadataObserver;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Model;
 use Override;
 
@@ -27,8 +27,17 @@ use Override;
  * @property string $name
  * @property string $slug
  * @property IDynamicEntityTypable $type
+ * @property bool $is_active Whether the entity is active
+ * @property bool $is_default Whether the entity is the default entity for same type
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
  */
-#[ObservedBy(DynamicContentMetadataObserver::class)]
+#[ObservedBy([DynamicContentMetadataObserver::class, HierarchyOwnerObserver::class])]
 abstract class Entity extends Model implements IActivatableModel, ILockableModel
 {
     // region Traits
@@ -37,7 +46,6 @@ abstract class Entity extends Model implements IActivatableModel, ILockableModel
     }
     use HasCache;
     use HasLocks;
-    use HasPath;
     use HasSlug;
     // endregion
 
@@ -94,12 +102,6 @@ abstract class Entity extends Model implements IActivatableModel, ILockableModel
         ]);
 
         return $rules;
-    }
-
-    #[Override]
-    public function getPath(): ?string
-    {
-        return null;
     }
 
     protected static function newFactory(): EntityFactory

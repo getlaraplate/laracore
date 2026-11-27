@@ -10,7 +10,6 @@ use function Laravel\Prompts\confirm;
 use Exception;
 use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Exceptions\NotSupportedException;
-use Modules\Core\Cache\HasCache;
 use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Search\Contracts\ISearchMaintenanceGuard;
@@ -200,7 +199,6 @@ final class RebuildIndexCommand extends Command
 
         if ($queue) {
             dispatch(new ReindexSearchJob($model_class));
-            $this->invalidateCache($model);
             $this->warn(sprintf('  Reindex of %s queued; its result is not verified.', $model_class));
 
             return self::QUEUED;
@@ -214,8 +212,6 @@ final class RebuildIndexCommand extends Command
 
             return self::FAILED;
         }
-
-        $this->invalidateCache($model);
 
         $after = $inspector->inspect($model);
 
@@ -294,8 +290,6 @@ final class RebuildIndexCommand extends Command
 
             return self::FAILED;
         }
-
-        $this->invalidateCache($model);
 
         $after = $inspector->inspect($model);
 
@@ -381,13 +375,6 @@ final class RebuildIndexCommand extends Command
     private function indexName(ISearchableModel $model): string
     {
         return method_exists($model, 'indexableAs') ? (string) $model->indexableAs() : (string) $model->searchableAs();
-    }
-
-    private function invalidateCache(ISearchableModel $model): void
-    {
-        if (in_array(HasCache::class, class_uses_recursive($model), true) && method_exists($model, 'invalidateCache')) {
-            $model->invalidateCache();
-        }
     }
 
     private function logFailure(string $step, string $model_class, Exception $exception): void

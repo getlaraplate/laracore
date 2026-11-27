@@ -77,6 +77,8 @@ php artisan env:fill
 
 It lists the variables of `.env.example` that the `.env` does not define (a commented line counts as not defined, an empty `NAME=` as defined), autocompletes their names, asks the value of the one you pick (the example value is the default, the comments above it are the hint, secret names such as `*_KEY`, `*_SECRET`, `*_PASSWORD`, `*_TOKEN` are asked with a masked prompt) and appends it to the file at once. An empty name ends the loop. If anything was written to the application's own `.env`, it then offers to run `config:clear` and `config:cache`; do not leave a cached configuration on a machine that runs the test suite.
 
+The prompts take one line: a value that spans several lines (a PEM key) is written by editing the file, because a paste is cut at its first line. A secret name (any underscore-separated word `KEY`, `SECRET`, `PASSWORD`, `PASS`, `TOKEN` or `CREDENTIAL`, so also `AWS_ACCESS_KEY_ID`) is asked masked.
+
 `--file=` and `--example=` point it at another pair of files, for example a copy of the production `.env`; the cache question is then not asked. Without a terminal to ask on (`--no-interaction`, or standard input that is not a terminal, as in `ssh host 'php artisan env:fill'` without `-t`) it only reports how many variables are missing and exits with `1`. It writes through a symlinked `.env` (Deployer, Envoyer layouts) to the file the link points to, keeps the mode and, for a superuser, the owner of the file, and builds on what the file holds when it writes, so an edit made while a prompt is open is kept. Accepting the default offered writes the example's own text, so a `"${APP_NAME}"` reference stays one.
 
 ## Configuration
@@ -218,7 +220,7 @@ SOCIALITE_REDIRECT= 							#socialite redirect
 
 The Elasticsearch client of the stack (`elasticsearch/elasticsearch` 9) writes `compatible-with=9` into the `Accept` and `Content-Type` headers of every request, and a server of major 8 refuses it with a `400 media_type_header_exception` ("Accept version must be either version 8 or 7, but found 9"). The supported setup is a server and a client of the same major.
 
-`ELASTIC_COMPATIBLE_WITH=8` is a **hack for testing**: it rewrites that number in the outgoing headers (`Search\Support\ElasticsearchCompatibilityHeader`, a Guzzle middleware put on the client built by `CoreServiceProvider`), so the version 9 client can be tried against a version 8 cluster.
+`ELASTIC_COMPATIBLE_WITH=8` is a **hack for testing**: it rewrites that number in the outgoing headers (`Search\Support\ElasticsearchCompatibilityHeader`, a Guzzle middleware put on every client built by `Search\Support\ElasticClientBuilder`: the container's client and the Scout driver's, which creates and deletes the indexes), so the version 9 client can be tried against a version 8 cluster.
 
 - **No guarantee.** Only the header changes. The requests are still those of the version 9 client, so a call that the server does not know still fails, a request that the server parses differently can misbehave, and a client update can break it. Nothing in the test suite runs against a real server of another major.
 - **Not for production.** Use it on a development or test machine, to see whether an indexing or a search runs. For anything else use a server of the major of the client, or a client of the major of the server.
@@ -724,7 +726,7 @@ The Core Module utilizes several packages to enhance its functionality. Below is
     -   [laravel/fortify](https://github.com/laravel/fortify): Authentication scaffolding.
     -   Model versioning is part of Core (`HasVersions`, `Version`), derived from overtrue/laravel-versionable, which is no longer a dependency (see Third-party code).
     -   [spatie/laravel-permission](https://github.com/spatie/laravel-permission): Roles and permissions.
-    -   [staudenmeir/laravel-adjacency-list](https://github.com/staudenmeir/laravel-adjacency-list): Hierarchical data handling.
+    -   Hierarchies (roles, taxonomies, comments) use Core's own closure tables (`HasClosureTable`, `MigrateUtils::closureTable()`, `ClosureTableMaintainer`), which replaced staudenmeir/laravel-adjacency-list; their writers take a per-hierarchy lock in `core_hierarchy_locks`; see [docs/rag/HIERARCHIES_DEVELOPER.md](docs/rag/HIERARCHIES_DEVELOPER.md).
     -   [spatie/eloquent-sortable](https://github.com/spatie/eloquent-sortable): Ordering helpers for Eloquent.
 
 -   **UI / Admin:**
@@ -824,7 +826,7 @@ The Core Module includes built-in features such as:
 -   Social login integration with multiple providers
 -   Spatial data support for geographical applications
 -   Composite primary keys support
--   Adjacency list pattern for hierarchical data structures
+-   Closure-table hierarchies (roles, taxonomies, comments) with set-based maintenance
 -   Vector search capabilities with AI-powered embeddings
 -   Typesense search engine integration
 

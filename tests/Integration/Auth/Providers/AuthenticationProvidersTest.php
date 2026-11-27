@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use App\Models\User as AppUser;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Socialite\Facades\Socialite;
 use Laravel\Socialite\Two\User as SocialiteUser;
@@ -13,20 +12,6 @@ use Modules\Core\Models\License;
 use Modules\Core\Models\Pivot\ModelHasRole;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
-
-beforeEach(function (): void {
-    $user_schema = (new AppUser)->getConnection()->getSchemaBuilder();
-
-    if (! $user_schema->hasColumn((new AppUser)->getTable(), 'social_id')) {
-        $user_schema->table((new AppUser)->getTable(), function (Blueprint $table): void {
-            $table->string('social_id')->nullable();
-            $table->string('social_service')->nullable();
-            $table->string('social_token')->nullable();
-            $table->string('social_refresh_token')->nullable();
-            $table->string('social_token_secret')->nullable();
-        });
-    }
-});
 
 it('handles fortify canHandle/isEnabled/provider name branches', function (): void {
     $provider = new FortifyCredentialsProvider();

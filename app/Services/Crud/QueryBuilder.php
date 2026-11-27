@@ -196,17 +196,38 @@ final class QueryBuilder
      */
     public function requestedRelationPaths(Model $model, SelectRequestData $request_data, bool $lenient_filters = false, bool $include_columns = true): array
     {
+        $by_use = $this->requestedRelationPathsByUse($model, $request_data, $lenient_filters, $include_columns);
+
+        return array_values(array_unique(array_merge($by_use['display'], $by_use['membership'])));
+    }
+
+    /**
+     * {@see requestedRelationPaths()} split by what the path is used for. `display` holds the relations loaded to
+     * be shown: `relations` and the relation part of plain dotted columns. `membership` holds the ones that decide
+     * which rows come out or how they are counted and ordered: aggregate columns, computed columns, group by,
+     * sorts and filters. A path used both ways is in both lists. The guards and the black-list handling are those
+     * of {@see requestedRelationPaths()}.
+     *
+     * @throws InvalidArgumentException when a relation name of the request is not a relation
+     *
+     * @return array{display: list<string>, membership: list<string>}
+     */
+    public function requestedRelationPathsByUse(Model $model, SelectRequestData $request_data, bool $lenient_filters = false, bool $include_columns = true): array
+    {
         $main_entity = $model->getTable();
         $request_columns = $include_columns ? $this->requestColumns($model, $request_data->columns) : [];
         $columns = $this->groupColumns($main_entity, $request_columns);
-        $loaded = array_merge(
+        $displayed = array_merge(
             $this->normalizeRelations($request_data->relations),
             array_keys($columns['relations']),
+        );
+        $loaded_for_membership = array_merge(
             array_keys($columns['aggregates']),
             array_keys($this->extractComputedColumns($main_entity, $request_columns)['relations']),
             $this->groupByRelations($request_data),
         );
-        $this->cleanRelations($loaded);
+        $this->cleanRelations($displayed);
+        $this->cleanRelations($loaded_for_membership);
 
         $named = [];
 
@@ -226,21 +247,30 @@ final class QueryBuilder
             }
         }
 
-        $paths = [];
+        $display = [];
 
-        foreach ($loaded as $path) {
-            $paths[] = $this->assertRelationPath($model, $path);
+        foreach ($displayed as $path) {
+            $display[] = $this->assertRelationPath($model, $path);
+        }
+
+        $membership = [];
+
+        foreach ($loaded_for_membership as $path) {
+            $membership[] = $this->assertRelationPath($model, $path);
         }
 
         foreach ($named as $path) {
             $path = $lenient_filters ? $this->resolvableRelationPrefix($model, $path) : $this->assertRelationPath($model, $path);
 
             if ($path !== '') {
-                $paths[] = $path;
+                $membership[] = $path;
             }
         }
 
-        return array_values(array_unique($paths));
+        return [
+            'display' => array_values(array_unique($display)),
+            'membership' => array_values(array_unique($membership)),
+        ];
     }
 
     /**
@@ -620,6 +650,7 @@ final class QueryBuilder
      * table does not have is ignored. The caller needs the right to read the related entity.
      *
      * @param  Builder<Model>  $query
+     * @param  'asc'|'desc'  $direction
      *
      * @throws AuthorizationException when the caller may not read the related entity
      */

@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Arr;
 use Modules\Core\Casts\FieldType;
 use Modules\Core\Contracts\IDynamicEntityTypable;
+use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Models\Entity;
 use Modules\Core\Models\Field;
 use Modules\Core\Models\Pivot\Presettable;
@@ -153,7 +154,7 @@ trait HasDynamicContents
             $entity_id = null;
             $presettable = $this->relationLoaded('presettable') ? $this->getRelation('presettable') : null;
 
-            if ($presettable === null || ($presettable instanceof Model && (string) $presettable->getKey() !== (string) $value)) {
+            if ($presettable === null || ($presettable instanceof Model && (string) ModelKey::of($presettable) !== (string) $value)) {
                 $presettable = $this->presettable()->getResults();
                 $this->setRelation('presettable', $presettable);
             }
@@ -298,7 +299,7 @@ trait HasDynamicContents
         foreach ($this->fields() as $field) {
             $rule = $field->type->getRule();
 
-            if ($field->pivot->is_required) {
+            if ($field->presetPivot()->is_required) {
                 $rule .= '|required';
 
                 if ($field->type === FieldType::Array) {
@@ -495,7 +496,7 @@ trait HasDynamicContents
                 return $only_translatable ? ($is_translatable === true) : ($is_translatable !== true);
             })
             ->mapWithKeys(function (Field $field) use ($components): array {
-                $value = data_get($components, $field->name, $field->pivot->default);
+                $value = data_get($components, $field->name, $field->presetPivot()->default);
 
                 // Ensure ARRAY fields always have an array value (even if empty) to pass validation
                 if ($field->type === FieldType::Array && $value === null) {

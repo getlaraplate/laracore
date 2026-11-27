@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Process;
+use Modules\Core\Cache\Labels\CacheDependencies;
 use Modules\Core\Console\TranslationsCheckCommand;
+use Modules\Core\Contracts\ICacheLabelIndex;
+use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
@@ -206,4 +209,18 @@ it('rewrites unsorted translation files in the format Pint produces', function (
             'nested' => ['a' => 'A', 'b' => 'Back\\slash'],
             'zebra' => 'It\'s a "zebra"',
         ]);
+});
+
+it('flushes the translations label when the check ends', function (): void {
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+    $lookup = $index->lookup('translations.en', new CacheDependencies(['translations']));
+    $index->store($lookup, ['a' => 'b'], 60);
+
+    $command = translationsCheckCommandWithOutput(app(TranslationsCheckCommand::class));
+    $exit = $command->run(new ArrayInput([]), new BufferedOutput());
+
+    expect($exit)->toBe(0)
+        ->and($index->flushes)->toContain(['translations'])
+        ->and($index->lookup('translations.en', new CacheDependencies(['translations']))->hit)->toBeFalse();
 });

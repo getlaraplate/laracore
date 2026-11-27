@@ -60,8 +60,8 @@ final class CronJobsTable
                     TextColumn::make('runs')
                         ->formatStateUsing(static fn (CronJob $record): string => sprintf(
                             'Last run: %s<br>Next run: %s',
-                            $record->last_run_at?->format('Y-m-d H:i:s'),
-                            $record->next_run_at?->format('Y-m-d H:i:s'),
+                            $record->previousRunAt()?->format('Y-m-d H:i:s'),
+                            $record->nextRunAt()?->format('Y-m-d H:i:s'),
                         ))
                         ->toggleable(isToggledHiddenByDefault: true)
                         ->grow(false)

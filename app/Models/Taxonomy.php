@@ -9,19 +9,18 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Support\Collection;
 use Modules\Core\Contracts\IActivatableModel;
 use Modules\Core\Contracts\IDynamicEntityTypable;
 use Modules\Core\Contracts\ILockableModel;
+use Modules\Core\Contracts\ITranslatableModel;
 use Modules\Core\Contracts\IValidatableModel;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Locking\Traits\HasLocks;
 use Modules\Core\Models\Concerns\HasActivation;
 use Modules\Core\Models\Concerns\HasApprovals;
-use Modules\Core\Models\Concerns\HasPath;
+use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Concerns\HasTranslatedDynamicContents;
-use Modules\Core\Models\Concerns\HasTypedRecursiveRelationships;
 use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\SortableTrait;
 use Modules\Core\Models\Translations\TaxonomyTranslation;
@@ -29,7 +28,30 @@ use Modules\Core\Overrides\Model;
 use Override;
 use Spatie\EloquentSortable\Sortable;
 
-abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, IValidatableModel, Sortable
+/**
+ * @property int $id
+ * @property int $entity_id
+ * @property int $presettable_id
+ * @property int|null $parent_id
+ * @property string|null $logo The logo of the taxonomy
+ * @property string|null $logo_full The full logo of the taxonomy
+ * @property bool $is_active Whether the taxonomy is active
+ * @property int $order_column The order of the taxonomy
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property \Carbon\CarbonImmutable $valid_from
+ * @property \Carbon\CarbonImmutable|null $valid_to
+ * @property array<array-key, mixed>|null $shared_components The shared dynamic components of the taxonomy
+ * @property string|null $name
+ * @property string|null $slug
+ * @property array<array-key, mixed>|null $components
+ */
+abstract class Taxonomy extends Model implements IActivatableModel, ILockableModel, ITranslatableModel, IValidatableModel, Sortable
 {
     // region Traits
     use HasActivation {
@@ -39,15 +61,14 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         HasApprovals::toArray as private approvalsToArray;
         HasApprovals::requiresApprovalWhen as private requiresApprovalWhenTrait;
     }
+    use HasClosureTable;
     use HasLocks;
-    use HasPath;
     use HasTranslatedDynamicContents {
         HasTranslatedDynamicContents::getRules as private getRulesDynamicContents;
         HasTranslatedDynamicContents::toArray as private translatedDynamicContentsToArray;
         HasTranslatedDynamicContents::casts as private translatedDynamicContentsCasts;
         HasTranslatedDynamicContents::getTranslationModelClass as private getTranslationModelClassDynamicContents;
     }
-    use HasTypedRecursiveRelationships;
     use HasValidity;
     use SortableTrait {
         SortableTrait::scopeOrdered as private scopePriorityOrdered;
@@ -125,7 +146,7 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     /**
      * Shared translation table {@see TaxonomyTranslation} keys rows with taxonomy_id, not {subclass}_id.
      *
-     * @return HasMany<TaxonomyTranslation>
+     * @return HasMany<TaxonomyTranslation, $this>
      */
     public function translations(): HasMany
     {
@@ -157,20 +178,6 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
     }
 
     #[Override]
-    public function getPath(): string
-    {
-        // Use slug from translation and build a stable ancestor chain
-        return $this->buildAncestorChain('slug', '/');
-    }
-
-    public function appendPaths(): self
-    {
-        $this->appends = array_merge($this->appends, ['ids', 'path', 'full_name']);
-
-        return $this;
-    }
-
-    #[Override]
     public function toArray(): array
     {
         // $parsed = parent::toArray() ?? $this->attributesToArray();
@@ -190,24 +197,12 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         });
     }
 
+    /**
+     * @return class-string<TaxonomyTranslation>
+     */
     protected static function getTranslationModelClass(): string
     {
         return TaxonomyTranslation::class;
-    }
-
-    /**
-     * Eager-load ancestors (and their translations) for path-related accessors.
-     *
-     * @param  Builder<static>  $query
-     * @return Builder<static>
-     */
-    #[Scope]
-    final protected function withAncestorsForPath(Builder $query): Builder
-    {
-        return $query->with([
-            'ancestors',
-            'ancestors.translations',
-        ]);
     }
 
     #[Scope]
@@ -252,55 +247,10 @@ abstract class Taxonomy extends Model implements IActivatableModel, ILockableMod
         return $this->requiresApprovalWhenTrait($modifications) && ($modifications[self::$valid_from_column] ?? $modifications[self::$valid_to_column] ?? false);
     }
 
-    final protected function ids(): Attribute
-    {
-        return Attribute::make(
-            get: fn (): string => $this->buildAncestorChain('id', '.'),
-        );
-    }
-
-    final protected function fullName(): Attribute
-    {
-        return Attribute::make(
-            get: fn (): string => $this->buildAncestorChain('name', ' > '),
-        );
-    }
-
     final protected function title(): Attribute
     {
         return Attribute::make(
             get: fn () => $this->name,
         );
-    }
-
-    /**
-     * Build a concatenated chain from ancestors plus the current model.
-     */
-    private function buildAncestorChain(string $field, string $separator): string
-    {
-        $ancestors = $this->ancestors;
-
-        if (! $ancestors instanceof Collection) {
-            $ancestors = collect();
-        }
-
-        /** @var Collection<int,mixed> $segments */
-        $segments = $ancestors
-            ->pluck($field)
-            ->filter(static fn (mixed $value): bool => $value !== null && $value !== '')
-            ->reverse()
-            ->values();
-
-        $current = $this->{$field} ?? null;
-
-        if ($current !== null && $current !== '') {
-            $segments->push($current);
-        }
-
-        if ($segments->isEmpty()) {
-            return (string) ($current ?? '');
-        }
-
-        return $segments->join($separator);
     }
 }

@@ -6,7 +6,11 @@ namespace Modules\Core\Services;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Modules\Core\Authorization\RetrievedSelectGuard;
 use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
+use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Setting;
 
 /**
@@ -14,6 +18,11 @@ use Modules\Core\Models\Setting;
  *
  * Group lookups read the persistent group cache (or hydrate it from the DB);
  * further lookups reuse in-memory group collections until flushed.
+ *
+ * The groups and the name index are cached through the label index under the
+ * label of the settings table, for `cache.duration.long`: any write to the table
+ * through a model, and any flush of the whole table, reaches them, as does the
+ * recovery purge of a failover index after an outage.
  */
 final class PerModelSettingResolver
 {
@@ -82,24 +91,21 @@ final class PerModelSettingResolver
             return $this->loaded_groups[$group_name];
         }
 
-        $cached = Cache::get(self::groupCacheKey($group_name));
-
-        if ($cached instanceof Collection) {
-            return $this->loaded_groups[$group_name] = $cached;
-        }
-
-        // Invalid / legacy payloads (e.g. plain arrays from Redis-after-fork
-        // corruption or older writers) must not leak past the Collection return type.
-        if ($cached !== null) {
-            Cache::forget(self::groupCacheKey($group_name));
-        }
-
-        $group = Setting::query()
-            ->where('group_name', $group_name)
-            ->get()
-            ->keyBy('name');
-
-        Cache::forever(self::groupCacheKey($group_name), $group);
+        // A payload that is not a collection (an array from Redis-after-fork corruption or an older writer) is read
+        // again from the database and stored over.
+        $group = self::cache()->remember(
+            self::groupCacheKey($group_name),
+            self::cacheLabels(),
+            self::cacheTtl(),
+            static fn (): Collection => RetrievedSelectGuard::without(
+                Setting::class,
+                static fn (): Collection => Setting::query()
+                    ->where('group_name', $group_name)
+                    ->get()
+                    ->keyBy('name'),
+            ),
+            static fn (mixed $group): bool => $group instanceof Collection,
+        );
 
         return $this->loaded_groups[$group_name] = $group;
     }
@@ -183,7 +189,7 @@ final class PerModelSettingResolver
         $this->flushNameIndex();
 
         foreach (array_keys($this->loaded_groups) as $group_name) {
-            Cache::forget(self::groupCacheKey($group_name));
+            self::cache()->forget(self::groupCacheKey($group_name), self::cacheLabels());
         }
 
         $this->loaded_groups = [];
@@ -191,7 +197,7 @@ final class PerModelSettingResolver
 
     public function flushGroup(string $group_name): void
     {
-        Cache::forget(self::groupCacheKey($group_name));
+        self::cache()->forget(self::groupCacheKey($group_name), self::cacheLabels());
         unset($this->loaded_groups[$group_name]);
     }
 
@@ -207,8 +213,26 @@ final class PerModelSettingResolver
 
     public function flushNameIndex(): void
     {
-        Cache::forget(self::nameIndexCacheKey());
+        self::cache()->forget(self::nameIndexCacheKey(), self::cacheLabels());
         $this->name_index = null;
+    }
+
+    private static function cache(): LabelledCache
+    {
+        return resolve(LabelledCache::class);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function cacheLabels(): array
+    {
+        return [CacheLabel::table(CoreTables::Settings->value)];
+    }
+
+    private static function cacheTtl(): int
+    {
+        return (int) config('cache.duration.long');
     }
 
     /**
@@ -220,23 +244,17 @@ final class PerModelSettingResolver
             return $this->name_index;
         }
 
-        $cached = Cache::get(self::nameIndexCacheKey());
-
-        if (is_array($cached)) {
-            return $this->name_index = $cached;
-        }
-
-        // Invalid / legacy payloads (e.g. a Collection from Redis-after-fork
-        // corruption or older writers) must not leak past the ?array property type.
-        if ($cached !== null) {
-            Cache::forget(self::nameIndexCacheKey());
-        }
-
-        $name_index = Setting::query()
-            ->pluck('group_name', 'name')
-            ->toArray();
-
-        Cache::forever(self::nameIndexCacheKey(), $name_index);
+        // A payload that is not an array (a collection from Redis-after-fork corruption or an older writer) is read
+        // again from the database and stored over.
+        $name_index = self::cache()->remember(
+            self::nameIndexCacheKey(),
+            self::cacheLabels(),
+            self::cacheTtl(),
+            static fn (): array => Setting::query()
+                ->pluck('group_name', 'name')
+                ->toArray(),
+            is_array(...),
+        );
 
         return $this->name_index = $name_index;
     }

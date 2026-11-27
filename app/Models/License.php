@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Validation\Rule;
 use Modules\Core\Contracts\IValidatableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\LicenseFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Concerns\HasValidations;
@@ -18,7 +19,16 @@ use Modules\Core\Models\Concerns\HasValidity;
 use Modules\Core\Models\Concerns\HasVersions;
 use Override;
 
-final class License extends Model implements IValidatableModel
+/**
+ * @property int $id
+ * @property string $uuid Public license reference shown to customers
+ * @property int $is_deleted Soft delete flag (see SoftDeletes trait scope)
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable $valid_from
+ * @property \Carbon\CarbonImmutable|null $valid_to
+ */
+final class License extends Model implements IValidatableModel, IVersionedModel
 {
     use HasFactory;
     use HasValidations {

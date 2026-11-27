@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Modules\Core\Contracts;
 
+use Closure;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 
 /**
@@ -15,20 +17,36 @@ use Illuminate\Support\Collection;
  * an Eloquent Model and called these on faith.
  *
  * Scout's own methods are declared without return types, the way Scout declares
- * them, so a model inheriting them stays compatible.
+ * them, so a model inheriting them stays compatible. The trait also requires the
+ * embedding contract, so every searchable model is one.
+ *
+ * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
  */
-interface ISearchableModel
+interface ISearchableModel extends IEmbeddableModel
 {
     public static function reindex(?int $chunk = null): void;
 
     /**
-     * @phpstan-return \Illuminate\Database\Eloquent\Builder<\Illuminate\Database\Eloquent\Model&self>
+     * @phpstan-return \Illuminate\Database\Eloquent\Builder<Model&self>
      */
-    public static function makeAllSearchableQuery();
+    public static function makeAllSearchableQuery(); // @pest-ignore-type: Scout declares these without return types
+
+    /**
+     * @param  string  $query
+     * @param  Closure|null  $callback
+     *
+     * @phpstan-return \Laravel\Scout\Builder<Model&static>
+     */
+    public static function search($query = '', $callback = null); // @pest-ignore-type: Scout declares these without return types
 
     public function ensureIndexExists(): bool;
 
     public function isEmbeddable(): bool;
+
+    /**
+     * When the index was last written for this model, or null when its engine cannot tell.
+     */
+    public function getLastIndexedTimestamp(): ?string;
 
     /**
      * @return list<string>
@@ -38,31 +56,46 @@ interface ISearchableModel
     /**
      * @phpstan-return \Laravel\Scout\Engines\Engine
      */
-    public function searchableUsing();
+    public function searchableUsing(); // @pest-ignore-type: Scout declares these without return types
+
+    /**
+     * Prepare a chunk of this class's models for the index: the relations the searchable array reads are loaded here.
+     *
+     * @template TCollection of Collection<int, covariant Model>
+     *
+     * @param  TCollection  $models
+     * @return TCollection
+     */
+    public function makeSearchableUsing(Collection $models): Collection;
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toSearchableArray(): array;
 
     /**
      * @phpstan-return string
      */
-    public function searchableAs();
+    public function searchableAs(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return bool
      */
-    public function shouldBeSearchable();
+    public function shouldBeSearchable(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return int|string
      */
-    public function getScoutKey();
+    public function getScoutKey(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * @phpstan-return string
      */
-    public function getScoutKeyName();
+    public function getScoutKeyName(); // @pest-ignore-type: Scout declares these without return types
 
-    public function searchable();
+    public function searchable(); // @pest-ignore-type: Scout declares these without return types
 
-    public function unsearchable();
+    public function unsearchable(); // @pest-ignore-type: Scout declares these without return types
 
     /**
      * Index the given models of this class through the bulk path now.

@@ -28,6 +28,7 @@ use Override;
  * @property string|null $reason
  * @property int|null $reverted_from_set_id
  * @property \Carbon\CarbonImmutable|null $created_at
+ * @property int|null $baseline_from_sequence First row of the aggregate image appended to a baseline (D45)
  */
 final class VersionSet extends Model
 {

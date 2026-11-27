@@ -18,9 +18,11 @@ use Modules\Core\Search\Contracts\ISearchPlanner;
 use Modules\Core\Search\Contracts\ISearchStrategyResolver;
 use Modules\Core\Search\Contracts\IVectorProfileProvider;
 use Modules\Core\Search\Contracts\IVectorSearchAvailability;
+use Modules\Core\Search\Engines\CollectionEngine;
 use Modules\Core\Search\Engines\DatabaseEngine;
 use Modules\Core\Search\Engines\ElasticsearchEngine;
 use Modules\Core\Search\Engines\TypesenseEngine;
+use Modules\Core\Search\Extensions\ExtensionRegistry;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\CoreSearchStrategyResolver;
 use Modules\Core\Search\Services\FallbackSearchPlanner;
@@ -53,6 +55,7 @@ final class SearchServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->make(EngineManager::class)->extend('database', fn (Application $app): DatabaseEngine => $app->make(DatabaseEngine::class));
+        $this->app->make(EngineManager::class)->extend('collection', static fn (): CollectionEngine => new CollectionEngine());
 
         $this->app->singleton(ISearchEngine::class, static fn (Application $app) => $app->make(EngineManager::class)->engine());
 
@@ -68,5 +71,6 @@ final class SearchServiceProvider extends ServiceProvider
         $this->app->scoped(SearchDegradations::class);
         $this->app->singleton(RetrievalTuningProfile::class);
         $this->app->singleton(AdvancedSearchService::class);
+        $this->app->singleton(ExtensionRegistry::class);
     }
 }

@@ -9,6 +9,7 @@ use Modules\Core\Cache\Repository as CacheRepository;
 use Modules\Core\Casts\Column;
 use Modules\Core\Casts\ColumnType;
 use Modules\Core\Casts\SelectRequestData;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
 use Modules\Core\Services\Authorization\AuthorizationService;
@@ -16,7 +17,7 @@ use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\QueryBuilder;
 use Modules\Core\Tests\Fixtures\CrudServiceTestSingleRelChild;
 use Modules\Core\Tests\Fixtures\CrudServiceTestSingleRelParent;
-use Staudenmeir\LaravelAdjacencyList\Eloquent\HasRecursiveRelationships;
+use Modules\Core\Tests\Stubs\ClosureTreeStubModel;
 
 it('normalizes scalar and array key values to where condition', function (): void {
     $service = new CrudService(app(AuthorizationService::class), app(QueryBuilder::class));
@@ -42,17 +43,14 @@ it('normalizes scalar and array key values to where condition', function (): voi
 it('detects models using recursive, approval, and history traits', function (): void {
     $service = new CrudService(app(AuthorizationService::class), app(QueryBuilder::class));
 
-    $recursive = new class extends Model
-    {
-        use HasRecursiveRelationships;
-    };
+    $recursive = new ClosureTreeStubModel;
 
     $approvable = new class extends Model
     {
         use HasApprovals;
     };
 
-    $versioned = new class extends Model
+    $versioned = new class extends Model implements IVersionedModel
     {
         use HasVersions;
     };

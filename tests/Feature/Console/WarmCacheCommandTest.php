@@ -5,9 +5,26 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Cache\CacheManager;
 use Modules\Core\Console\WarmCacheCommand;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\CronJob;
 use Modules\Core\Models\Setting;
+use Modules\Core\Services\PerModelSettingResolver;
+use Modules\Core\Tests\Stubs\Cache\SpyLabelIndex;
 use Symfony\Component\Console\Command\Command as BaseCommand;
+
+/**
+ * The versioning settings group as cache:warm left it in the label index, null when it is not cached.
+ */
+function warmedVersioningGroup(): mixed
+{
+    $lookup = resolve(ICacheLabelIndex::class)->lookup(
+        PerModelSettingResolver::groupCacheKey('versioning'),
+        new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::table('core_settings')]),
+    );
+
+    return $lookup->hit ? $lookup->value : null;
+}
 
 /**
  * Do not assert ReflectionClass::isFinal(): tests/Pest.php enables DG\BypassFinals,
@@ -39,25 +56,23 @@ it('cache:warm command reports number of entries and elapsed time', function ():
 
 // Feature: performance-optimization, Property 22: Cache warming command is idempotent
 // Validates: Requirements 16.3
-it('running cache:warm twice produces the same version_strategies cache state', function (): void {
+it('running cache:warm twice produces the same versioning settings cache state', function (): void {
     CacheManager::resetAppNameCache();
     HasVersions::resetVersionStrategyCache();
 
     // Create some versioning settings
     Setting::factory()->create(['group_name' => 'versioning', 'name' => 'versioning.strategy.test_table']);
 
-    $cache_key = CacheManager::key('version_strategies');
-
     // First run
     $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
-    $state_after_first = Cache::get($cache_key);
+    $state_after_first = warmedVersioningGroup();
 
     // Reset L1 to force re-read from L2 on second run
     HasVersions::resetVersionStrategyCache();
 
     // Second run
     $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
-    $state_after_second = Cache::get($cache_key);
+    $state_after_second = warmedVersioningGroup();
 
     // Both runs must produce the same cache state (idempotency)
     expect($state_after_first)->not->toBeNull()
@@ -71,11 +86,11 @@ it('running cache:warm N times always produces the same final cache state', func
     CacheManager::resetAppNameCache();
     HasVersions::resetVersionStrategyCache();
 
-    $cache_key = CacheManager::key('version_strategies');
+    Setting::factory()->create(['group_name' => 'versioning', 'name' => 'versioning.strategy.test_table']);
 
     // Run once to establish baseline
     $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
-    $baseline = Cache::get($cache_key);
+    $baseline = warmedVersioningGroup();
 
     // Run N more times and verify state is always identical to baseline
     $runs = fake()->numberBetween(2, 5);
@@ -83,7 +98,7 @@ it('running cache:warm N times always produces the same final cache state', func
     for ($i = 0; $i < $runs; $i++) {
         HasVersions::resetVersionStrategyCache();
         $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
-        $current = Cache::get($cache_key);
+        $current = warmedVersioningGroup();
 
         expect($current)->not->toBeNull();
 
@@ -117,9 +132,7 @@ it('cache:warm is triggered on boot when warm_on_boot is true', function (): voi
     config(['core.cache.warm_on_boot' => true]);
 
     HasVersions::resetVersionStrategyCache();
-
-    $cache_key = CacheManager::key('version_strategies');
-    Cache::forget($cache_key);
+    resolve(Modules\Core\Cache\Labels\CacheLabelInvalidator::class)->flushTable('core_settings');
 
     // Simulate the booted hook by directly invoking the WarmCacheCommand
     // (the hook calls $this->app->make(WarmCacheCommand::class)->handle())
@@ -127,4 +140,63 @@ it('cache:warm is triggered on boot when warm_on_boot is true', function (): voi
 
     expect($exit_code)->toBe(BaseCommand::SUCCESS);
     expect(config('core.cache.warm_on_boot'))->toBeTrue();
+});
+
+it('cache:warm stores the active cron jobs in the index under the label of their table', function (): void {
+    CronJob::factory()->create(['command' => 'cron-probe:prune', 'is_active' => true]);
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+
+    $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
+
+    $stored = array_values(array_filter(
+        $index->stores,
+        static fn (array $store): bool => $store['lookup']->dependencies->labels === ['table:core_cron_jobs'],
+    ));
+
+    expect($stored)->toHaveCount(1)
+        ->and($stored[0]['value'][0]['command'])->toBe('cron-probe:prune')
+        ->and($stored[0]['ttl'])->toBe((int) config('cache.duration.long'));
+});
+
+it('the scheduler runs from the cron list that cache:warm stored', function (): void {
+    CronJob::factory()->create(['command' => 'cron-probe:prune', 'schedule' => '*/5 * * * *', 'is_active' => true]);
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+
+    $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
+    $index->stores = [];
+
+    // The rows are gone from the database: only the warmed entry can schedule the command.
+    CronJob::query()->getQuery()->delete();
+    (new ReflectionMethod(Modules\Core\Providers\CoreServiceProvider::class, 'registerCommandSchedules'))
+        ->invoke(new Modules\Core\Providers\CoreServiceProvider(app()));
+
+    $events = array_filter(
+        app(Illuminate\Console\Scheduling\Schedule::class)->events(),
+        static fn (Illuminate\Console\Scheduling\Event $event): bool => str_contains((string) $event->command, 'cron-probe:prune'),
+    );
+
+    expect($events)->toHaveCount(1)
+        ->and(array_values($events)[0]->expression)->toBe('*/5 * * * *')
+        ->and($index->stores)->toBe([]);
+});
+
+it('cache:warm warms the settings caches the resolver reads, through the label index, and no key nobody reads', function (): void {
+    CacheManager::resetAppNameCache();
+    Setting::factory()->create(['group_name' => 'versioning', 'name' => 'versioning.strategy.warm_probe']);
+    $index = new SpyLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+
+    $this->artisan('cache:warm')->assertExitCode(BaseCommand::SUCCESS);
+
+    $settings_keys = array_values(array_map(
+        static fn (array $store): string => $store['lookup']->key,
+        array_filter($index->stores, static fn (array $store): bool => $store['lookup']->dependencies->labels === ['table:core_settings']),
+    ));
+
+    expect($settings_keys)->toContain(PerModelSettingResolver::nameIndexCacheKey())
+        ->and($settings_keys)->toContain(PerModelSettingResolver::groupCacheKey('versioning'))
+        ->and(Cache::has(CacheManager::key('version_strategies')))->toBeFalse()
+        ->and(Cache::has(CacheManager::key((new Setting())->getTable())))->toBeFalse();
 });

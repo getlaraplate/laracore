@@ -5,131 +5,81 @@ declare(strict_types=1);
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Contracts\Cache\Store;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Modules\Core\Cache\HasCache;
+use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Cache\Repository;
-use Modules\Core\Helpers\ResponseBuilder;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\Role;
 use Modules\Core\Models\User;
+use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
+use Modules\Core\Tests\Stubs\Cache\TaggedCacheStubModel;
 
-it('getCacheTags prepends app name and supports string/array tags', function (): void {
-    $store = Mockery::mock(Store::class);
-    $repository = new Repository($store);
-
-    $from_string = $repository->getCacheTags('users');
-    $from_array = $repository->getCacheTags(['users', 'roles']);
-
-    expect($from_string[0])->toBe(config('app.name'))
-        ->and($from_string)->toContain('users')
-        ->and($from_array)->toContain('users')
-        ->and($from_array)->toContain('roles');
-});
-
-it('tryByRequest returns callback immediately when model does not use cache', function (): void {
+it('clearByEntity flushes its whole table only', function (): void {
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
     $repository = new Repository(new ArrayStore());
 
-    $request = Request::create('/api/items', 'GET');
-    $request->setUserResolver(fn (): User => User::factory()->create());
+    $repository->clearByEntity(new TaggedCacheStubModel());
 
-    $result = $repository->tryByRequest(
-        new class extends Model
-        {
-            protected $table = 'plain_models';
-        },
-        $request,
-        fn () => ['fresh' => true],
-    );
-
-    expect($result)->toBe(['fresh' => true]);
+    expect($index->flushedLabels())->toBe([CacheLabel::table('tagged_cache_stub_models'), CacheLabel::rows('tagged_cache_stub_models')]);
 });
 
-it('tryByRequest unwraps ResponseBuilder response when remember callback runs', function (): void {
-    $repository = new Repository(new ArrayStore());
+it('clearByUser flushes the label of that user only', function (): void {
+    $alice = User::factory()->create();
+    // Bound after the writes above, whose own flushes are not under test.
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
 
-    $request = Request::create('/api/items', 'GET', ['z' => '2', 'a' => '1']);
-    $request->setUserResolver(fn (): User => User::factory()->create());
+    (new Repository(new ArrayStore()))->clearByUser($alice);
 
-    $model = new class extends Model
-    {
-        use HasCache;
-
-        protected $table = 'cacheable_models';
-    };
-
-    $result = $repository->tryByRequest(
-        $model,
-        $request,
-        fn () => (new ResponseBuilder($request))->setData(['wrapped' => true]),
-        30,
-    );
-
-    expect($result)->toBeInstanceOf(JsonResponse::class);
+    expect($index->flushedLabels())->toBe([CacheLabel::user($alice->getKey())]);
 });
 
-it('clear methods flush and forget through tags for entity, request, user and group', function (): void {
-    $repository = new Repository(new ArrayStore());
-    config()->set('auth.providers.users.model', User::class);
+it('clearByGroup flushes the label of that role only', function (): void {
+    $role = Role::factory()->create(['guard_name' => 'web']);
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
 
-    $cacheable = new class extends Model
-    {
-        use HasCache;
+    (new Repository(new ArrayStore()))->clearByGroup($role, new TaggedCacheStubModel());
 
-        protected $table = 'cacheable_entities';
-    };
+    expect($index->flushedLabels())->toBe([CacheLabel::role($role->getKey())]);
+});
 
-    $request = Request::create('/api/cache', 'GET', ['a' => '1']);
-    $request->setUserResolver(fn (): User => User::factory()->create());
-
-    $repository->clearByEntity($cacheable);
-    $repository->clearByRequest($request, $cacheable);
-    $repository->clearByRequest($request, null);
-
+it('clearByUser and clearByGroup flush nothing when none of the entities uses the cache', function (): void {
     $user = User::factory()->create();
     $role = Role::factory()->create(['guard_name' => 'web']);
-    $user->assignRole($role);
-    $repository->clearByUser($user, $cacheable);
-    $repository->clearByUser($user, null);
-    $repository->clearByGroup($role, $cacheable);
-    $repository->clearByGroup($role, null);
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+    $repository = new Repository(new ArrayStore());
 
-    expect(true)->toBeTrue();
+    // Users do not use the response cache.
+    $repository->clearByUser($user, User::class);
+    $repository->clearByGroup($role, [new User()]);
+
+    expect($index->flushes)->toBe([]);
 });
 
-it('private helpers compute request key and duration variants', function (): void {
+it('remembers a value without a ttl flexibly under a configured threshold, plainly without one', function (): void {
     config()->set('cache.duration', 120);
     config()->set('cache.threshold', 10);
+    $flexible = new Repository(new ArrayStore());
 
-    $repository = new Repository(new ArrayStore());
-    config()->set('auth.providers.users.model', User::class);
-
-    $request = Request::create('/api/key', 'GET', ['b' => '2', 'a' => ['z' => '3', 'c' => '1']]);
-    $user = User::factory()->create();
-    $role = Role::factory()->create(['guard_name' => 'web']);
-    $user->assignRole($role);
-    $request->setUserResolver(fn (): User => $user);
-
-    $key_method = new ReflectionMethod(Repository::class, 'getKeyFromRequest');
-    $key_method->setAccessible(true);
-    $key_parts_method = new ReflectionMethod(Repository::class, 'getKeyPartsFromUser');
-    $key_parts_method->setAccessible(true);
-    $user_tags = $key_parts_method->invoke($repository, $user);
-    $key = $key_method->invoke($repository, $request, $user_tags);
-
-    $threshold_method = new ReflectionMethod(Repository::class, 'getThreshold');
-    $threshold_method->setAccessible(true);
-    $resolve_default_method = new ReflectionMethod(Repository::class, 'resolveDefaultCacheSeconds');
-    $resolve_default_method->setAccessible(true);
-
-    expect($key)->toBeString()
-        ->and($threshold_method->invoke($repository))->toBe(10)
-        ->and($resolve_default_method->invoke($repository))->toBe(120);
+    $flexible->remember('k', null, static fn (): string => 'flexible');
+    $seconds_of_a_number = Repository::resolveDefaultCacheSeconds();
 
     config()->set('cache.threshold', 0);
+    config()->set('cache.duration', ['short' => 30, 'medium' => 90]);
+    $plain = new Repository(new ArrayStore());
 
-    expect($threshold_method->invoke($repository))->toBe(0)
-        ->and($resolve_default_method->invoke($repository))->toBe(120);
+    $plain->remember('k', null, static fn (): string => 'plain');
+
+    expect($flexible->get('k'))->toBe('flexible')
+        ->and($flexible->has('illuminate:cache:flexible:created:k'))->toBeTrue()
+        ->and($plain->get('k'))->toBe('plain')
+        ->and($plain->has('illuminate:cache:flexible:created:k'))->toBeFalse()
+        ->and($seconds_of_a_number)->toBe(120)
+        ->and(Repository::resolveDefaultCacheSeconds())->toBe(90);
 });
 
 it('remember supports flexible array ttl branch', function (): void {
@@ -140,107 +90,31 @@ it('remember supports flexible array ttl branch', function (): void {
     expect($result)->toBe('flexible');
 });
 
-it('tryByRequest supports entity arrays with class strings and plain return values', function (): void {
-    $repository = new Repository(new ArrayStore());
-
-    $request = Request::create('/api/multi', 'GET', ['x' => '1']);
-    $request->setUserResolver(fn (): User => User::factory()->create());
-
-    $model = new class extends Model
-    {
-        use HasCache;
-
-        protected $table = 'multi_cache_models';
-    };
-
-    $result = $repository->tryByRequest(
-        [$model::class, $model],
-        $request,
-        fn () => ['raw' => true],
-        10,
-    );
-
-    expect($result)->toBe(['raw' => true]);
-});
-
-it('clear methods support class-string entities and role/user key helpers branches', function (): void {
-    $repository = new Repository(new ArrayStore());
+it('clear methods flush the labels of class-string entities, users and roles', function (): void {
     config()->set('auth.providers.users.model', User::class);
-    $request = Request::create('/api/clear-string', 'GET', ['a' => '1']);
-    $request->setUserResolver(fn (): User => User::factory()->create());
-
-    $cacheable = new class extends Model
-    {
-        use HasCache;
-
-        protected $table = 'string_cacheable_entities';
-    };
-    $class = $cacheable::class;
-
-    $repository->clearByEntity($class);
-    $repository->clearByRequest($request, $class);
-
     $role = Role::factory()->create(['guard_name' => 'web']);
     $user = User::factory()->create();
     $user->assignRole($role);
-    $repository->clearByUser($user, $class);
-    $repository->clearByGroup($role, $class);
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
+    $repository = new Repository(new ArrayStore());
 
-    $method = new ReflectionMethod(Repository::class, 'getKeyPartsFromUser');
-    $method->setAccessible(true);
-    $parts_from_roles = $method->invoke($repository, $user);
-    expect($parts_from_roles)->toContain('U' . $user->id);
+    $repository->clearByEntity(TaggedCacheStubModel::class);
+    $repository->clearByUser($user, TaggedCacheStubModel::class);
+    $repository->clearByGroup($role, TaggedCacheStubModel::class);
 
-    $groups_user = new class extends User
-    {
-        public function groups()
-        {
-            return null;
-        }
-    };
-    $groups_user->id = 776;
-    $group_c = new class extends Model {};
-    $group_c->id = 12;
-    $groups_user->setRelation('groups', collect([$group_c]));
-    $parts_from_groups = $method->invoke($repository, $groups_user);
-    expect($parts_from_groups)->toContain('R12')->toContain('U776');
-
-    $user_groups_user = new class extends User
-    {
-        public function user_groups()
-        {
-            return null;
-        }
-    };
-    $user_groups_user->id = 777;
-    $group_a = new class extends Model {};
-    $group_a->id = 10;
-    $group_b = new class extends Model {};
-    $group_b->id = 5;
-    $user_groups_user->setRelation('user_groups', collect([$group_a, $group_b]));
-    $parts_from_user_groups = $method->invoke($repository, $user_groups_user);
-    expect($parts_from_user_groups)->toContain('R5')->toContain('R10');
-
-    $user_roles_user = new class extends User
-    {
-        public function user_roles()
-        {
-            return null;
-        }
-    };
-    $user_roles_user->id = 778;
-    $role_model = new class extends Model {};
-    $role_model->id = 8;
-    $user_roles_user->setRelation('user_roles', collect([$role_model]));
-    $parts_from_user_roles = $method->invoke($repository, $user_roles_user);
-
-    expect($parts_from_user_groups)->toContain('U777')
-        ->and($parts_from_user_roles)->toContain('R8')
-        ->and($parts_from_user_roles)->toContain('U778');
+    expect($index->flushedLabels())->toBe([
+        CacheLabel::table('tagged_cache_stub_models'),
+        CacheLabel::rows('tagged_cache_stub_models'),
+        CacheLabel::user($user->getKey()),
+        CacheLabel::role($role->getKey()),
+    ]);
 });
 
 it('clearByEntity does not throw BadMethodCallException when cache driver does not support tags (database driver simulation)', function (): void {
     // Simulate a cache driver that does not support tags (e.g. database, file)
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
     Cache::shouldReceive('supportsTags')->andReturn(false);
     Cache::shouldReceive('forget')->andReturn(true);
 
@@ -254,10 +128,13 @@ it('clearByEntity does not throw BadMethodCallException when cache driver does n
     };
 
     expect(fn () => $repository->clearByEntity($cacheable))->not->toThrow(BadMethodCallException::class);
+    expect($index->flushedLabels())->toBe([CacheLabel::table('cacheable_no_tags'), CacheLabel::rows('cacheable_no_tags')]);
 });
 
 it('clearByEntity does not throw BadMethodCallException when cache driver does not support tags (file driver simulation)', function (): void {
     // Simulate a file cache driver that does not support tags
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
     Cache::shouldReceive('supportsTags')->andReturn(false);
     Cache::shouldReceive('forget')->andReturn(true);
 
@@ -271,6 +148,7 @@ it('clearByEntity does not throw BadMethodCallException when cache driver does n
     };
 
     expect(fn () => $repository->clearByEntity($cacheable))->not->toThrow(BadMethodCallException::class);
+    expect($index->flushedLabels())->toBe([CacheLabel::table('cacheable_file_no_tags'), CacheLabel::rows('cacheable_file_no_tags')]);
 });
 
 it('ping succeeds on a working store and fails when the store throws', function (): void {
@@ -279,27 +157,4 @@ it('ping succeeds on a working store and fails when the store throws', function 
 
     expect((new Repository(new ArrayStore()))->ping())->toBeTrue()
         ->and((new Repository($failing_store))->ping())->toBeFalse();
-});
-
-it('tryByRequest keys a response by the token as well as by the user, so two tokens never share one', function (): void {
-    $repository = new Repository(new ArrayStore());
-    $user = User::factory()->create();
-    $first = $user->createToken('cachekey-first', [])->accessToken;
-    $second = $user->createToken('cachekey-second', [])->accessToken;
-
-    $request_with = static function (Laravel\Sanctum\PersonalAccessToken $token) use ($user): Request {
-        $token_user = User::query()->findOrFail($user->getKey())->withAccessToken($token);
-        $request = Request::create('/api/v1/select/core/settings', 'GET');
-        $request->setUserResolver(static fn (): User => $token_user);
-
-        return $request;
-    };
-
-    $from_first = $repository->tryByRequest(new Modules\Core\Models\Setting, $request_with($first), fn (): array => ['token' => 'first']);
-    $from_second = $repository->tryByRequest(new Modules\Core\Models\Setting, $request_with($second), fn (): array => ['token' => 'second']);
-    $first_again = $repository->tryByRequest(new Modules\Core\Models\Setting, $request_with($first), fn (): array => ['token' => 'recomputed']);
-
-    expect($from_first)->toBe(['token' => 'first'])
-        ->and($from_second)->toBe(['token' => 'second'])
-        ->and($first_again)->toBe(['token' => 'first']);
 });

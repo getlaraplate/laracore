@@ -7,6 +7,7 @@ namespace Modules\Core\Observers;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Field;
+use Modules\Core\Search\Extensions\ExtenderColumnGuard;
 use Modules\Core\Services\DynamicContentsService;
 
 final class FieldObserver
@@ -28,6 +29,7 @@ final class FieldObserver
     public function updating(Field $model): void
     {
         $this->guardStructuralImmutability($model);
+        $this->guardExtenderColumns($model);
 
         if (property_exists($model, 'pivot') && $model->pivot && $model->pivot->isDirty()) {
             $model->pivot->save();
@@ -39,7 +41,7 @@ final class FieldObserver
      */
     public function created(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
@@ -47,7 +49,7 @@ final class FieldObserver
      */
     public function updated(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
@@ -55,7 +57,7 @@ final class FieldObserver
      */
     public function deleted(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
@@ -63,16 +65,16 @@ final class FieldObserver
      */
     public function restored(Field $model): void
     {
-        $this->flushDynamicContentsMetadata();
+        $this->flushDynamicContentsMetadata($model);
     }
 
     /**
      * A field's structure feeds the cached preset and presettable metadata, so any
-     * write must invalidate the persistent {@see DynamicContentsService} caches.
+     * write must invalidate the persistent {@see DynamicContentsService} caches, after the commit of the write.
      */
-    private function flushDynamicContentsMetadata(): void
+    private function flushDynamicContentsMetadata(Field $model): void
     {
-        DynamicContentsService::getInstance()->clearAllCaches();
+        DynamicContentsService::getInstance()->clearAllCaches($model);
     }
 
     /**
@@ -93,6 +95,32 @@ final class FieldObserver
         }
 
         throw ValidationException::withMessages($messages);
+    }
+
+    /**
+     * A field renamed while attached to presets may not take the name of an own column of an extender of one of
+     * their entities (XS17, {@see ExtenderColumnGuard}).
+     *
+     * @throws ValidationException
+     */
+    private function guardExtenderColumns(Field $model): void
+    {
+        $name = $model->getAttribute('name');
+
+        if (! $model->isDirty('name') || ! is_string($name)) {
+            return;
+        }
+
+        $preset_ids = $model->getConnection()->table(CoreTables::Fieldables->value)
+            ->where('field_id', $model->getKey())
+            ->pluck('preset_id');
+        $guard = resolve(ExtenderColumnGuard::class);
+
+        foreach ($preset_ids as $preset_id) {
+            if (is_int($preset_id) || is_string($preset_id)) {
+                $guard->assertNotShadowed($name, $preset_id, $model->getConnection(), 'name');
+            }
+        }
     }
 
     private function isLinkedToPreset(Field $model): bool

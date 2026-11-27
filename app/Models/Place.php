@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Modules\Core\Models;
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use MatanYadaev\EloquentSpatial\Objects\Point;
 use MatanYadaev\EloquentSpatial\Traits\HasSpatial;
 use Modules\Core\Enums\CoreTables;
@@ -14,6 +13,21 @@ use Override;
 
 /**
  * Canonical postal / geographic payload shared across modules (e.g. Cms Location, Business Site).
+ *
+ * @property int $id
+ * @property string|null $address
+ * @property string|null $city
+ * @property string|null $province
+ * @property string|null $country
+ * @property string|null $postcode
+ * @property string|null $zone
+ * @property float|null $latitude
+ * @property float|null $longitude
+ * @property \MatanYadaev\EloquentSpatial\Objects\Geometry|null $geolocation The geolocation of the location
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
  */
 class Place extends Model
 {
@@ -87,21 +101,13 @@ class Place extends Model
     }
 
     /**
-     * Slug segment derived from country (e.g. for hierarchical paths in consuming modules).
-     */
-    public function countryPathSegment(): string
-    {
-        return Str::slug((string) ($this->country ?? ''));
-    }
-
-    /**
      * Version snapshots store {@see latitude} / {@see longitude} (JSON-safe) but omit binary {@see geolocation}.
      * On save, rebuild the {@see Point} so rollbacks and plain decimal edits stay consistent with the geometry column.
      */
     protected static function booted(): void
     {
         static::saving(function (Place $place): void {
-            $place->syncGeolocationFromDecimalIfNeeded();
+            $place->alignGeolocationAndDecimals();
         });
     }
 
@@ -116,11 +122,24 @@ class Place extends Model
     }
 
     /**
-     * When decimals differ from the cast geometry (e.g. after {@see Version::revertWithoutSaving} merged snapshot lat/lng with stale WKB), align {@see geolocation} before persistence.
+     * Keep decimals and geometry aligned before persistence. A {@see geolocation} changed without touching the decimals
+     * (e.g. a geocoded point written through {@see Concerns\HasPlace}) wins: a new point rewrites {@see latitude} /
+     * {@see longitude}, a cleared point clears them. Otherwise the decimals win: when they differ from the cast geometry
+     * (e.g. after {@see Version::revertWithoutSaving} merged snapshot lat/lng with stale WKB, or a plain decimal edit),
+     * {@see geolocation} is rebuilt from them.
      */
-    private function syncGeolocationFromDecimalIfNeeded(): void
+    private function alignGeolocationAndDecimals(): void
     {
         if (! $this->geometryColumnSupportsSpatialBinding()) {
+            return;
+        }
+
+        $current = $this->geolocation;
+
+        if ($this->isDirty('geolocation') && ! $this->isDirty(['latitude', 'longitude'])) {
+            $this->setAttribute('latitude', $current instanceof Point ? $current->latitude : null);
+            $this->setAttribute('longitude', $current instanceof Point ? $current->longitude : null);
+
             return;
         }
 
@@ -133,8 +152,6 @@ class Place extends Model
 
         $lat_float = (float) $lat;
         $lng_float = (float) $lng;
-
-        $current = $this->geolocation;
 
         if ($current instanceof Point && (abs($current->latitude - $lat_float) < self::COORDINATE_EPSILON && abs($current->longitude - $lng_float) < self::COORDINATE_EPSILON)) {
             return;

@@ -61,6 +61,16 @@ trait ReportsApprovalOutcome
 
     /**
      * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    #[Override]
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        return $this->stripUnsupportedFilamentFormAttributes(parent::mutateFormDataBeforeSave($data));
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
      */
     #[Override]
     protected function handleRecordUpdate(Model $record, array $data): Model

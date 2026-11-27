@@ -32,6 +32,11 @@ return new class() extends Migration
             $table->boolean('is_first_login')->default(true)->comment('Whether the account still needs the first-login onboarding flow');
             $table->json('preferences')->nullable()->comment('Server-persisted UI preferences (theme, density, layout) synced from the SPA');
             $table->boolean('is_service_account')->default(false)->comment('Whether the account is non-interactive: it has no usable password, never signs in and authenticates with API tokens only');
+            $table->string('social_id')->nullable()->comment('The id of the user at the social login provider');
+            $table->string('social_service')->nullable()->comment('The social login provider the user signed in with');
+            $table->text('social_token')->nullable()->comment('The access token of the social login, encrypted');
+            $table->text('social_refresh_token')->nullable()->comment('The refresh token of the social login, encrypted');
+            $table->text('social_token_secret')->nullable()->comment('The token secret of an OAuth 1 social login, encrypted');
 
             MigrateUtils::timestamps(
                 $table,
@@ -43,6 +48,7 @@ return new class() extends Migration
 
             $table->foreign('license_id', "{$users_table}_licenses_FK")->references('id')->on(CoreTables::Licenses->value)->nullOnDelete();
             MigrateUtils::prefixIndex($table, 'license_id');
+            $table->index('social_id', "{$users_table}_social_id_IDX");
         });
     }
 

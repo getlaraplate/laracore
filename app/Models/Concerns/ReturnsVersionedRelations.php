@@ -18,8 +18,12 @@ use Modules\Core\Overrides\Relations\MorphToMany;
 trait ReturnsVersionedRelations
 {
     /**
-     * @param  Builder<Model>  $query
-     * @return BelongsToMany<Model, $this>
+     * @template TRelatedModel of Model
+     * @template TDeclaringModel of Model
+     *
+     * @param  Builder<TRelatedModel>  $query
+     * @param  TDeclaringModel  $parent
+     * @return BelongsToMany<TRelatedModel, TDeclaringModel, \Illuminate\Database\Eloquent\Relations\Pivot>
      */
     protected function newBelongsToMany(
         Builder $query,
@@ -35,8 +39,12 @@ trait ReturnsVersionedRelations
     }
 
     /**
-     * @param  Builder<Model>  $query
-     * @return MorphToMany<Model, $this>
+     * @template TRelatedModel of Model
+     * @template TDeclaringModel of Model
+     *
+     * @param  Builder<TRelatedModel>  $query
+     * @param  TDeclaringModel  $parent
+     * @return MorphToMany<TRelatedModel, TDeclaringModel>
      */
     protected function newMorphToMany(
         Builder $query,

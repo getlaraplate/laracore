@@ -47,8 +47,8 @@ final class CacheManager extends BaseCacheManager
     }
 
     /**
-     * Create a Core Repository for every store so macros like tryByRequest /
-     * clearByEntity are available on Cache:: regardless of driver (array,
+     * Create a Core Repository for every store so methods like clearByEntity
+     * are available on Cache:: regardless of driver (array,
      * redis, failover, …).
      */
     public function repository(Store $store, array $config = []): Repository

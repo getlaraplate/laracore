@@ -140,3 +140,39 @@ it('emits no dense_vector for a nested vector field without option and without p
 
     expect($embeddings)->not->toHaveKey('properties');
 });
+
+/**
+ * An object field whose sub-fields are declared as Core types, as CMS `Content` declares `extension` from the
+ * mappings of its extenders.
+ *
+ * @return array<string, mixed>
+ */
+function esTypedObjectField(): array
+{
+    $schema = new SchemaDefinition('cms_contents');
+    $schema->addField(new FieldDefinition('extension', FieldType::Object, [IndexType::Searchable, IndexType::Filterable], [
+        'properties' => [
+            'type' => ['type' => FieldType::Keyword, 'filterable' => true],
+            'featured' => ['type' => FieldType::Boolean, 'filterable' => true],
+            'label' => FieldType::Keyword,
+        ],
+    ]));
+
+    return (new ElasticsearchTranslator)->translate($schema)['mappings']['properties']['extension'];
+}
+
+it('translates the typed sub-fields of an object field into Elasticsearch leaves', function (): void {
+    $extension = esTypedObjectField();
+
+    expect($extension['type'])->toBe('object')
+        ->and($extension['properties']['type'])->toBe(['type' => 'keyword', 'index' => true, 'meta' => ['filterable' => true]])
+        ->and($extension['properties']['featured'])->toBe(['type' => 'boolean', 'index' => true, 'meta' => ['filterable' => true]])
+        ->and($extension['properties']['label'])->toBe(['type' => 'keyword']);
+});
+
+it('leaves no Core-only key in the sub-fields of an object field', function (): void {
+    foreach (esTypedObjectField()['properties'] as $property) {
+        expect($property)->not->toHaveKey('filterable')
+            ->and($property['type'])->toBeString();
+    }
+});

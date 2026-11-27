@@ -63,6 +63,9 @@ it('registerConfig merges php files from the module config directory', function 
 });
 
 it('mergeConfigFrom merges nested arrays when configuration is not cached', function (): void {
+    // The suite reuses a cached configuration between tests, so the precondition is stated here.
+    app()->instance('config_loaded_from_cache', false);
+
     $provider = new class(app()) extends ServiceProvider
     {
         public string $name = 'Test';

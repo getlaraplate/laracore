@@ -70,3 +70,18 @@ it('flushes the cached statuses when a module is saved through Eloquent', functi
 
     expect(new ModuleDatabaseActivator(app())->hasStatus('CMS', false))->toBeTrue();
 });
+
+it('remembers that the modules table exists for the activator cache lifetime, not for good', function (): void {
+    $written = [];
+    Illuminate\Support\Facades\Event::listen(
+        Illuminate\Cache\Events\KeyWritten::class,
+        static function (Illuminate\Cache\Events\KeyWritten $event) use (&$written): void {
+            $written[$event->key] = $event->seconds;
+        },
+    );
+    Cache::forget('modules_db_activator_checked');
+
+    expect(ModuleDatabaseActivator::checkModulesTable())->toBeTrue()
+        ->and($written)->toHaveKey('modules_db_activator_checked')
+        ->and($written['modules_db_activator_checked'])->toBeInt()->toBeGreaterThan(0);
+});

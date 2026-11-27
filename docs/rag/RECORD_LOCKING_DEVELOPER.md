@@ -239,10 +239,23 @@ never offer a lease.
 |---|---|
 | `model:lock-refresh` | detects drift between models using `HasLocks` and the columns actually present, and generates the migrations to close it |
 | `model:lock-sweep {--limit=1000}` | clears lapsed locks. Housekeeping: a missed run changes nothing |
-| `module:locked-add {model} {--namespace=}` | adds the lock columns to a model's table |
-| `model:locked-remove {model} {--namespace=}` | removes them |
-| `model:optimistic-lock-add {model} {--namespace=}` | adds `lock_version` |
+| `model:locked-add {model} {--namespace=}` | adds the lock columns to a model's table and switches its `locking.enabled.{table}` setting on |
+| `model:locked-remove {model} {--namespace=}` | removes them, after releasing every lock of the table (see below) |
+| `model:optimistic-lock-add {model} {--namespace=}` | adds `lock_version` and switches its `locking.optimistic.{table}` setting on |
 | `model:optimistic-lock-remove {model} {--namespace=}` | removes it |
+
+**Switching locking off releases the locks.** Switching record locking off or removing it deletes no record: it
+releases every lock of the table, so no record stays held by a lock nothing enforces any more (or that a worker still
+running the class with the trait would keep enforcing). `Locking\LockedRowsReleaser` clears the columns `HasLocks`
+writes (`Locked::lockedAtColumn()`, `lockedByColumn()`, `lockedUntilColumn()`) on every row with a `locked_at`, lapsed
+locks included, in one statement, and flushes the whole table from the cache after it (`flushTable()`), since the
+write fires no model event. A save that moves `locking.enabled.{table}` from on to off (the settings page, the API, an
+approved modification) makes `SettingObserver` queue `ReleaseLocksJob` after the commit; the job reads the setting
+again and does nothing when locking is back on. The settings page asks first (`LockingSettingConfirmation`, with the
+number of locked records), and cancelling saves nothing. `model:locked-remove` asks before it changes anything when the
+table has locked records: a refusal leaves locks, migrations and setting as they are; confirmed, it releases the locks
+at once, then writes the migration and deletes the setting. Optimistic locking (`lock_version`) holds no lock: its
+setting and commands ask nothing and release nothing. Pinned in `tests/Integration/Locking/LockingSwitchTest.php`.
 
 ## Permissions
 

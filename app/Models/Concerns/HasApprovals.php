@@ -16,7 +16,9 @@ use InvalidArgumentException;
 use Modules\Core\Approvals\Operation;
 use Modules\Core\Approvals\PendingDeletionLock;
 use Modules\Core\Approvals\PendingDeletionStrategy;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Casts\CrudExecutor;
+use Modules\Core\Helpers\ModelKey;
 use Modules\Core\Models\Approval;
 use Modules\Core\Models\Modification;
 use Modules\Core\Models\User;
@@ -77,12 +79,12 @@ trait HasApprovals
      */
     public static function bootHasApprovals(): void
     {
-        static::saving(static function (Model $item): ?bool {
+        static::saving(static function (self $item): ?bool {
             if ($item->exists && ! $item->isForcedApprovalUpdate() && $item->pendingDeletionStrategy() === PendingDeletionStrategy::Block) {
                 $blocked = array_diff(array_keys($item->getDirty()), $item->attributesWritableWhilePendingDeletion(), [$item->getUpdatedAtColumn()]);
 
                 if ($blocked !== [] && $item->modifications()->activeOnly()->whereIn('operation', [Operation::Delete->value, Operation::ForceDelete->value])->exists()) {
-                    throw PendingDeletionLock::for($item::class, $item->getKey());
+                    throw PendingDeletionLock::for($item::class, ModelKey::of($item));
                 }
             }
 
@@ -104,13 +106,16 @@ trait HasApprovals
         // A record deleted for good can no longer receive the changes still waiting for approval, so they are
         // closed. The rows stay, with their votes: they are the record of who asked and who approved, the
         // deletion itself included when it was approved. A move to the bin changes nothing.
-        static::deleted(static function (Model $item): void {
+        static::deleted(static function (self $item): void {
             if (! $item->exists) {
-                $item->modifications()->activeOnly()->toBase()->update(['active' => false]);
+                $modifications = $item->modifications();
+                $modifications->activeOnly()->toBase()->update(['active' => false]);
+                // A mass update fires no model event: flush the modifications table after its commit.
+                app(CacheLabelInvalidator::class)->flushTable($modifications->getRelated()->getTable(), $item);
             }
         });
 
-        static::deleting(static function (Model $item): ?bool {
+        static::deleting(static function (self $item): ?bool {
             $operation = $item->deletionOperation();
 
             return $item->shouldCapture($operation) && $item->requiresApprovalForOperation($operation)
@@ -127,15 +132,19 @@ trait HasApprovals
 
             $user = Auth::user();
 
-            // Nobody authenticated: console, queues, jobs, search indexing, exports. They see
-            // everything, exactly as capture is skipped in console. Hide answers "who may not
-            // see a record they cannot decide on", which is a question about a person; a
-            // pending deletion must not quietly change what background work reads.
-            if (! $user instanceof User) {
+            // Nobody authenticated in the console: commands, queue workers, search indexing,
+            // exports. They see everything, exactly as capture is skipped in console. Hide answers
+            // "who may not see a record they cannot decide on", which is a question about a person;
+            // a pending deletion must not quietly change what background work reads.
+            if (! $user instanceof User && App::runningInConsole()) {
                 return;
             }
 
-            if (resolve(AuthorizationService::class)->userHolds($user, PermissionName::forModel($model, 'approve'))) {
+            // Nobody authenticated inside a request is an anonymous visitor read before the anonymous
+            // account was put on the guard: the web surface resolves it at its first permission check,
+            // so an earlier read (route model binding, a page that skips the CRUD) has no user yet. A
+            // visitor cannot decide on a deletion, so the record is hidden, as for the anonymous account.
+            if ($user instanceof User && resolve(AuthorizationService::class)->userHolds($user, PermissionName::forModel($model, 'approve'))) {
                 return;
             }
 
@@ -146,7 +155,7 @@ trait HasApprovals
             return;
         }
 
-        static::restoring(static function (Model $item): ?bool {
+        static::restoring(static function (self $item): ?bool {
             if (! $item->trashed()) {
                 return null;
             }
@@ -174,7 +183,7 @@ trait HasApprovals
         $modification->active = true;
         $modification->operation = $operation;
         $modification->modifications = [];
-        $modification->md5 = md5($operation->value . '|' . $item::class . '|' . $item->getKey());
+        $modification->md5 = md5($operation->value . '|' . $item::class . '|' . ModelKey::of($item));
 
         if ($existing === null) {
             $modification->approvers_required = $item->approversRequired;
@@ -240,7 +249,8 @@ trait HasApprovals
             $modification->disapprovers_required = $item->disapproversRequired;
 
             if ($modifier !== null) {
-                $modification->modifier_id = $modifier->getKey();
+                $modifier_key = ModelKey::of($modifier);
+                $modification->modifier_id = is_int($modifier_key) ? $modifier_key : null;
                 $modification->modifier_type = $modifier::class;
             }
 

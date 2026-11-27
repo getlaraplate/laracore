@@ -11,6 +11,13 @@ use Modules\Core\Enums\CoreTables;
 use Modules\Core\Observers\ModelHasRoleObserver;
 use Override;
 
+/**
+ * @property int $role_id
+ * @property string $model_type The model type of the role
+ * @property int $model_id The model id of the role
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ */
 #[ObservedBy([ModelHasRoleObserver::class])]
 final class ModelHasRole extends MorphPivot
 {

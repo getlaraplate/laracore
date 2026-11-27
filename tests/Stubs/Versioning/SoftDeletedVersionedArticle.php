@@ -6,10 +6,11 @@ namespace Modules\Core\Tests\Stubs\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersions;
 
-final class SoftDeletedVersionedArticle extends Model
+final class SoftDeletedVersionedArticle extends Model implements IVersionedModel
 {
     use HasVersions;
     use SoftDeletes {

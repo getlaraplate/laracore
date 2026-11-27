@@ -8,6 +8,7 @@ use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\PerModelSettingResolver;
 use Modules\Core\Services\SettingsCacheCoordinator;
+use Modules\Core\Tests\Stubs\Cache\SettingsCacheProbe;
 
 beforeEach(function (): void {
     app(SettingsCacheCoordinator::class)->flushAll();
@@ -65,7 +66,7 @@ it('invalidates settings on model save via observer', function (): void {
     $setting->save();
 
     expect($resolver->int('observer_flush_test', 0))->toBe(20)
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('base')))->toBeTrue();
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('base')))->toBeTrue();
 });
 
 it('syncs runtime config on model save via observer after cache flush', function (): void {
@@ -129,9 +130,9 @@ it('flushes only the affected settings group', function (): void {
 
     app(SettingsCacheCoordinator::class)->flushSetting($translation_setting);
 
-    expect(Cache::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue()
-        ->and(Cache::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeFalse();
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeFalse();
 });
 
 it('flushes old and new groups when a setting moves groups', function (): void {
@@ -152,9 +153,9 @@ it('flushes old and new groups when a setting moves groups', function (): void {
     $setting->group_name = 'erp';
     $setting->save();
 
-    expect(Cache::has(PerModelSettingResolver::groupCacheKey('base')))->toBeFalse()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeFalse()
-        ->and(Cache::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeFalse();
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('base')))->toBeFalse()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeFalse()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::nameIndexCacheKey()))->toBeFalse();
 });
 
 it('forgets derived settings caches when flushing a setting', function (): void {
@@ -193,7 +194,11 @@ it('resets versioning caches when the versioning group is affected', function ()
     expect(Cache::has(CacheManager::key('version_strategies')))->toBeFalse();
 });
 
-it('setting observer invalidates only the saved setting group', function (): void {
+/**
+ * A coordinator flush is per group (see "flushes only the affected settings group"), but a save through the model also
+ * flushes the label of the settings table, which every cached group and the name index carry.
+ */
+it('a setting saved through the model invalidates every cached settings group', function (): void {
     $resolver = app(PerModelSettingResolver::class);
 
     $translation_setting = Setting::factory()->persistedWithoutApprovalCapture()->create([
@@ -220,6 +225,7 @@ it('setting observer invalidates only the saved setting group', function (): voi
     $translation_setting->value = true;
     $translation_setting->save();
 
-    expect(Cache::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse()
-        ->and(Cache::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeTrue();
+    expect(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('translations')))->toBeFalse()
+        ->and(SettingsCacheProbe::has(PerModelSettingResolver::groupCacheKey('erp')))->toBeFalse()
+        ->and($resolver->boolean('observer_erp_group_test', false))->toBeTrue();
 });

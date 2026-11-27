@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 use LogicException;
+use Modules\Core\Contracts\ISoftDeletableModel;
 use Modules\Core\Database\Seeders\CoreDatabaseSeeder;
 use Modules\Core\Events\TranslatedModelSaved;
 use Modules\Core\Helpers\LocaleContext;
@@ -166,7 +167,7 @@ trait HasTranslations
     /**
      * Get the translations relation.
      *
-     * @return HasMany<TTranslationModel>
+     * @return HasMany<TTranslationModel, $this>
      */
     public function translations(): HasMany
     {
@@ -246,7 +247,7 @@ trait HasTranslations
      *
      * @param  array<string, mixed>  $data
      */
-    public function setTranslation(string $locale, array $data): self
+    public function setTranslation(string $locale, array $data): static
     {
         $this->writeTranslation($locale, $this->ensureTranslationFieldDefaults($data));
 
@@ -256,6 +257,17 @@ trait HasTranslations
         }
 
         return $this;
+    }
+
+    /**
+     * The translation written first, by creation time then key: the language the record was authored in, before any
+     * other locale was added.
+     */
+    public function getOriginalTranslation(): ?Model
+    {
+        $translation = $this->translations()->orderBy('created_at')->orderBy('id')->first();
+
+        return $translation instanceof Model ? $translation : null;
     }
 
     /**
@@ -408,7 +420,6 @@ trait HasTranslations
         static::created(function (Model $model): void {
             // Check if default translation exists
             $default_locale = LocaleContext::getDefault();
-            $default_locale = is_string($default_locale) ? $default_locale : null;
 
             /** @var self $model */
             if (! $model->hasTranslation($default_locale)) {
@@ -425,7 +436,7 @@ trait HasTranslations
             $default_locale = LocaleContext::getDefault();
 
             /** @var self $model */
-            $default_translation = $model->getTranslation(is_string($default_locale) ? $default_locale : null);
+            $default_translation = $model->getTranslation($default_locale);
 
             if (! $default_translation || ! $default_translation->wasChanged()) {
                 return;
@@ -681,7 +692,8 @@ trait HasTranslations
     {
         $query = $this->translations();
 
-        if (method_exists($query->getRelated(), 'trashed')) {
+        // @phpstan-ignore instanceof.alwaysTrue (true for the module models, whose base is soft-deletable; a translation on a plain Eloquent model is not)
+        if ($query->getRelated() instanceof ISoftDeletableModel) {
             $query->withTrashed();
         }
 
@@ -695,7 +707,8 @@ trait HasTranslations
             return;
         }
 
-        if (method_exists($translation, 'trashed') && $translation->trashed() && method_exists($translation, 'reviveInMemory')) {
+        // @phpstan-ignore instanceof.alwaysTrue, function.alreadyNarrowedType (true for the module models, whose base is soft-deletable; a translation on a plain Eloquent model is not)
+        if ($translation instanceof ISoftDeletableModel && $translation->trashed() && method_exists($translation, 'reviveInMemory')) {
             $translation->reviveInMemory();
         }
 

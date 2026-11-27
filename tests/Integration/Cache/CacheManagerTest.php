@@ -15,7 +15,7 @@ it('returns bound cache store for default driver', function (): void {
 
     expect($first)->toBeInstanceOf(Repository::class)
         ->and($second)->toBe($first)
-        ->and(method_exists($first, 'tryByRequest'))->toBeTrue();
+        ->and(method_exists($first, 'clearByEntity'))->toBeTrue();
 });
 
 it('falls back to parent store for non-default driver', function (): void {
@@ -25,7 +25,7 @@ it('falls back to parent store for non-default driver', function (): void {
     $store = $manager->store('array');
 
     expect($store)->toBeInstanceOf(Repository::class)
-        ->and(method_exists($store, 'tryByRequest'))->toBeTrue();
+        ->and(method_exists($store, 'clearByEntity'))->toBeTrue();
 });
 
 it('creates core repository instances from store', function (): void {

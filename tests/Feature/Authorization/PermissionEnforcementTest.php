@@ -79,3 +79,30 @@ it('leaves another table alone when one table is switched off', function (): voi
 
     expect(app(PermissionEnforcement::class)->hasNote('default.core_gadgets.lock', 'core_gadgets'))->toBeFalse();
 });
+
+it('treats a table whose model no longer declares the capability as off, whatever its setting says', function (): void {
+    Modules\Core\Helpers\HelpersCache::setModels('active', [...models(), Modules\Core\Tests\Stubs\Console\MassWriteStubModel::class]);
+    writeCapabilitySetting(CoreDatabaseSeeder::LOCK_NAME_PREFIX, 'mass_write_stub', true);
+    writeCapabilitySetting(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, 'mass_write_stub', true);
+
+    try {
+        $enforcement = app(PermissionEnforcement::class);
+
+        expect($enforcement->noteFor('default.mass_write_stub.restore', 'mass_write_stub')?->label)->toBe(__('app.permissions.note.inert'))
+            ->and($enforcement->noteFor('default.mass_write_stub.delete', 'mass_write_stub')?->label)->toBe(__('app.permissions.note.changed'))
+            ->and($enforcement->noteFor('default.mass_write_stub.lock', 'mass_write_stub')?->label)->toBe(__('app.permissions.note.inert'));
+    } finally {
+        Modules\Core\Helpers\HelpersCache::clearModels();
+    }
+});
+
+it('follows the setting for a table whose model declares the capability', function (): void {
+    $users = (new Modules\Core\Models\User())->getTable();
+    $enforcement = app(PermissionEnforcement::class);
+    $before = $enforcement->hasNote('default.' . $users . '.restore', $users);
+
+    writeCapabilitySetting(CoreDatabaseSeeder::SOFT_DELETES_NAME_PREFIX, $users, false);
+
+    expect($before)->toBeFalse()
+        ->and(app(PermissionEnforcement::class)->noteFor('default.' . $users . '.restore', $users)?->label)->toBe(__('app.permissions.note.inert'));
+});

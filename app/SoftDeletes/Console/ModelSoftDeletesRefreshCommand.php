@@ -14,6 +14,7 @@ use Modules\Core\Models\Setting;
 use Modules\Core\Overrides\Command;
 use Modules\Core\Services\PerModelSettingResolver;
 use Modules\Core\SoftDeletes\SoftDeletes;
+use Modules\Core\SoftDeletes\SoftDeletesSettingConfirmation;
 use Override;
 use ReflectionClass;
 
@@ -126,6 +127,14 @@ final class ModelSoftDeletesRefreshCommand extends Command
 
         if ($current === $has_trait) {
             return;
+        }
+
+        // Switching soft deletes off deletes the rows in the bin for good (SettingObserver queues the purge): the same
+        // warning as the settings page comes first, and a refusal changes nothing.
+        $warning = app(SoftDeletesSettingConfirmation::class)->warn($setting, $has_trait);
+
+        foreach ($warning === null ? [] : $warning->lines as $line) {
+            $this->warn($line);
         }
 
         if (! confirm(sprintf('Runtime setting %s=%s differs from trait state (%s). Align setting now?', $name, $current ? 'true' : 'false', $has_trait ? 'true' : 'false'), false)) {

@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Modules\Core\Tests\Stubs\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Models\Concerns\HasVersions;
 
-final class VersionedArticle extends Model
+final class VersionedArticle extends Model implements IVersionedModel
 {
     use HasVersions;
 

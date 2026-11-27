@@ -6,6 +6,7 @@ namespace Modules\Core\Tests\Stubs\Versioning;
 
 use Illuminate\Database\Eloquent\Model;
 use Modules\Core\Contracts\IOptimisticLockableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Locking\Traits\HasOptimisticLocking;
 use Modules\Core\Models\Concerns\HasTranslations;
@@ -14,7 +15,7 @@ use Modules\Core\Models\Concerns\HasVersions;
 /**
  * A versioned record with translations and an optimistic lock, whose history carries its locales (D10, D23, D28).
  */
-final class TranslatedDocument extends Model implements IOptimisticLockableModel
+final class TranslatedDocument extends Model implements IOptimisticLockableModel, IVersionedModel
 {
     use HasOptimisticLocking;
     use HasTranslations;

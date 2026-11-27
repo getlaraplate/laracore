@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Models\Pivot;
 
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Core\Contracts\ISoftDeletableModel;
@@ -11,10 +12,24 @@ use Modules\Core\Enums\CoreTables;
 use Modules\Core\Models\Entity;
 use Modules\Core\Models\Field;
 use Modules\Core\Models\Preset;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Pivot;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Override;
 
+/**
+ * @property int $id
+ * @property int $preset_id The preset that the entity preset relation belongs to
+ * @property int $entity_id The entity that the entity preset relation belongs to
+ * @property int $version Incremental version number scoped to preset+entity
+ * @property \Carbon\CarbonImmutable|null $created_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property list<FieldSnapshot>|null $fields_snapshot
+ *
+ * @phpstan-type FieldSnapshot array{field_id: int, name: string, type: string, options: mixed, is_translatable: bool, is_slug: bool, pivot: array{is_required: bool, order_column: int, default?: mixed}}
+ */
+#[ObservedBy(HierarchyOwnerObserver::class)]
 abstract class Presettable extends Pivot implements ISoftDeletableModel
 {
     use SoftDeletes;

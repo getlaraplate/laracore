@@ -19,6 +19,27 @@ use Modules\Core\Overrides\Model;
 use Modules\Core\Rules\SettingValue;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $name The name of the setting
+ * @property bool $encrypted Is the value encrypted
+ * @property SettingTypeEnum $type The type of the setting
+ * @property string $group_name The group name of the setting
+ * @property string $description The description of the setting
+ * @property string|null $module Owning module, null when the setting was not written by a seeder
+ * @property bool $is_internal Written by a first-party module seeder
+ * @property bool $managed Value written by a command, read-only in the panel
+ * @property bool $is_public Readable by guests through the settings ACL
+ * @property string|null $action_command Artisan command line run from the settings grid, with {attribute} placeholders; seeded only
+ * @property bool $action_queued Queue the action command instead of running it inside the request
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property mixed $value The value of the setting
+ * @property array<array-key, mixed>|null $choices Constrained available values
+ * @property array<array-key, mixed>|null $seeded_value Last value written by the seeder; drift is value !== seeded_value
+ */
 #[ObservedBy(SettingObserver::class)]
 final class Setting extends Model
 {
@@ -194,7 +215,7 @@ final class Setting extends Model
 
     protected function setTypeAttribute(mixed $value): void
     {
-        $this->attributes['type'] = ($value instanceof SettingTypeEnum ? $value : (SettingTypeEnum::tryFrom($value)) ?? SettingTypeEnum::String);
+        $this->attributes['type'] = ($value instanceof SettingTypeEnum ? $value : (is_string($value) ? SettingTypeEnum::tryFrom($value) : null)) ?? SettingTypeEnum::String;
     }
 
     protected function casts(): array

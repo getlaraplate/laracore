@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Contracts;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Contract for Eloquent models that use the HasTranslations trait.
@@ -28,4 +29,9 @@ interface ITranslatableModel
     public function hasTranslation(?string $locale = null): bool;
 
     public function autoTranslateEnabledBySettings(): bool;
+
+    /**
+     * @return HasMany<covariant Model, covariant Model>
+     */
+    public function translations(): HasMany;
 }

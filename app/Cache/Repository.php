@@ -10,11 +10,8 @@ use DateTimeInterface;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository as BaseRepository;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
-use Laravel\Sanctum\PersonalAccessToken;
-use Modules\Core\Helpers\ResponseBuilder;
+use Modules\Core\Cache\Labels\CacheLabelInvalidator;
 use Modules\Core\Models\User;
 use Override;
 use Spatie\Permission\Models\Role;
@@ -27,22 +24,22 @@ use UnitEnum;
 final class Repository extends BaseRepository
 {
     /**
-     * Cached app name to avoid repeated config calls.
+     * The default ttl of a cached response, in seconds: `cache.duration` when it is a number, else its `medium`,
+     * `short` or `long` entry, else 300.
      */
-    private static ?string $app_name = null;
-
-    /**
-     * @param  array<string>|string  $tags
-     * @return array<string>
-     */
-    public function getCacheTags(array|string $tags = []): array
+    public static function resolveDefaultCacheSeconds(): int
     {
-        if (self::$app_name === null) {
-            $app_name = config('app.name');
-            self::$app_name = is_string($app_name) ? $app_name : '';
+        $durations = config('cache.duration');
+
+        if (is_int($durations)) {
+            return max(1, $durations);
         }
 
-        return array_merge([self::$app_name], is_string($tags) ? [$tags] : $tags);
+        if (! is_array($durations)) {
+            return 300;
+        }
+
+        return self::resolveDurationConfigToSeconds($durations);
     }
 
     #[Override]
@@ -75,61 +72,16 @@ final class Repository extends BaseRepository
     // }
 
     /**
-     * @template TCacheValue
-     *
-     * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
-     * @param  Closure(): (TCacheValue|ResponseBuilder)  $callback
-     * @return TCacheValue|JsonResponse
-     */
-    public function tryByRequest(Model|string|array|null $entity, Request $request, Closure $callback, ?int $duration = null): mixed
-    {
-        $tags_input = $entity instanceof Model
-            ? $this->getTableName($entity)
-            : (is_array($entity) ? array_map(fn (Model|string $e): string => $e instanceof Model ? $this->getTableName($e) : $e, $entity) : ($entity ?? []));
-        $tags = self::getCacheTags(is_array($tags_input) ? $tags_input : $tags_input);
-
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    return $this->unwrapCallbackResult($callback());
-                }
-
-                if (! method_exists($resolved_model, 'usesCache') || ! $resolved_model->usesCache()) {
-                    return $this->unwrapCallbackResult($callback());
-                }
-
-                $tags[] = $this->getTableName($resolved_model);
-            }
-        }
-
-        $request_user = $request->user();
-        $user = $request_user instanceof User ? $request_user : null;
-        $user_tags = $this->getKeyPartsFromUser($user);
-
-        if ($user_tags !== []) {
-            array_push($tags, ...$user_tags);
-        }
-
-        $key = $this->getKeyFromRequest($request, [...$user_tags, ...$this->getKeyPartsFromToken($user)]);
-        $ttl = $duration ?? $this->resolveDefaultCacheSeconds();
-
-        return $this->remember($key, $ttl, fn () => $this->unwrapCallbackResult($callback()));
-    }
-
-    /**
-     * Clear cache by the specified entity.
+     * Flush everything cached for the whole table of each entity that uses the cache: which of its rows exist and the
+     * content of every row, so a detail or a response embedding any row is reached too. It is the explicit "forget this
+     * entity" call, for a write that fires no model event or whose rows are unknown. A write through Eloquent models
+     * needs no call: the model events flush the table and the row they touched, which keeps the other rows cached.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>  $entity
      */
     public function clearByEntity(Model|string|array $entity): void
     {
-        $models = Arr::wrap($entity);
-
-        foreach ($models as $model) {
+        foreach (Arr::wrap($entity) as $model) {
             $resolved_model = $this->resolveModel($model);
 
             if ($resolved_model === null) {
@@ -137,94 +89,38 @@ final class Repository extends BaseRepository
             }
 
             if (method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
-                $this->tags(self::getCacheTags($this->getTableName($resolved_model)))->flush();
+                app(CacheLabelInvalidator::class)->flushTable($this->getTableName($resolved_model), $resolved_model);
             }
         }
     }
 
     /**
-     * clear cache by request extracted info.
-     *
-     * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
-     */
-    public function clearByRequest(Request $request, Model|string|array|null $entity = null): void
-    {
-        $request_user = $request->user();
-        $user = $request_user instanceof User ? $request_user : null;
-        $key = $this->getKeyFromRequest($request, [...$this->getKeyPartsFromUser($user), ...$this->getKeyPartsFromToken($user)]);
-
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    continue;
-                }
-
-                if (! method_exists($resolved_model, 'usesCache') || $resolved_model->usesCache()) {
-                    $this->tags(self::getCacheTags($this->getTableName($resolved_model)))->forget($key);
-                }
-            }
-        } else {
-            $this->tags(self::getCacheTags())->forget($key);
-        }
-    }
-
-    /**
-     * clear cache elements by user and only by entity if specified.
+     * Invalidate every response cached for the user, when no entity is given or at least one of them uses the cache.
+     * The flush runs after the commit of a transaction open on the user's connection.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
      */
     public function clearByUser(User $user, Model|string|array|null $entity = null): void
     {
-        $user_key = 'U' . $user->id;
+        $key = $user->getKey();
 
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    continue;
-                }
-
-                if (method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
-                    $this->tags(self::getCacheTags([$this->getTableName($resolved_model), $user_key]))->flush();
-                }
-            }
-        } else {
-            $this->tags(self::getCacheTags($user_key))->flush();
+        if ((is_int($key) || is_string($key)) && $this->anyUsesCache($entity)) {
+            app(CacheLabelInvalidator::class)->flushUser($key, $user);
         }
     }
 
     /**
-     * clear cache elements by user group and only by entity if specified.
+     * Invalidate every response cached for the users holding the role, under the same conditions as
+     * {@see clearByUser()}.
      *
      * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
      */
     public function clearByGroup(Role $role, Model|string|array|null $entity = null): void
     {
-        $role_key = 'R' . $role->id;
+        $key = $role->getKey();
 
-        if ($entity) {
-            $models = Arr::wrap($entity);
-
-            foreach ($models as $model) {
-                $resolved_model = $this->resolveModel($model);
-
-                if ($resolved_model === null) {
-                    continue;
-                }
-
-                if (method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
-                    $this->tags(self::getCacheTags([$this->getTableName($resolved_model), $role_key]))->flush();
-                }
-            }
-        } else {
-            $this->tags(self::getCacheTags($role_key))->flush();
+        if ((is_int($key) || is_string($key)) && $this->anyUsesCache($entity)) {
+            app(CacheLabelInvalidator::class)->flushRole($key, $role);
         }
     }
 
@@ -250,21 +146,23 @@ final class Repository extends BaseRepository
     }
 
     /**
-     * recursively sorts array by keys.
-     *
-     * @param  array<int|string, mixed>|string|null  $array
+     * @param  array<int|string, mixed>  $durations
      */
-    private static function recursiveKSort(array|string|null &$array): void
+    private static function resolveDurationConfigToSeconds(array $durations): int
     {
-        if (is_array($array)) {
-            ksort($array);
-
-            foreach ($array as &$value) {
-                if (is_array($value) || is_string($value)) {
-                    self::recursiveKSort($value);
-                }
+        foreach (['medium', 'short', 'long'] as $key) {
+            if (isset($durations[$key]) && is_numeric($durations[$key])) {
+                return max(1, (int) $durations[$key]);
             }
         }
+
+        foreach ($durations as $value) {
+            if (is_numeric($value)) {
+                return max(1, (int) $value);
+            }
+        }
+
+        return 300;
     }
 
     /**
@@ -280,12 +178,12 @@ final class Repository extends BaseRepository
                 return parent::flexible($key, [(int) $ttl[0], (int) $ttl[1]], $callback);
             }
 
-            return parent::remember($key, $this->resolveDurationConfigToSeconds($ttl), $callback);
+            return parent::remember($key, self::resolveDurationConfigToSeconds($ttl), $callback);
         }
 
         if ($ttl === null) {
             $threshold = $this->getThreshold();
-            $base_seconds = $this->resolveDefaultCacheSeconds();
+            $base_seconds = self::resolveDefaultCacheSeconds();
 
             if ($threshold !== null && $threshold !== 0) {
                 return parent::flexible($key, [$threshold, $base_seconds], $callback);
@@ -302,22 +200,29 @@ final class Repository extends BaseRepository
             return parent::remember($key, (int) $ttl, $callback);
         }
 
-        return parent::remember($key, $this->resolveDefaultCacheSeconds(), $callback);
+        return parent::remember($key, self::resolveDefaultCacheSeconds(), $callback);
     }
 
     /**
-     * @template TCacheValue
+     * True when no entity is given or at least one of them uses the cache.
      *
-     * @param  TCacheValue|ResponseBuilder  $data
-     * @return TCacheValue|JsonResponse
+     * @param  Model|class-string<Model>|array<Model|class-string<Model>>|null  $entity
      */
-    private function unwrapCallbackResult(mixed $data): mixed
+    private function anyUsesCache(Model|string|array|null $entity): bool
     {
-        if ($data instanceof ResponseBuilder) {
-            return $data->getResponse();
+        if ($entity === null || $entity === []) {
+            return true;
         }
 
-        return $data;
+        foreach (Arr::wrap($entity) as $model) {
+            $resolved_model = $this->resolveModel($model);
+
+            if ($resolved_model !== null && method_exists($resolved_model, 'usesCache') && $resolved_model->usesCache()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -338,91 +243,9 @@ final class Repository extends BaseRepository
         return $instance instanceof Model ? $instance : null;
     }
 
-    /**
-     * contruct a cache key by request info.
-     *
-     * @param  array<string>  $user_tags
-     */
-    private function getKeyFromRequest(Request $request, array $user_tags): string
-    {
-        $path = $request->getPathInfo();
-        $params = $request->query();
-
-        if ($user_tags !== []) {
-            self::recursiveKSort($params);
-        }
-
-        return base64_encode($path . ($user_tags !== [] ? implode('_', $user_tags) . '_' : '') . serialize($params));
-    }
-
     private function getTableName(string|Model $entity): string
     {
         return is_string($entity) ? $entity : $entity->getTable();
-    }
-
-    /**
-     * The key part of the personal access token that authenticated the request, if one did: two tokens of one user
-     * carry different abilities, so their responses differ (relations left out, the media projection) and must
-     * never be served for each other. A session carries no personal token and adds nothing.
-     *
-     * @return list<string>
-     */
-    private function getKeyPartsFromToken(?User $user): array
-    {
-        $token = $user?->currentAccessToken();
-
-        if (! $token instanceof PersonalAccessToken) {
-            return [];
-        }
-
-        $key = $token->getKey();
-
-        return ['T' . (is_scalar($key) ? (string) $key : '0')];
-    }
-
-    /**
-     * compose key parts by user and groups.
-     *
-     * @return array<string>
-     */
-    private function getKeyPartsFromUser(?User $user): array
-    {
-        if ($user === null) {
-            return [];
-        }
-
-        $tags = ['U' . $user->id];
-        $role_tags = $user->roles()->get()->map(static function (Model $role): string {
-            $key = $role->getKey();
-
-            return 'R' . (is_scalar($key) ? (string) $key : '0');
-        })->all();
-
-        foreach (['groups', 'user_groups', 'user_roles'] as $relation_name) {
-            if (! method_exists($user, $relation_name) || ! $user->relationLoaded($relation_name)) {
-                continue;
-            }
-
-            $related = $user->getRelation($relation_name);
-
-            if (! $related instanceof \Illuminate\Support\Collection) {
-                continue;
-            }
-
-            foreach ($related as $related_model) {
-                if (! $related_model instanceof Model) {
-                    continue;
-                }
-
-                $key = $related_model->getKey();
-                $role_tags[] = 'R' . (is_scalar($key) ? (string) $key : '0');
-            }
-        }
-
-        sort($role_tags);
-        array_push($tags, ...$role_tags);
-
-        return array_map(strval(...), $tags);
     }
 
     private function getThreshold(): ?int
@@ -430,40 +253,5 @@ final class Repository extends BaseRepository
         $value = config('cache.threshold');
 
         return is_numeric($value) ? (int) $value : null;
-    }
-
-    private function resolveDefaultCacheSeconds(): int
-    {
-        $durations = config('cache.duration');
-
-        if (is_int($durations)) {
-            return max(1, $durations);
-        }
-
-        if (! is_array($durations)) {
-            return 300;
-        }
-
-        return $this->resolveDurationConfigToSeconds($durations);
-    }
-
-    /**
-     * @param  array<int|string, mixed>  $durations
-     */
-    private function resolveDurationConfigToSeconds(array $durations): int
-    {
-        foreach (['medium', 'short', 'long'] as $key) {
-            if (isset($durations[$key]) && is_numeric($durations[$key])) {
-                return max(1, (int) $durations[$key]);
-            }
-        }
-
-        foreach ($durations as $value) {
-            if (is_numeric($value)) {
-                return max(1, (int) $value);
-            }
-        }
-
-        return 300;
     }
 }

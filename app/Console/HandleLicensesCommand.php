@@ -29,6 +29,19 @@ final class HandleLicensesCommand extends Command
     #[Override]
     protected $description = 'Renew, add or delete user licenses. <fg=green>(⚡ Modules\Core)</fg=green>';
 
+    /**
+     * The status of a group of licenses sharing an expiry: perpetual without one, expired once it has passed,
+     * active until then.
+     */
+    public static function statusOf(?CarbonInterface $valid_to): string
+    {
+        if (! $valid_to instanceof CarbonInterface) {
+            return 'perpetual';
+        }
+
+        return today()->greaterThan($valid_to) ? 'expired' : 'active';
+    }
+
     public function handle(): int
     {
         try {
@@ -41,7 +54,7 @@ final class HandleLicensesCommand extends Command
                 $licenses_groups = License::query()->groupBy('valid_to')
                     ->select(DB::raw('valid_to'), DB::raw('count(*) as count'))
                     ->lazy(100);
-                $licenses_count = (int) $licenses_groups->reduce(static fn (int $total, object $current): int|float => $total + $current->count, 0);
+                $licenses_count = $licenses_groups->reduce(static fn (int $total, License $group): int => $total + self::groupCount($group), 0);
 
                 if ($licenses_groups->isEmpty()) {
                     $this->output->info('No licenses found');
@@ -49,10 +62,10 @@ final class HandleLicensesCommand extends Command
                     $this->output->info('Current licenses status');
                     table(
                         ['Status', 'Expiration', 'Licenses Qt.'],
-                        $licenses_groups->map(static fn (object $data): array => [
-                            $data->valid_to && today()->greaterThan($data->valid_to) ? $data->valid_to : ($data->valid_to ? 'expired' : 'perpetual'),
-                            $data->valid_to,
-                            $data->count,
+                        $licenses_groups->map(static fn (License $data): array => [
+                            self::statusOf($data->valid_to),
+                            $data->valid_to?->toDateTimeString() ?? '',
+                            (string) self::groupCount($data),
                         ])->values()->all(),
                     );
                 }
@@ -113,13 +126,23 @@ final class HandleLicensesCommand extends Command
         }
     }
 
+    /**
+     * The `count(*)` alias of a group of licenses sharing an expiry.
+     */
+    private static function groupCount(License $group): int
+    {
+        $count = $group->getAttribute('count');
+
+        return is_numeric($count) ? (int) $count : 0;
+    }
+
     private function listLicenses(): void
     {
         $licenses = License::with('user')->lazy(100);
         $remapped = [];
 
         foreach ($licenses as $license) {
-            $remapped[] = [$license->id, $license->valid_to, $license->user->name];
+            $remapped[] = [$license->id, $license->valid_to, $license->user?->name ?? 'unassigned'];
         }
 
         table(['License', 'Expiration', 'User'], $remapped);

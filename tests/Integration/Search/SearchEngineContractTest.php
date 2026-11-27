@@ -14,7 +14,7 @@ use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Search\Schema\IndexType;
 use Modules\Core\Search\Schema\SchemaDefinition;
 use Modules\Core\Search\Schema\SchemaManager;
-use Modules\Core\Tests\Stubs\Search\DatabaseEngineSQLiteVectorSearchUser;
+use Modules\Core\Tests\Stubs\Search\TypesenseDatedStub;
 
 it('declares the scout search signature on the core search engine contract', function (): void {
     $method = new ReflectionMethod(ISearchEngine::class, 'search');
@@ -155,41 +155,6 @@ it('translates indexed relation field filters to elasticsearch nested clauses', 
     ]);
 });
 
-it('filters a null equality as a missing field on Elasticsearch', function (): void {
-    $engine = (new ReflectionClass(ElasticsearchEngine::class))->newInstanceWithoutConstructor();
-
-    $filters = $engine->buildSearchFilters(['extended_type' => null, 'type' => 'news']);
-
-    expect($filters)->toBe([
-        ['bool' => ['must_not' => [['exists' => ['field' => 'extended_type']]]]],
-        ['term' => ['type' => 'news']],
-    ]);
-});
-
-it('skips a null equality in typesense keyword search parameters instead of failing', function (): void {
-    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
-    $builder = new ScoutBuilder(new DatabaseEngineSQLiteVectorSearchUser(), 'alpha');
-    $builder->where('extended_type', null);
-    $builder->where('type', 'news');
-
-    $parameters = $engine->buildSearchParameters($builder, 1, 10);
-
-    expect($parameters['filter_by'])->toBe('type:=news');
-});
-
-it('skips a null equality in typesense vector search filters instead of writing an empty one', function (): void {
-    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
-    $builder = new ScoutBuilder(new DatabaseEngineSQLiteVectorSearchUser(), '*');
-    $builder->where('vector', [1.0, 0.0]);
-    $builder->where('extended_type', null);
-    $builder->where('type', 'news');
-
-    $filters = (new ReflectionMethod(TypesenseEngine::class, 'buildFiltersFromBuilder'))->invoke($engine, $builder);
-
-    expect($filters)->toBe('type:="news"')
-        ->and($engine->buildSearchFilters(['extended_type' => null, 'type' => 'news']))->toBe('type:="news"');
-});
-
 it('translates advanced portable filters to typesense filter syntax', function (): void {
     $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
 
@@ -295,4 +260,142 @@ it('preserves filterable field metadata across search schema translations', func
         ->and($database_indexes->where('type', 'prefix')->pluck('columns')->all())->toBe([['slug']])
         ->and($database_indexes->where('type', 'btree')->pluck('columns')->contains(['title']))->toBeFalse()
         ->and($manager->translateForEngine($schema, 'database')['columns']['title']['filterable'] ?? null)->toBeFalse();
+});
+
+it('reads an equality on null as the absence of a value on elasticsearch, which takes no null term', function (): void {
+    $engine = (new ReflectionClass(ElasticsearchEngine::class))->newInstanceWithoutConstructor();
+    $missing = ['bool' => ['must_not' => [['exists' => ['field' => 'extended_type']]]]];
+
+    expect($engine->buildSearchFilters(['extended_type' => null]))->toBe([$missing])
+        ->and($engine->buildSearchFilters([
+            'operator' => 'or',
+            'filters' => [
+                ['field' => 'extended_type', 'operator' => '=', 'value' => null],
+                ['field' => 'extended_type', 'operator' => '!=', 'value' => null],
+            ],
+        ]))->toBe([[
+            'bool' => [
+                'should' => [$missing, ['exists' => ['field' => 'extended_type']]],
+                'minimum_should_match' => 1,
+            ],
+        ]]);
+});
+
+it('filters an equality on null by the placeholder typesense indexes a null string with', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    $placeholder = TypesenseEngine::NULL_PLACEHOLDER;
+
+    expect($engine->buildSearchFilters(['extended_type' => null]))->toBe(sprintf('extended_type:="%s"', $placeholder))
+        ->and($engine->buildSearchFilters([
+            'operator' => 'or',
+            'filters' => [
+                ['field' => 'extended_type', 'operator' => '=', 'value' => null],
+                ['field' => 'extended_type', 'operator' => '!=', 'value' => null],
+            ],
+        ]))->toBe(sprintf('(extended_type:="%s" || extended_type:!="%s")', $placeholder, $placeholder));
+});
+
+it('indexes a null in a top-level string field of typesense as the placeholder', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    (new ReflectionProperty($engine, 'null_placeholder_fields'))->setValue($engine, ['extended_type']);
+
+    $documents = Mockery::mock(Typesense\Documents::class);
+    $documents->shouldReceive('import')
+        ->once()
+        ->with([
+            ['id' => '1', 'extended_type' => TypesenseEngine::NULL_PLACEHOLDER, 'title' => null],
+            ['id' => '2', 'extended_type' => 'shop.product', 'title' => 'x'],
+        ], ['action' => 'upsert'])
+        ->andReturn([['success' => true], ['success' => true]]);
+    $collection = Mockery::mock(Typesense\Collection::class);
+    $collection->shouldReceive('getDocuments')->andReturn($documents);
+
+    (new ReflectionMethod($engine, 'importDocuments'))->invoke($engine, $collection, [
+        ['id' => '1', 'extended_type' => null, 'title' => null],
+        ['id' => '2', 'extended_type' => 'shop.product', 'title' => 'x'],
+    ], 'upsert');
+});
+
+it('maps a top-level date to an int64 on typesense, and leaves a nested date a string', function (): void {
+    $schema = new SchemaDefinition('contents');
+    $schema->addField(new FieldDefinition('valid_from', FieldType::Date, [IndexType::Filterable, IndexType::Sortable]));
+    $schema->addField(new FieldDefinition('extension', FieldType::Object, [IndexType::Filterable], [
+        'properties' => ['release_date' => ['type' => FieldType::Date, 'filterable' => true]],
+    ]));
+
+    $fields = collect(resolve(SchemaManager::class)->translateForEngine($schema, 'typesense')['fields'])->keyBy('name');
+
+    expect($fields->get('valid_from')['type'])->toBe('int64')
+        ->and($fields->get('extension.release_date')['type'])->toBe('string');
+});
+
+it('filters a date of a typesense model as a timestamp, a null date as its sentinel, and keeps the sentinel out of a range', function (): void {
+    Carbon\Carbon::setTestNow('2026-08-19 12:00:00');
+    $now = Carbon\Carbon::now()->getTimestamp();
+    $null = TypesenseEngine::NULL_TIMESTAMP;
+
+    try {
+        $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+        $builder = new ScoutBuilder(new TypesenseDatedStub, 'needle');
+        $builder->where('extended_type', null);
+        $builder->where('valid_to', null);
+        $builder->options['advanced_filters'] = [
+            'operator' => 'and',
+            'filters' => [
+                ['field' => 'valid_from', 'operator' => '<=', 'value' => Carbon\Carbon::now()],
+                [
+                    'operator' => 'or',
+                    'filters' => [
+                        ['field' => 'valid_to', 'operator' => '>=', 'value' => '2026-08-19 12:00:00'],
+                        ['field' => 'valid_to', 'operator' => '=', 'value' => null],
+                    ],
+                ],
+                ['field' => 'company_id', 'operator' => '=', 'value' => 7],
+            ],
+        ];
+
+        $parameters = $engine->buildSearchParameters($builder, 1, 10);
+    } finally {
+        Carbon\Carbon::setTestNow();
+    }
+
+    expect($parameters['filter_by'])->toBe(sprintf(
+        'extended_type:="%s" && valid_to:=%d && (valid_from:<=%d && valid_from:!=%d) && ((valid_to:>=%d && valid_to:!=%d) || valid_to:=%d) && company_id:=7',
+        TypesenseEngine::NULL_PLACEHOLDER,
+        $null,
+        $now,
+        $null,
+        $now,
+        $null,
+        $null,
+    ));
+});
+
+it('writes a boolean filter value as typesense reads it', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+
+    expect($engine->buildSearchFilters(['extension.is_published_in_shop' => true, 'featured' => false]))
+        ->toBe('extension.is_published_in_shop:=true && featured:=false');
+});
+
+it('indexes a date of a typesense model as a timestamp and a null or missing date as its sentinel', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    (new ReflectionProperty($engine, 'date_fields'))->setValue($engine, ['valid_from', 'valid_to']);
+    $from = Carbon\Carbon::parse('2026-08-01 00:00:00');
+
+    $documents = Mockery::mock(Typesense\Documents::class);
+    $documents->shouldReceive('import')
+        ->once()
+        ->with([
+            ['id' => '1', 'valid_from' => $from->getTimestamp(), 'valid_to' => TypesenseEngine::NULL_TIMESTAMP],
+            ['id' => '2', 'valid_from' => $from->getTimestamp(), 'valid_to' => TypesenseEngine::NULL_TIMESTAMP],
+        ], ['action' => 'upsert'])
+        ->andReturn([['success' => true], ['success' => true]]);
+    $collection = Mockery::mock(Typesense\Collection::class);
+    $collection->shouldReceive('getDocuments')->andReturn($documents);
+
+    (new ReflectionMethod($engine, 'importDocuments'))->invoke($engine, $collection, [
+        ['id' => '1', 'valid_from' => $from, 'valid_to' => null],
+        ['id' => '2', 'valid_from' => '2026-08-01 00:00:00'],
+    ], 'upsert');
 });

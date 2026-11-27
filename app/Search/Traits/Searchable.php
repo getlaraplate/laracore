@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Engines\DatabaseEngine;
 use Laravel\Scout\Engines\TypesenseEngine;
 use Modules\Core\Contracts\IEmbeddableModel;
+use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Events\ModelRequiresIndexing;
 use Modules\Core\Events\ModelsRequireIndexing;
 use Modules\Core\Helpers\LocaleContext;
@@ -29,6 +30,7 @@ use Modules\Core\Search\Contracts\ISearchEngine;
 use Modules\Core\Search\DeferredSearchIndexing;
 use Modules\Core\Search\DTOs\VectorProfile;
 use Modules\Core\Search\Exceptions\UnsupportedSearchEngineException;
+use Modules\Core\Search\Extensions\HidesExtendedRows;
 use Modules\Core\Search\Schema\FieldDefinition;
 use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Search\Schema\IndexType;
@@ -48,6 +50,7 @@ use Throwable;
  * @phpstan-require-extends Model
  *
  * @phpstan-require-implements IEmbeddableModel
+ * @phpstan-require-implements ISearchableModel
  */
 trait Searchable
 {
@@ -189,7 +192,9 @@ trait Searchable
      */
     public function makeAllSearchableUsing(Builder $query): Builder
     {
-        return $query->withoutGlobalScope(LocaleScope::class);
+        // A host of extenders indexes its extended rows too: the search keeps them out with the host's exclusion,
+        // and an opt-in search reads them. A no-op for a model that never registers the scope.
+        return $query->withoutGlobalScope(LocaleScope::class)->withoutGlobalScope(HidesExtendedRows::class);
     }
 
     /**
@@ -200,8 +205,10 @@ trait Searchable
      * pass already loaded. A model without toSearchableWith(), or a plain
      * (non-Eloquent) collection, is returned untouched.
      *
-     * @param  Collection<int, covariant Model>  $models
-     * @return Collection<int, covariant Model>
+     * @template TCollection of Collection<int, covariant Model>
+     *
+     * @param  TCollection  $models
+     * @return TCollection
      */
     public function makeSearchableUsing(Collection $models): Collection
     {
@@ -256,7 +263,7 @@ trait Searchable
             $array['valid_to'] = $this->{HasValidity::validToKey()};
         }
 
-        if (class_uses_trait($this, SoftDeletes::class) || $this->softDeletesEnabled ?? true) {
+        if (class_uses_trait($this, SoftDeletes::class)) {
             $array['is_deleted'] = $this->{self::getIsDeletedColumn()};
         }
 
@@ -761,7 +768,7 @@ trait Searchable
     {
         $data = '';
 
-        foreach ($this->embed as $attribute) {
+        foreach ($this->getEmbedFields() as $attribute) {
             $value = $get($attribute);
 
             if ($this->isValidEmbedValue($value)) {

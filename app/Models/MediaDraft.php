@@ -17,6 +17,14 @@ use Spatie\MediaLibrary\HasMedia as SpatieHasMedia;
  * does not exist yet and uploads cannot bind to an id. Files are staged in the
  * single `pending` collection (each carrying a `target_collection` custom
  * property) and later moved onto the freshly created record by the claim flow.
+ *
+ * @property int $id
+ * @property int $user_id
+ * @property string $token The client-generated token that keys the pending bucket
+ * @property string $target_module The module of the owner entity the media will be claimed onto
+ * @property string $target_entity The owner entity the media will be claimed onto
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class MediaDraft extends Model implements SpatieHasMedia
 {

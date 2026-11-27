@@ -7,6 +7,7 @@ namespace Modules\Core\Overrides;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model as BaseModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Models\Concerns\HasPrefixedTableName;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -16,7 +17,7 @@ use Modules\Core\SoftDeletes\SoftDeletes;
 /**
  * @mixin \Eloquent
  */
-abstract class Model extends BaseModel implements ISoftDeletableModel
+abstract class Model extends BaseModel implements ISoftDeletableModel, IVersionedModel
 {
     use HasFactory;
     use HasPrefixedTableName;

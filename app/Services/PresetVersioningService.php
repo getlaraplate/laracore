@@ -8,6 +8,9 @@ use Modules\Core\Models\Field;
 use Modules\Core\Models\Pivot\Presettable;
 use Modules\Core\Models\Preset;
 
+/**
+ * @phpstan-import-type FieldSnapshot from \Modules\Core\Models\Pivot\Presettable
+ */
 final class PresetVersioningService
 {
     /**
@@ -51,11 +54,11 @@ final class PresetVersioningService
     /**
      * Capture the current field configuration for the given preset.
      *
-     * @return array<int, array{field_id: int, name: string, type: string, options: mixed, is_translatable: bool, is_slug: bool, pivot: array{is_required: bool, order_column: int, default: mixed}}>
+     * @return list<FieldSnapshot>
      */
     public function captureFieldsSnapshot(Preset $preset): array
     {
-        return $preset->fields()
+        return array_values($preset->fields()
             ->orderByPivot('order_column', 'asc')
             ->get()
             ->map(static fn (Field $field): array => [
@@ -66,11 +69,11 @@ final class PresetVersioningService
                 'is_translatable' => (bool) $field->is_translatable,
                 'is_slug' => (bool) $field->is_slug,
                 'pivot' => [
-                    'is_required' => (bool) $field->pivot->is_required,
-                    'order_column' => (int) $field->pivot->order_column,
-                    'default' => $field->pivot->default,
+                    'is_required' => (bool) $field->presetPivot()->is_required,
+                    'order_column' => (int) $field->presetPivot()->order_column,
+                    'default' => $field->presetPivot()->default,
                 ],
             ])
-            ->all();
+            ->all());
     }
 }

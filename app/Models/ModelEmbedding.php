@@ -23,6 +23,8 @@ use Override;
  * @property string|null $locale
  * @property string|null $model_key
  * @property string|null $content_hash
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
  */
 final class ModelEmbedding extends Model
 {

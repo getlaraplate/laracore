@@ -117,3 +117,21 @@ it('keeps index on a filterable leaf and stringifies its boolean meta', function
         ->and($status['index'])->toBeTrue()
         ->and($status['meta']['filterable'])->toBe('true');
 });
+
+it('hands the cluster an object field whose typed sub-fields are valid leaves', function (): void {
+    $schema = new SchemaDefinition('sanitize_stub');
+    $schema->addField(new FieldDefinition('extension', FieldType::Object, [IndexType::Searchable, IndexType::Filterable], [
+        'properties' => [
+            'kind' => ['type' => FieldType::Keyword, 'filterable' => true],
+            'label' => FieldType::Keyword,
+        ],
+    ]));
+
+    $extension = invokeEsSanitizeMappingProperty((new ElasticsearchTranslator)->translate($schema)['mappings']['properties']['extension']);
+
+    expect($extension['type'])->toBe('object')
+        ->and($extension)->not->toHaveKey('meta')
+        ->and($extension)->not->toHaveKey('index')
+        ->and($extension['properties']['kind'])->toBe(['type' => 'keyword', 'index' => true, 'meta' => ['filterable' => 'true']])
+        ->and($extension['properties']['label'])->toBe(['type' => 'keyword']);
+});

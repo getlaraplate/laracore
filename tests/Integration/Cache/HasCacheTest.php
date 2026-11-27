@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Modules\Core\Cache\Labels\CacheLabel;
 use Modules\Core\Casts\SettingTypeEnum;
+use Modules\Core\Contracts\ICacheLabelIndex;
 use Modules\Core\Models\Setting;
+use Modules\Core\Tests\Stubs\Cache\RecordingLabelIndex;
 
 it('exposes cache key and usage flag', function (): void {
     $setting = new Setting();
@@ -29,16 +32,11 @@ it('invalidates cache when a cached model is saved or deleted', function (): voi
     expect($setting->usesCache())->toBeTrue();
 });
 
-it('invalidates cache through tagged repository when tags are supported', function (): void {
-    $setting = Setting::factory()->persistedWithoutApprovalCapture()->make([
-        'name' => 'cache_tagged_' . uniqid(),
-        'value' => 'value',
-        'type' => SettingTypeEnum::String,
-        'group_name' => 'cache_group',
-        'description' => 'test',
-    ]);
+it('invalidates its whole table, rows included', function (): void {
+    $index = new RecordingLabelIndex();
+    app()->instance(ICacheLabelIndex::class, $index);
 
-    $setting->invalidateCache();
+    (new Setting())->invalidateCache();
 
-    expect(Cache::supportsTags() || true)->toBeTrue();
+    expect($index->flushedLabels())->toBe([CacheLabel::table((new Setting())->getTable()), CacheLabel::rows((new Setting())->getTable())]);
 });

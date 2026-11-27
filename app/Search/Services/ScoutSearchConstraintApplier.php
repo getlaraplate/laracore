@@ -12,6 +12,9 @@ use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\RelationFilter;
 use Modules\Core\Casts\ScopeFilter;
 use Modules\Core\Casts\WhereClause;
+use Modules\Core\Contracts\IExtendableModel;
+use Modules\Core\Contracts\IExtendsModel;
+use Modules\Core\Search\Extensions\HidesExtendedRows;
 use Modules\Core\Search\Exceptions\UnsupportedSearchEngineException;
 use Modules\Core\Search\Schema\FieldDefinition;
 use Modules\Core\Search\Schema\IndexType;
@@ -68,10 +71,20 @@ final readonly class ScoutSearchConstraintApplier
     }
 
     /**
+     * On a host of extenders whose filters ask for the rows of an alias (an extender searched through its host, a host
+     * opened to its extenders), the hiding scope of the host is removed from the queries the engine runs on the
+     * database: the search of a table-reading engine and the hydration of the hits of every engine, both of which
+     * run the builder's query callback. The filters decide which extended rows come back; a search that asks for none
+     * keeps the scope.
+     *
      * @param  array<int, \Modules\Core\Casts\Sort>  $sort
      */
     public function apply(mixed $builder, Model $model, ?FiltersGroup $filters = null, array $sort = []): void
     {
+        if ($filters instanceof FiltersGroup && $model instanceof IExtendableModel && self::asksForExtendedRows($filters, $model)) {
+            $this->openToExtendedRows($builder);
+        }
+
         $filters = $filters instanceof FiltersGroup ? self::withoutDatabaseOnlyNodes($filters) : null;
 
         if ($filters instanceof FiltersGroup) {
@@ -87,6 +100,15 @@ final readonly class ScoutSearchConstraintApplier
 
             $builder->orderBy($field, $item->direction->value);
         }
+    }
+
+    /**
+     * Whether the engine of the model filters on the property: the check {@see apply()} makes before it pushes a
+     * column filter, which refuses the search when it fails.
+     */
+    public function isFilterable(Model $model, string $property): bool
+    {
+        return $this->filterField($model, $property) !== null;
     }
 
     /**
@@ -217,7 +239,13 @@ final readonly class ScoutSearchConstraintApplier
             return;
         }
 
-        $field = (string) ($filter['field'] ?? '');
+        if (is_array($filter['extenders'] ?? null)) {
+            self::applyExtensionAdvancedFilterToEloquent($query, $filter, $boolean);
+
+            return;
+        }
+
+        $field = (string) ($filter['column'] ?? $filter['field'] ?? '');
         $operator = (string) ($filter['operator'] ?? '');
         $value = $filter['value'] ?? null;
         $where = $boolean === WhereClause::Or->value ? 'orWhere' : 'where';
@@ -276,6 +304,84 @@ final readonly class ScoutSearchConstraintApplier
         });
     }
 
+    /**
+     * A filter on `extension.<field>` of a host, on the database: the host row has a row of an extender declaring the
+     * field, keyed to it by the extender's host key, whose column matches. The rows of the extenders that declare
+     * the field are searched together (XS16 lets extenders share a field). `!=` keeps the host rows that have no
+     * such extender row, as an index keeps the documents whose field differs or is missing.
+     *
+     * @param  array<string, mixed>  $filter
+     */
+    private static function applyExtensionAdvancedFilterToEloquent(mixed $query, array $filter, string $boolean): void
+    {
+        $operator = (string) ($filter['operator'] ?? '');
+        $negative = $operator === FilterOperator::NotEquals->value;
+        $column = (string) $filter['extension_field'];
+        $host_key = (string) $filter['host_key'];
+        $method = $boolean === WhereClause::Or->value ? 'orWhere' : 'where';
+
+        $query->{$method}(static function (mixed $exists_group) use ($filter, $operator, $negative, $column, $host_key): void {
+            foreach ($filter['extenders'] as $extender) {
+                /** @var Model $prototype */
+                $prototype = new $extender['class']();
+                $rows = $prototype->newQuery()
+                    ->selectRaw('1')
+                    ->whereColumn($prototype->qualifyColumn((string) $extender['host_key']), $host_key);
+
+                self::applyAdvancedFilterToEloquent($rows, [
+                    'field' => $prototype->qualifyColumn($column),
+                    'operator' => $negative ? FilterOperator::In->value : $operator,
+                    'value' => $filter['value'] ?? null,
+                ], WhereClause::And->value);
+
+                $exists_group->addWhereExistsQuery($rows->toBase(), $negative ? 'and' : 'or', $negative);
+            }
+        });
+    }
+
+    /**
+     * Whether the filters hold, at any depth, a condition on the type column of the host (or `extension.type`) that
+     * selects an alias: a non-null value.
+     */
+    private static function asksForExtendedRows(FiltersGroup $filters, Model&IExtendableModel $model): bool
+    {
+        $type_column = $model->extensionTypeColumn();
+        $names = [$type_column, $model->qualifyColumn($type_column), IExtendableModel::EXTENSION_FIELD . '.type'];
+
+        foreach ($filters->filters as $node) {
+            if ($node instanceof FiltersGroup && self::asksForExtendedRows($node, $model)) {
+                return true;
+            }
+
+            if ($node instanceof Filter && in_array($node->property, $names, true) && $node->value !== null && $node->value !== []) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function openToExtendedRows(mixed $builder): void
+    {
+        if (! method_exists($builder, 'query') || ($builder->options['_extended_rows_opened'] ?? false) === true) {
+            return;
+        }
+
+        $existing_callback = $builder->queryCallback ?? null;
+
+        $builder->query(static function (mixed $query) use ($existing_callback): void {
+            if ($existing_callback !== null) {
+                $existing_callback($query);
+            }
+
+            if (method_exists($query, 'withoutGlobalScope')) {
+                $query->withoutGlobalScope(HidesExtendedRows::class);
+            }
+        });
+
+        $builder->options['_extended_rows_opened'] = true;
+    }
+
     private function applyFilters(mixed $builder, FiltersGroup $filters, Model $model): void
     {
         if ($filters->operator === WhereClause::Or) {
@@ -314,7 +420,9 @@ final readonly class ScoutSearchConstraintApplier
             throw new InvalidArgumentException(self::FILTER_ERROR);
         }
 
-        if (isset($field['relation'])) {
+        // A relation field, and an `extension` field of a host, are no columns of the model's table: the advanced
+        // filter carries how the database finds them, for the engines that read the table and for hydration.
+        if (isset($field['relation']) || isset($field['extenders']) || isset($field['column'])) {
             $this->appendAdvancedFilter($builder, $this->normalizeFilter($filter, $model));
 
             return;
@@ -388,6 +496,12 @@ final readonly class ScoutSearchConstraintApplier
             $normalized['relation_field'] = $field['relation_field'];
         }
 
+        foreach (['column', 'extension_field', 'host_key', 'extenders'] as $key) {
+            if (isset($field[$key])) {
+                $normalized[$key] = $field[$key];
+            }
+        }
+
         return $normalized;
     }
 
@@ -451,6 +565,10 @@ final readonly class ScoutSearchConstraintApplier
     {
         $field = $this->filterPropertyName($model, $property);
 
+        if ($model instanceof IExtendableModel && str_starts_with($field, IExtendableModel::EXTENSION_FIELD . '.')) {
+            return $this->extensionFilterField($model, $field);
+        }
+
         $filterable_fields = $this->filterableFields($model);
 
         if ($filterable_fields === null) {
@@ -458,6 +576,47 @@ final readonly class ScoutSearchConstraintApplier
         }
 
         return $filterable_fields[$field] ?? null;
+    }
+
+    /**
+     * A field of the `extension` object of a host, found from the extenders that declare it filterable (the
+     * declarations the host composes its mapping from, XS16) rather than from the mapping, so it is found on every
+     * engine, the collection engine included. It is no column of the host table: it carries the extenders whose
+     * table holds it, so the database reads it as an EXISTS on those tables
+     * ({@see applyExtensionAdvancedFilterToEloquent()}). `extension.type` is the alias: the host's type column.
+     *
+     * @return array{name: string, column?: string, extension_field?: string, host_key?: string, extenders?: list<array{class: class-string<Model>, host_key: string}>}|null
+     */
+    private function extensionFilterField(Model&IExtendableModel $model, string $field): ?array
+    {
+        $name = mb_substr($field, mb_strlen(IExtendableModel::EXTENSION_FIELD) + 1);
+
+        if ($name === 'type') {
+            return ['name' => $field, 'column' => $model->qualifyColumn($model->extensionTypeColumn())];
+        }
+
+        $extenders = [];
+
+        foreach ($model->extenders() as $class) {
+            /** @var Model&IExtendsModel $extender */
+            $extender = new $class();
+            $definition = $extender->searchableExtensionMapping()[$name] ?? null;
+
+            if (is_array($definition) && (($definition['filterable'] ?? false) === true || ($definition['facet'] ?? false) === true)) {
+                $extenders[] = ['class' => $class, 'host_key' => $extender->extensionHostKey()];
+            }
+        }
+
+        if ($extenders === []) {
+            return null;
+        }
+
+        return [
+            'name' => $field,
+            'extension_field' => $name,
+            'host_key' => $model->getQualifiedKeyName(),
+            'extenders' => $extenders,
+        ];
     }
 
     private function filterPropertyName(Model $model, string $property): string

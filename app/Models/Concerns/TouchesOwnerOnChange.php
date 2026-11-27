@@ -48,6 +48,7 @@ trait TouchesOwnerOnChange
     /**
      * The owner reached through a `belongsTo` relation of this row.
      *
+     * @param  BelongsTo<covariant Model, covariant Model>  $relation
      * @return array{0: Model, 1: int|string}|null
      */
     protected function ownerThrough(BelongsTo $relation): ?array

@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Modules\Core\Contracts\IsPartOfParent;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
@@ -42,23 +43,23 @@ trait RecordsChangesOnOwner
 
     public static function bootRecordsChangesOnOwner(): void
     {
-        static::created(static function (Model $part): void {
+        static::created(static function (self $part): void {
             $part->recordOnOwner(VersionChangeType::Created);
         });
 
-        static::updating(static function (Model $part): void {
+        static::updating(static function (self $part): void {
             $part->captureForOwner(array_keys($part->getDirty()));
         });
 
-        static::updated(static function (Model $part): void {
+        static::updated(static function (self $part): void {
             $part->recordOnOwner(VersionChangeType::Updated);
         });
 
-        static::deleting(static function (Model $part): void {
+        static::deleting(static function (self $part): void {
             $part->captureForOwner([]);
         });
 
-        static::deleted(static function (Model $part): void {
+        static::deleted(static function (self $part): void {
             $part->recordOnOwner(VersionChangeType::Deleted);
         });
     }
@@ -67,7 +68,7 @@ trait RecordsChangesOnOwner
      * Saves the part inside its owner's revision scope when no scope is open, so the part and the row it records on
      * its owner commit together (D52); inside an open scope the row joins its owner's set as it is.
      *
-     * @param  array<string, mixed>  $options
+     * @param  array{touch?: bool|null}  $options
      */
     public function save(array $options = []): bool
     {
@@ -79,7 +80,9 @@ trait RecordsChangesOnOwner
      */
     public function delete(): ?bool
     {
-        return $this->withinOwnerScope(fn (): ?bool => parent::delete());
+        $deleted = $this->withinOwnerScope(fn (): bool|int|null => parent::delete());
+
+        return is_int($deleted) ? $deleted > 0 : $deleted;
     }
 
     /**
@@ -133,7 +136,7 @@ trait RecordsChangesOnOwner
         $owner = $this->versionedOwner();
 
         // A part removed by its owner's hard delete is in the owner's snapshot set already (D54).
-        if (! $owner instanceof Model || resolve(VersionSetManagerInterface::class)->isBeingHardDeleted($owner)) {
+        if ($owner === null || resolve(VersionSetManagerInterface::class)->isBeingHardDeleted($owner)) {
             return;
         }
 
@@ -166,11 +169,11 @@ trait RecordsChangesOnOwner
     /**
      * The owner whose history records this part, or null when it has none or its history is off.
      */
-    private function versionedOwner(): ?Model
+    private function versionedOwner(): (Model&IVersionedModel)|null
     {
         $owner = $this->history_owner ?? $this->parentOwner();
 
-        if (! $owner instanceof Model || ! method_exists($owner, 'getVersionStrategy') || ! $owner::getVersioning()) {
+        if (! $owner instanceof IVersionedModel || ! $owner::getVersioning()) {
             return null;
         }
 
@@ -188,7 +191,7 @@ trait RecordsChangesOnOwner
         $manager = app(VersionSetManagerInterface::class);
         $owner = $manager->current() === null ? $this->versionedOwner() : null;
 
-        if (! $owner instanceof Model || ! $owner->exists) {
+        if ($owner === null || ! $owner->exists) {
             return $operation();
         }
 
@@ -212,7 +215,7 @@ trait RecordsChangesOnOwner
 
             // Decided on the class before any query: a part saved on its own must not read its owner when the
             // owner's history is off.
-            if (! method_exists($related, 'getVersionStrategy') || ! $related::getVersioning() || $related->getVersionStrategy() === false) {
+            if (! $related instanceof IVersionedModel || ! $related::getVersioning() || $related->getVersionStrategy() === false) {
                 return null;
             }
 

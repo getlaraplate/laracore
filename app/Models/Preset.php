@@ -19,6 +19,7 @@ use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Pivot\Fieldable;
 use Modules\Core\Models\Pivot\Presettable;
 use Modules\Core\Observers\DynamicContentMetadataObserver;
+use Modules\Core\Observers\HierarchyOwnerObserver;
 use Modules\Core\Overrides\Model;
 use Modules\Core\Services\PresetVersioningService;
 use Override;
@@ -28,8 +29,14 @@ use Override;
  * @property string $name
  * @property int|string|null $entity_id
  * @property int|string|null $template_id
+ * @property bool $is_active Whether the preset is active
+ * @property int $is_default Whether the preset is the default preset for same entity
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
  */
-#[ObservedBy(DynamicContentMetadataObserver::class)]
+#[ObservedBy([DynamicContentMetadataObserver::class, HierarchyOwnerObserver::class])]
 abstract class Preset extends Model implements IActivatableModel
 {
     use HasActivation {

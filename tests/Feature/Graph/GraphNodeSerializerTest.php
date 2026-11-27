@@ -53,3 +53,13 @@ it('never builds the label or the summary from an attribute the model hides', fu
     expect($node->label)->toBe('8')
         ->and($node->attributes)->not->toHaveKey('name');
 });
+
+it('never puts a hierarchy path on a graph node', function (string $detail): void {
+    $user = new User();
+    $user->forceFill(['id' => 9, 'name' => 'Graph Path User', 'slug' => 'graph-path-user', 'path' => 'users/root/child/graph-path-user/9']);
+    $user->exists = true;
+
+    $node = (new GraphNodeSerializer(new GraphEntityResolver(), new GraphProviderRegistry()))->serialize($user, $detail);
+
+    expect($node->attributes)->not->toHaveKey('path');
+})->with(['minimal', 'summary']);

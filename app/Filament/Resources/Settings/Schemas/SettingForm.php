@@ -19,6 +19,7 @@ use Filament\Schemas\Schema;
 use JsonException;
 use Modules\Core\Casts\SettingTypeEnum;
 use Modules\Core\Filament\Utils\HasForm;
+use Modules\Core\Filament\Utils\JsonChoiceStateCast;
 use Modules\Core\Models\Setting;
 use Modules\Core\Services\SettingChangeConfirmations;
 
@@ -220,7 +221,13 @@ final class SettingForm
         if ($choices !== []) {
             return Select::make('value')
                 ->required()
-                ->options($choices);
+                ->options(self::jsonChoiceOptions($record->choices))
+                ->stateCast(new JsonChoiceStateCast)
+                ->dehydrateStateUsing(static fn (mixed $state): mixed => match ($state) {
+                    'true' => true,
+                    'false' => false,
+                    default => $state,
+                });
         }
 
         if (is_array($value) && array_is_list($value) && array_all($value, static fn (mixed $item): bool => is_scalar($item))) {
@@ -248,6 +255,33 @@ final class SettingForm
 
         foreach ($choices as $choice) {
             if (is_scalar($choice)) {
+                $options[(string) $choice] = (string) $choice;
+            }
+        }
+
+        return $options;
+    }
+
+    /**
+     * The choices of a JSON setting, a boolean keyed `true` or `false` so it is a value of its own: cast to a string,
+     * `false` is the empty key, which a required select refuses (`versioning.strategy.*` offers `false` to switch
+     * versioning off). `JsonChoiceStateCast` shows a stored boolean as its key, and the select turns the key back into
+     * the boolean it stands for.
+     *
+     * @return array<string, string>
+     */
+    private static function jsonChoiceOptions(mixed $choices): array
+    {
+        if (! is_array($choices)) {
+            return [];
+        }
+
+        $options = [];
+
+        foreach ($choices as $choice) {
+            if (is_bool($choice)) {
+                $options[self::encodeJson($choice)] = self::encodeJson($choice);
+            } elseif (is_scalar($choice)) {
                 $options[(string) $choice] = (string) $choice;
             }
         }

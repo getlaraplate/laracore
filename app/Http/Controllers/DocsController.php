@@ -6,9 +6,11 @@ namespace Modules\Core\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\ItemNotFoundException;
 use Modules\Core\Actions\Docs\MergeSwaggerDocsAction;
+use Modules\Core\Cache\CacheManager;
+use Modules\Core\Cache\Labels\CacheLabel;
+use Modules\Core\Cache\Labels\LabelledCache;
 use Modules\Core\Overrides\MergedSwaggerFile;
 use Wotz\SwaggerUi\Http\Controllers\OpenApiJsonController;
 
@@ -32,14 +34,13 @@ final class DocsController extends OpenApiJsonController
      */
     public function mergeDocs(Request $request, string $filename = 'v1'): JsonResponse
     {
-        $cache_key = 'docs.merged.' . $filename;
-        $repository = Cache::getFacadeRoot()->store();
-
-        $getMergedJson = fn (): array => ($this->mergeSwaggerDocsAction)($filename);
-
-        $json = Cache::supportsTags() && method_exists($repository, 'getCacheTags')
-            ? Cache::tags($repository->getCacheTags('docs'))->rememberForever($cache_key, $getMergedJson)
-            : Cache::rememberForever($cache_key, $getMergedJson);
+        $json = resolve(LabelledCache::class)->remember(
+            CacheManager::key('docs', 'merged', $filename),
+            [CacheLabel::docs()],
+            (int) config('cache.duration.long'),
+            fn (): array => ($this->mergeSwaggerDocsAction)($filename),
+            is_array(...),
+        );
 
         try {
             $file = collect(config('swagger-ui.files'))->filter(function (array $values) use ($filename, $request): bool {

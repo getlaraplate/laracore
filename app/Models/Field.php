@@ -7,6 +7,7 @@ namespace Modules\Core\Models;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Validation\Rule;
+use LogicException;
 use Modules\Core\Casts\FieldType;
 use Modules\Core\Casts\ObjectCast;
 use Modules\Core\Contracts\IActivatableModel;
@@ -18,6 +19,19 @@ use Modules\Core\Observers\FieldObserver;
 use Modules\Core\Overrides\Model;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $name The name of the field
+ * @property FieldType $type The type of the field
+ * @property object $options The options of the field
+ * @property int $is_slug Whether the field takes part in the slug
+ * @property bool $is_active Whether the field is active
+ * @property bool $is_translatable Whether the field is translatable
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ */
 #[ObservedBy(FieldObserver::class)]
 final class Field extends Model implements IActivatableModel
 {
@@ -71,6 +85,23 @@ final class Field extends Model implements IActivatableModel
     public function presets(): BelongsToMany
     {
         return $this->belongsToMany(Preset::class, CoreTables::Fieldables->value)->using(Fieldable::class)->withTimestamps()->withPivot(['order_column', 'is_required', 'default']);
+    }
+
+    /**
+     * The preset link the field was loaded through (`Preset::fields()`, or a presettable's frozen snapshot): the
+     * required flag, the order and the default value the preset gives the field.
+     *
+     * @throws LogicException when the field was loaded without it
+     */
+    public function presetPivot(): Fieldable
+    {
+        $pivot = $this->relationLoaded('pivot') ? $this->getRelation('pivot') : null;
+
+        if (! $pivot instanceof Fieldable) {
+            throw new LogicException("Field {$this->name} was loaded without its preset pivot.");
+        }
+
+        return $pivot;
     }
 
     #[Override]

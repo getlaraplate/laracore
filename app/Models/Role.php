@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Modules\Core\Models;
 
 use BackedEnum;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Collection;
@@ -15,28 +16,47 @@ use Illuminate\Validation\ValidationException;
 use Modules\Core\Cache\HasCache;
 use Modules\Core\Contracts\ILockableModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Database\Factories\RoleFactory;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Locking\Traits\HasLocks;
-use Modules\Core\Models\Concerns\HasTypedRecursiveRelationships;
+use Modules\Core\Models\Concerns\HasClosureTable;
 use Modules\Core\Models\Concerns\HasValidations;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Concerns\ReturnsVersionedRelations;
 use Modules\Core\Models\Pivot\ModelHasRole;
+use Modules\Core\Observers\RoleObserver;
 use Modules\Core\SoftDeletes\SoftDeletes;
 use Override;
 use Spatie\Permission\Exceptions\PermissionDoesNotExist;
 use Spatie\Permission\Models\Role as BaseRole;
 
-final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel
+/**
+ * @property int $id
+ * @property string $name The name of the role
+ * @property string $guard_name The guard name of the role
+ * @property string|null $description The description of the role
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property \Carbon\CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property \Carbon\CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property int|null $parent_id The parent id of the role
+ */
+#[ObservedBy([RoleObserver::class])]
+final class Role extends BaseRole implements ILockableModel, ISoftDeletableModel, IVersionedModel
 {
     use HasCache;
+    use HasClosureTable;
     use HasFactory;
     use HasLocks;
-    use HasTypedRecursiveRelationships;
     use HasValidations {
         getRules as private getRulesTrait;
     }
     use HasVersions;
+    use ReturnsVersionedRelations;
     use SoftDeletes {
         HasVersions::delete insteadof SoftDeletes;
         HasVersions::forceDelete insteadof SoftDeletes;

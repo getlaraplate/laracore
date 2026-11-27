@@ -16,6 +16,7 @@ use Modules\Core\Contracts\IEmbeddableModel;
 use Modules\Core\Contracts\IRestrictsReadableColumns;
 use Modules\Core\Contracts\ISearchableModel;
 use Modules\Core\Contracts\ISoftDeletableModel;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\CoreTables;
 use Modules\Core\Media\MediaProjection;
 use Modules\Core\Models\Concerns\HasVersions;
@@ -44,9 +45,30 @@ use Throwable;
  * @phpstan-use Searchable<Media>
  *
  * @implements IAuthorizesSearchRehydration<Media>
+ *
+ * @property int $id
+ * @property string $model_type
+ * @property int $model_id
+ * @property string|null $uuid The UUID of the media
+ * @property string $collection_name The collection name of the media
+ * @property string $name The name of the media
+ * @property string $file_name The file name of the media
+ * @property string|null $mime_type The mime type of the media
+ * @property string $disk The disk of the media
+ * @property string|null $conversions_disk The conversions disk of the media
+ * @property int $size The size of the media
+ * @property int $order_column The order column of the media
+ * @property \Carbon\CarbonImmutable $created_at
+ * @property \Carbon\CarbonImmutable $updated_at
+ * @property \Carbon\CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property array<array-key, mixed> $manipulations The manipulations of the media
+ * @property array<array-key, mixed> $custom_properties The custom properties of the media
+ * @property array<array-key, mixed> $generated_conversions The generated conversions of the media
+ * @property array<array-key, mixed> $responsive_images The responsive images of the media
  */
 #[ObservedBy([MediaMetadataObserver::class, MediaLifecycleObserver::class])]
-final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEmbeddableModel, IRestrictsReadableColumns, ISearchableModel, ISoftDeletableModel
+final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEmbeddableModel, IRestrictsReadableColumns, ISearchableModel, ISoftDeletableModel, IVersionedModel
 {
     /** @use HasFactory<\Illuminate\Database\Eloquent\Factories\Factory<static>> */
     use HasFactory;
@@ -290,7 +312,7 @@ final class Media extends BaseMedia implements IAuthorizesSearchRehydration, IEm
     }
 
     /**
-     * @return Builder<Model>|null
+     * @return Builder<covariant Model>|null
      */
     private static function visibleOwnersOf(string $owner_type): ?Builder
     {

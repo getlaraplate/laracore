@@ -88,7 +88,7 @@ final class QueueMonitorCommand extends BaseMonitorCommand
         $queues = (new Collection(is_array($horizon_defaults) ? $horizon_defaults : []))->pluck('queue')
             ->merge((new Collection(is_array($horizon_environment) ? $horizon_environment : []))->pluck('queue'))
             ->flatten()
-            ->filter(fn ($queue): bool => is_string($queue) && $queue !== '')
+            ->filter(fn (mixed $queue): bool => is_string($queue) && $queue !== '')
             ->unique()
             ->values();
 

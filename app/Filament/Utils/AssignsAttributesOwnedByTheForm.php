@@ -18,13 +18,11 @@ use Override;
  * guards stays guarded. The edit page fills its form from the record's own columns, which leave the same
  * attributes out, so they are added to the form state too.
  *
- * @phpstan-require-extends \Filament\Resources\Pages\CreateRecord|\Filament\Resources\Pages\EditRecord
+ * @phpstan-require-extends \Filament\Resources\Pages\Page
  */
 trait AssignsAttributesOwnedByTheForm
 {
-    use HasFilamentFormDataSanitizer {
-        HasFilamentFormDataSanitizer::mutateFormDataBeforeFill as private sanitizedFormDataBeforeFill;
-    }
+    use HasFilamentFormDataSanitizer;
 
     /**
      * Translated fields are written in the content locale, so the page says which one it is.
@@ -59,7 +57,7 @@ trait AssignsAttributesOwnedByTheForm
      */
     protected function mutateFormDataBeforeFill(array $data): array
     {
-        $data = $this->sanitizedFormDataBeforeFill($data);
+        $data = $this->stripUnsupportedFilamentFormAttributes(parent::mutateFormDataBeforeFill($data));
         $record = $this->getRecord();
 
         foreach ([$this->sortColumnOf($record), ...$this->guardedAttributesTheFormEdits()] as $attribute) {

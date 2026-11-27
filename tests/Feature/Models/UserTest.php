@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Filament\Panel;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Lab404\Impersonate\Services\ImpersonateManager;
 use Modules\Core\Approvals\Operation;
@@ -52,6 +53,27 @@ it('has hidden attributes', function (): void {
     expect($userArray)->not->toHaveKey('remember_token');
     expect($userArray)->not->toHaveKey('two_factor_secret');
     expect($userArray)->not->toHaveKey('two_factor_recovery_codes');
+});
+
+it('hides and encrypts the tokens of a social login', function (): void {
+    $user = User::factory()->create([
+        'social_id' => 'github-1',
+        'social_service' => 'github',
+        'social_token' => 'token-1',
+        'social_refresh_token' => 'refresh-1',
+        'social_token_secret' => 'secret-1',
+    ]);
+    $stored = DB::table($user->getTable())->where('id', $user->id)->first(['social_token', 'social_refresh_token', 'social_token_secret']);
+    $fresh = $user->fresh();
+
+    expect($user->toArray())->not->toHaveKeys(['social_token', 'social_refresh_token', 'social_token_secret'])
+        ->and($stored?->social_token)->not->toBe('token-1')
+        ->and($stored?->social_refresh_token)->not->toBe('refresh-1')
+        ->and($stored?->social_token_secret)->not->toBe('secret-1')
+        ->and($fresh?->social_token)->toBe('token-1')
+        ->and($fresh?->social_refresh_token)->toBe('refresh-1')
+        ->and($fresh?->social_token_secret)->toBe('secret-1')
+        ->and($fresh?->social_id)->toBe('github-1');
 });
 
 it('has many roles relationship', function (): void {

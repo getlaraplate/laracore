@@ -197,6 +197,14 @@ return [
          * Defaults to false to avoid unexpected DB queries on every boot.
          */
         'warm_on_boot' => false,
+
+        /**
+         * Seconds a cached value may take to compute, from its lookup to its store, on the Redis label index. A store
+         * that comes later is refused (the value is recomputed on the next read), and the flush records that refuse
+         * stale write-backs expire after the largest window a host announced, so hosts may run with different
+         * windows and the records cost memory only for the labels flushed in the last window.
+         */
+        'label_store_window' => 60,
     ],
 
     // @phpstan-ignore larastan.noEnvCallsOutsideOfConfig

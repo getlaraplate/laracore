@@ -2,9 +2,26 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
 use Modules\Core\Helpers\HelpersCache;
 use Modules\Core\Models\User;
+
+/**
+ * Seeds the persistent model discovery layer in the label index, under the label it is stored with.
+ *
+ * @param  list<string>  $models
+ */
+function seedPersistentModels(string $key, array $models): void
+{
+    $index = resolve(Modules\Core\Contracts\ICacheLabelIndex::class);
+    $index->store($index->lookup(HelpersCache::modelsCacheKey($key), new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::models()])), $models, 3600);
+}
+
+function persistentModelsCached(string $key): bool
+{
+    return resolve(Modules\Core\Contracts\ICacheLabelIndex::class)
+        ->lookup(HelpersCache::modelsCacheKey($key), new Modules\Core\Cache\Labels\CacheDependencies([Modules\Core\Cache\Labels\CacheLabel::models()]))
+        ->hit;
+}
 
 beforeEach(function (): void {
     HelpersCache::clearAll();
@@ -108,7 +125,7 @@ it('models() serves discovery from the persistent cache when memory is cold', fu
     HelpersCache::clearModels();
 
     // Seed the persistent layer with a sentinel the filesystem scan would never produce.
-    Cache::forever(HelpersCache::modelsCacheKey('active'), ['App\\Models\\SentinelNeverScanned']);
+    seedPersistentModels('active', ['App\\Models\\SentinelNeverScanned']);
 
     expect(models(true))->toBe(['App\\Models\\SentinelNeverScanned']);
 });
@@ -120,7 +137,7 @@ it('clearModels forgets the persistent discovery cache so the next call rescans'
         ->and($real)->not->toBe(['App\\Models\\SentinelNeverScanned']);
 
     // Poison the persistent layer and drop the in-memory copy.
-    Cache::forever(HelpersCache::modelsCacheKey('active'), ['App\\Models\\SentinelNeverScanned']);
+    seedPersistentModels('active', ['App\\Models\\SentinelNeverScanned']);
     HelpersCache::clearModels();
 
     // clearModels() must have forgotten the persistent entry, forcing a real rescan.
@@ -129,11 +146,11 @@ it('clearModels forgets the persistent discovery cache so the next call rescans'
 
 it('forgetPersistentModels drops Redis/file discovery without wiping in-memory injections', function (): void {
     HelpersCache::setModels('active', [User::class]);
-    Cache::forever(HelpersCache::modelsCacheKey('active'), ['App\\Models\\SentinelNeverScanned']);
+    seedPersistentModels('active', ['App\\Models\\SentinelNeverScanned']);
 
     HelpersCache::forgetPersistentModels();
 
-    expect(Cache::has(HelpersCache::modelsCacheKey('active')))->toBeFalse()
+    expect(persistentModelsCached('active'))->toBeFalse()
         ->and(HelpersCache::getModels('active'))->toBe([User::class])
         ->and(models(true))->toBe([User::class]);
 });
@@ -160,4 +177,26 @@ it('HelpersCache::clearConnections only clears connection cache', function (): v
 
     expect(HelpersCache::getConnections('active'))->toBeNull();
     expect(HelpersCache::getModels('active'))->not->toBeNull();
+});
+
+it('caches model discovery through the label index under the models label, for the long duration', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+    HelpersCache::clearModels();
+
+    models(true);
+
+    expect($index->stores)->toHaveCount(1)
+        ->and($index->stores[0]['lookup']->key)->toBe(HelpersCache::modelsCacheKey('active'))
+        ->and($index->stores[0]['lookup']->dependencies->labels)->toBe([Modules\Core\Cache\Labels\CacheLabel::models()])
+        ->and($index->stores[0]['ttl'])->toBe((int) config('cache.duration.long'));
+});
+
+it('forgetPersistentModels flushes the models label', function (): void {
+    $index = new Modules\Core\Tests\Stubs\Cache\SpyLabelIndex();
+    app()->instance(Modules\Core\Contracts\ICacheLabelIndex::class, $index);
+
+    HelpersCache::forgetPersistentModels();
+
+    expect($index->flushes)->toBe([[Modules\Core\Cache\Labels\CacheLabel::models()]]);
 });

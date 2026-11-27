@@ -23,7 +23,7 @@ final class ModuleColor
      *
      * @var array<string, string>
      */
-    private const PALETTES = [
+    private const array PALETTES = [
         'black' => 'Gray',
         'blue' => 'Blue',
         'cyan' => 'Cyan',

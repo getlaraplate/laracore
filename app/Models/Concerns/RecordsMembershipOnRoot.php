@@ -7,6 +7,7 @@ namespace Modules\Core\Models\Concerns;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Support\Arr;
+use Modules\Core\Contracts\IVersionedModel;
 use Modules\Core\Enums\VersionChangeType;
 use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
@@ -116,7 +117,7 @@ trait RecordsMembershipOnRoot
      */
     private function relationRegisteredBy(Model $root, string $rootPivotKey): ?RelationDescriptor
     {
-        if (! method_exists($root, 'versionedRelationThroughPivot') || ! method_exists($root, 'getVersionStrategy')) {
+        if (! method_exists($root, 'versionedRelationThroughPivot') || ! $root instanceof IVersionedModel) {
             return null;
         }
 

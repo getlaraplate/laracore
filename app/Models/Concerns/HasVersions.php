@@ -33,6 +33,7 @@ use Modules\Core\Versioning\Data\VersionSetOptions;
 use Modules\Core\Versioning\Data\VersionSetRoot;
 use Modules\Core\Versioning\HardDeleteCoordinator;
 use Modules\Core\Versioning\NeverVersionedModels;
+use Modules\Core\Versioning\VersionStrategyCache;
 
 // use Illuminate\Database\Eloquent\Relations\Pivot;
 // use Illuminate\Database\Eloquent\Relations\MorphMany;
@@ -45,6 +46,8 @@ use Modules\Core\Versioning\NeverVersionedModels;
  * switch, the version relations and the attribute helpers were the package's.
  *
  * @phpstan-require-extends \Illuminate\Database\Eloquent\Model
+ *
+ * @phpstan-require-implements \Modules\Core\Contracts\IVersionedModel
  *
  * @phpstan-type HasVersionsType HasVersions
  */
@@ -89,21 +92,12 @@ trait HasVersions
     private ?array $pending_version_delete = null;
 
     /**
-     * L1 in-memory cache for version strategy resolution.
-     * Keyed by model class name, value is the resolved VersionStrategy or false (disabled).
-     * Eliminates repeated deserialization of the persistent cache collection on every call.
-     *
-     * @var array<class-string, VersionStrategy|false>
-     */
-    private static array $version_strategy_cache = [];
-
-    /**
-     * Reset the L1 version strategy cache.
+     * Reset the L1 version strategy cache of every model, whichever class it is called on.
      * Used in tests and long-running processes to clear stale state.
      */
     public static function resetVersionStrategyCache(): void
     {
-        self::$version_strategy_cache = [];
+        VersionStrategyCache::flush();
     }
 
     public static function getVersioning(): bool
@@ -127,7 +121,7 @@ trait HasVersions
      * pending translations and their history are one revision committed together (D28, D34). Any other save, and a
      * save with nothing to write, runs as Eloquent's.
      *
-     * @param  array<string, mixed>  $options
+     * @param  array{touch?: bool|null}  $options
      */
     public function save(array $options = []): bool
     {
@@ -216,7 +210,7 @@ trait HasVersions
 
     public function getRefreshedModel(Model $model): Model
     {
-        return $model->newQueryWithoutScopes()->findOrFail($model->getKey());
+        return $model->newQueryWithoutScopes()->whereKey($model->getKey())->firstOrFail();
     }
 
     /**
@@ -421,10 +415,8 @@ trait HasVersions
      * column. Deliberately not falling back to auth()->id() the way the package
      * does: a version written by a queue worker or a seeder has no user behind it,
      * and naming whoever happens to be logged in would be a lie.
-     *
-     * @return int|null
      */
-    public function getVersionUserId()
+    public function getVersionUserId(): ?int
     {
         $user_key = $this->getUserForeignKeyName();
 
@@ -490,25 +482,12 @@ trait HasVersions
             }
         }
 
-        $model_class = static::class;
+        // L1: process-wide in-memory map, zero-cost after the first resolution of each class
+        return VersionStrategyCache::remember(static::class, function (): VersionStrategy|false {
+            $settings_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::VERSIONING_NAME_PREFIX, $this->getTable());
 
-        // L1: static in-memory map — zero-cost after first resolution per request
-        if (array_key_exists($model_class, self::$version_strategy_cache)) {
-            return self::$version_strategy_cache[$model_class];
-        }
-
-        $settings_name = PerModelSettingResolver::nameFor(CoreDatabaseSeeder::VERSIONING_NAME_PREFIX, $this->getTable());
-
-        $raw = app(PerModelSettingResolver::class)->value($settings_name, false);
-
-        $strategy = $raw === false
-            ? false
-            : ($raw instanceof VersionStrategy ? $raw : VersionStrategy::from(is_scalar($raw) ? (string) $raw : ''));
-
-        // Store in L1 for subsequent calls within the same request
-        self::$version_strategy_cache[$model_class] = $strategy;
-
-        return $strategy;
+            return VersionStrategy::fromSetting(app(PerModelSettingResolver::class)->value($settings_name, false));
+        });
     }
 
     /**
@@ -587,7 +566,7 @@ trait HasVersions
             $parent_key = $translations->getForeignKeyName();
 
             foreach ($translations->withoutGlobalScopes()->orderBy($translations->getRelated()->getKeyName())->get() as $translation) {
-                $locale_image = method_exists($translation, 'imageOnOwner')
+                $locale_image = $translation instanceof Model && method_exists($translation, 'imageOnOwner')
                     ? $translation->imageOnOwner()
                     : Arr::except($translation->getAttributes(), [$translation->getKeyName(), $parent_key, 'locale', 'created_at', 'updated_at']);
                 $image[] = $this->imageRow($partType, $locale_image, 'translations', ['locale' => $translation->getAttribute('locale')]);

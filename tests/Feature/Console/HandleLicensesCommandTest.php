@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use Carbon\CarbonImmutable;
 use Illuminate\Console\OutputStyle;
 use Laravel\Prompts\ConfirmPrompt;
+use Laravel\Prompts\Prompt;
 use Laravel\Prompts\SelectPrompt;
 use Laravel\Prompts\TextPrompt;
 use Modules\Core\Console\HandleLicensesCommand;
@@ -175,7 +177,7 @@ it('handles close action prompt path without crashing the test runner', function
     TextPrompt::fallbackUsing(static fn (): string => '0');
 
     $command = licensesCommandWithOutput();
-    expect($command->handle())->toBeIn([0, 1]);
+    expect($command->handle())->toBe(0);
 });
 
 it('returns failure when prompt throws in handle', function (): void {
@@ -317,7 +319,29 @@ it('handles list action with existing licenses through handle flow', function ()
     SelectPrompt::fallbackUsing(static fn (): string => 'list');
 
     $command = licensesCommandWithOutput();
-    expect($command->handle())->toBeIn([0, 1]);
+    expect($command->handle())->toBe(0);
+});
+
+it('lists a free license as unassigned instead of failing', function (): void {
+    $user = User::factory()->create(['name' => 'Assigned User']);
+    $assigned = License::factory()->create(['valid_to' => null]);
+    $user->license_id = $assigned->id;
+    $user->save();
+    $free = License::factory()->create(['valid_to' => null]);
+
+    $prompt_output = new BufferedOutput();
+    Prompt::setOutput($prompt_output);
+    SelectPrompt::fallbackWhen(true);
+    SelectPrompt::fallbackUsing(static fn (): string => 'list');
+
+    $command = licensesCommandWithOutput();
+
+    expect($command->handle())->toBe(0);
+
+    $free_row = collect(explode(PHP_EOL, $prompt_output->fetch()))
+        ->first(static fn (string $line): bool => preg_match('/^\W*' . $free->id . '\W/u', $line) === 1);
+
+    expect($free_row)->toBeString()->toContain('unassigned');
 });
 
 it('handles renew and close actions through handle flow', function (): void {
@@ -344,4 +368,12 @@ it('handles renew and close actions through handle flow', function (): void {
     $command = licensesCommandWithOutput();
     expect($command->handle())->toBe(0);
     expect($command->handle())->toBe(0);
+});
+
+it('reports a group of licenses as perpetual, active or expired by its expiry', function (): void {
+    $this->travelTo(CarbonImmutable::parse('2026-11-25 12:00:00'));
+
+    expect(HandleLicensesCommand::statusOf(null))->toBe('perpetual')
+        ->and(HandleLicensesCommand::statusOf(CarbonImmutable::parse('2026-11-01')))->toBe('expired')
+        ->and(HandleLicensesCommand::statusOf(CarbonImmutable::parse('2027-01-01')))->toBe('active');
 });

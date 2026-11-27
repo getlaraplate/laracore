@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Core\Models;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Validation\Rule;
 use Modules\Core\Casts\CronExpression as CronExpressionCast;
 use Modules\Core\Contracts\IActivatableModel;
@@ -17,6 +18,24 @@ use Modules\Core\Rules\CronExpression as CronExpressionRule;
 use Modules\Core\Rules\CronParametersList;
 use Override;
 
+/**
+ * @property int $id
+ * @property string $name The name of the cron job
+ * @property string $command The command of the cron job
+ * @property \Cron\CronExpression $schedule The schedule of the cron job
+ * @property bool $is_active Is the cron job active
+ * @property bool $on_one_server Run on a single server when several share the scheduler
+ * @property bool $without_overlapping Skip a run while the previous one is still running
+ * @property string|null $description The description of the cron job
+ * @property CarbonImmutable $created_at
+ * @property CarbonImmutable $updated_at
+ * @property CarbonImmutable|null $deleted_at
+ * @property bool|null $is_deleted Whether the entity is deleted
+ * @property CarbonImmutable|null $locked_at The date and time when the entity was locked
+ * @property int|null $locked_user_id The user who locked the entity
+ * @property CarbonImmutable|null $locked_until The moment the lock expires; null means it never does
+ * @property array<array-key, mixed> $parameters The parameters of the cron job
+ */
 final class CronJob extends Model implements IActivatableModel, ILockableModel
 {
     // region Traits
@@ -89,6 +108,23 @@ final class CronJob extends Model implements IActivatableModel, ILockableModel
         ]);
 
         return $rules;
+    }
+
+    /**
+     * When the schedule was last due, null while the job is inactive. Nothing records the runs themselves, so
+     * this is the time the scheduler last had to start it.
+     */
+    public function previousRunAt(): ?CarbonImmutable
+    {
+        return $this->is_active ? CarbonImmutable::instance($this->schedule->getPreviousRunDate(now())) : null;
+    }
+
+    /**
+     * When the schedule is next due, null while the job is inactive.
+     */
+    public function nextRunAt(): ?CarbonImmutable
+    {
+        return $this->is_active ? CarbonImmutable::instance($this->schedule->getNextRunDate(now())) : null;
     }
 
     protected static function newFactory(): CronJobFactory
