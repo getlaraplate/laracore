@@ -648,12 +648,24 @@ of the perf commands prints the response body, so the per-stage split comes from
 ## Eligibility on every path
 
 A model that implements `ProvidesDefaultSearchFilters` declares equality filters that every search of it
-carries (CMS `Content` uses `is_extended = false` to keep extended contents out of the generic search).
+carries (CMS `Content` uses `extended_type => null` to keep extended contents out of the generic search).
 They apply on every search path: Basic mode, and every strategy of the orchestrated modes (keyword,
-vector and hybrid, so `auto` too). `EnsembleSearchService` adds them to each Scout builder before the
-request constraints, so a request filter on the same field is ANDed with the default, never replaces it.
-Callers of `AdvancedSearchService`, such as the CRUD orchestrated path and the CMS content retrieval
-provider, inherit this with no code of their own.
+vector and hybrid, so `auto` too). One helper, `Modules\Core\Search\Support\DefaultSearchFilters`,
+adds them to the Scout builder of `CrudService::searchWithScout()` and of each strategy of
+`EnsembleSearchService`, always after the request constraints, so a request filter cannot widen a
+default:
+
+- where the engine ANDs the constraints (the database engine's keyword path, Scout's Typesense filter),
+  a request filter that contradicts the default finds nothing;
+- where the engine reads the constraints as a `field => value` map (`ScoutWheres::map()`: Elasticsearch,
+  the database engine's vector candidates, the Typesense vector search), the default, written last, keeps
+  the field.
+
+A contradictory request filter can therefore give an empty result on one engine or strategy and the
+defaulted set on another, but never a row the default excludes. A surface that must reach rows a default
+excludes searches its own model, not the generic search of the defaulted one. Callers of
+`AdvancedSearchService`, such as the CRUD orchestrated path and the CMS content retrieval provider,
+inherit this with no code of their own.
 
 How a `null` default is read depends on the engine:
 

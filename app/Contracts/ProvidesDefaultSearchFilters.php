@@ -7,10 +7,11 @@ namespace Modules\Core\Contracts;
 /**
  * A model that always narrows its full-text (Scout) search with a fixed set of engine filters.
  *
- * Applied by the generic search path as AND equality constraints on the search-engine query, so the
- * engine never returns rows the caller must then drop at rehydration (which would short-page the
- * results). Example: CMS `Content` filters `is_extended = false` so extended contents stay out of the
- * generic content search.
+ * Applied by every generic search path (`Modules\Core\Search\Support\DefaultSearchFilters`) as equality
+ * constraints on the search-engine query, after the request constraints, so a request filter cannot widen
+ * a default and the engine never returns rows the caller must then drop at rehydration (which would
+ * short-page the results). Example: CMS `Content` filters `extended_type => null` so extended contents
+ * stay out of the generic content search.
  */
 interface ProvidesDefaultSearchFilters
 {

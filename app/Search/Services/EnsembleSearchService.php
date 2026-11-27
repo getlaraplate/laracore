@@ -10,7 +10,6 @@ use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\Sort;
-use Modules\Core\Contracts\ProvidesDefaultSearchFilters;
 use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Search\Contracts\ILocaleFilterableEngine;
 use Modules\Core\Search\Contracts\IProvidesRerankerText;
@@ -19,6 +18,7 @@ use Modules\Core\Search\Contracts\IRerankerWithModel;
 use Modules\Core\Search\DTOs\AdvancedSearchResult;
 use Modules\Core\Search\DTOs\RerankResult;
 use Modules\Core\Search\DTOs\ResolvedTextMatch;
+use Modules\Core\Search\Support\DefaultSearchFilters;
 use Modules\Core\Search\Support\SearchDegradations;
 use RuntimeException;
 use Throwable;
@@ -208,14 +208,9 @@ class EnsembleSearchService
             $builder->where('vector', $vector);
         }
 
-        if ($model instanceof ProvidesDefaultSearchFilters) {
-            foreach ($model->defaultSearchFilters() as $field => $value) {
-                $builder->where($field, $value);
-            }
-        }
-
         $this->applyRequestedLocale($builder, $model);
         $this->constraintApplier()->apply($builder, $model, $filters, $sort);
+        DefaultSearchFilters::apply($builder, $model);
 
         $paginator = $builder->paginate($window, 'page', 1);
         $results = $paginator->getCollection();

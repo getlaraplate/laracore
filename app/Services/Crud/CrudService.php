@@ -49,7 +49,6 @@ use Modules\Core\Casts\SearchRequestData;
 use Modules\Core\Casts\SelectRequestData;
 use Modules\Core\Casts\TreeRequestData;
 use Modules\Core\Contracts\ILockableModel;
-use Modules\Core\Contracts\ProvidesDefaultSearchFilters;
 use Modules\Core\Contracts\ProvidesFacetLabelSources;
 use Modules\Core\Contracts\ProvidesSyncableRelations;
 use Modules\Core\Contracts\RestrictsCrudWrites;
@@ -75,6 +74,7 @@ use Modules\Core\Search\Enums\SearchMode as SearchDepth;
 use Modules\Core\Search\Services\AdvancedSearchService;
 use Modules\Core\Search\Services\ScoutSearchConstraintApplier;
 use Modules\Core\Search\Services\SearchCostGuard;
+use Modules\Core\Search\Support\DefaultSearchFilters;
 use Modules\Core\Search\Traits\Searchable;
 use Modules\Core\Services\Authorization\AuthorizationService;
 use Modules\Core\Services\Crud\Aggregate\AggregateEngine;
@@ -3044,12 +3044,6 @@ class CrudService
         $model_class = $model::class;
         $builder = $model_class::search($requestData->qs);
 
-        if ($model instanceof ProvidesDefaultSearchFilters) {
-            foreach ($model->defaultSearchFilters() as $field => $value) {
-                $builder->where($field, $value);
-            }
-        }
-
         $request_filters = $requestData->filters;
         $this->auth->injectAclFilters($requestData, $permissionName);
 
@@ -3058,6 +3052,8 @@ class CrudService
         } catch (InvalidArgumentException $exception) {
             return $this->invalidSearchConstraintsResult($exception->getMessage());
         }
+
+        DefaultSearchFilters::apply($builder, $model);
 
         if ($requestData->page !== null) {
             $paginator = $builder->paginate($requestData->pagination, 'page', $requestData->page);
