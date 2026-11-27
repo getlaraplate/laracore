@@ -142,7 +142,7 @@ final class HandleLicensesCommand extends Command
         $remapped = [];
 
         foreach ($licenses as $license) {
-            $remapped[] = [$license->id, $license->valid_to, $license->user->name];
+            $remapped[] = [$license->id, $license->valid_to, $license->user?->name ?? 'unassigned'];
         }
 
         table(['License', 'Expiration', 'User'], $remapped);
