@@ -173,7 +173,9 @@ keys and aggregates.
   omitted when it is appended or default, and `403`/`401` when explicitly requested.
 - **History** (`/api/v1/history/{entity}`) needs the entity's `select` and `history` permissions, or `revert`, which
   implies `history` (D27): versions show who changed what and the past values, pre-publication drafts included.
-  **Revert** (`/api/v1/revert/{entity}`) needs `revert`, and is looked up within that permission's ACL. Both verbs are
+  **Revert** (`/api/v1/revert/{entity}`) needs `revert`, and is looked up within that permission's ACL; the save of
+  the revert is governed by `revert`, so a writer needs no `update` for it. The pending modifications that the history
+  answer could carry stay for who holds `update` or `approve`. Both verbs are
   generated for every versioned model (`permissions:refresh`), and are noted as inert while the table's versioning is
   switched off. The `record` is serialized through the model, so hidden
   attributes and the media projection apply; history rows carry no nested copy of the record. Tree and history reads apply

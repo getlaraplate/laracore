@@ -88,7 +88,7 @@ $report = $post->revertToVersion($version->id, $expected);                    //
   `force`), `isPartial()`.
 - A revert is a first-class operation: one version set of kind `Revert` that points at the target
   (`reverted_from_set_id`). History is never rewritten: a rollback is one more entry, and it can itself be reverted.
-- Every check runs after the record is locked: `LockedModelException` when somebody else holds the record (see
+- The revision must be one of the record's (checked first); every other check runs after the record is locked: `LockedModelException` when somebody else holds the record (see
   `RECORD_LOCKING_DEVELOPER.md`), `RevisionConflictException` when the record moved past the expected revision,
   `MissingRevertSubjectException` when a referenced record is gone and `force` is not set.
 - `RevertRefusedException` names why a revert may not run (`$reason`): `not-versioned`,
