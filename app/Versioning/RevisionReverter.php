@@ -7,6 +7,7 @@ namespace Modules\Core\Versioning;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Modules\Core\Approvals\Operation;
 use Modules\Core\Enums\RelationCoverage;
 use Modules\Core\Enums\RevertMode;
 use Modules\Core\Enums\VersionCaptureQuality;
@@ -16,6 +17,7 @@ use Modules\Core\Enums\VersionStrategy;
 use Modules\Core\Locking\Exceptions\LockedModelException;
 use Modules\Core\Models\Concerns\HasApprovals;
 use Modules\Core\Models\Concerns\HasVersions;
+use Modules\Core\Models\Modification;
 use Modules\Core\Models\Version;
 use Modules\Core\Models\VersionSet;
 use Modules\Core\Versioning\Contracts\VersionSetManagerInterface;
@@ -51,6 +53,10 @@ final readonly class RevisionReverter
         throw_if($root->getVersionStrategy() === false, RevertRefusedException::class, RevertRefusedException::NOT_VERSIONED);
         throw_unless($this->isRevisionOf($root, $revision), RevertRefusedException::class, RevertRefusedException::NOT_A_REVISION_OF_THIS_RECORD);
 
+        if (method_exists($root, 'wouldRequireApproval') && $root->wouldRequireApproval(Operation::Revert)) {
+            return $this->requestApproval($root, $revision, $expectedRevision, $mode, $force);
+        }
+
         /** @var RevertReport $report */
         $report = $this->manager->run(
             VersionSetRoot::forModel($root),
@@ -63,6 +69,35 @@ final readonly class RevisionReverter
         );
 
         return $report;
+    }
+
+    /**
+     * A revert the writer may not run alone becomes one request (D26, D62). The expected revision is checked now, so
+     * a request is never made from a stale read; the approval checks it again, under the lock.
+     *
+     * @param  Model&HasVersions  $root
+     */
+    private function requestApproval(Model $root, int $revision, int $expectedRevision, RevertMode $mode, bool $force): RevertReport
+    {
+        $current = $root->currentRevision();
+
+        throw_if($current !== $expectedRevision, new RevisionConflictException($expectedRevision, $current));
+
+        $pending = $root->captureRevertRequest([
+            'revision' => $revision,
+            'expected_revision' => $expectedRevision,
+            'mode' => $mode->value,
+            'force' => $force,
+        ]);
+
+        if ($pending instanceof Modification) {
+            return new RevertReport($revision, $mode, null, pendingRequest: $pending);
+        }
+
+        // The author's own approval completed the quorum: the revert ran as the request was applied.
+        $after = $root->currentRevision();
+
+        return new RevertReport($revision, $mode, $after !== $current ? $after : null);
     }
 
     /**
