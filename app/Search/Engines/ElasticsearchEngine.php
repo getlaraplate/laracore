@@ -245,6 +245,9 @@ final class ElasticsearchEngine extends BaseElasticsearchEngine implements ILoca
                         ],
                     ],
                 ];
+            } elseif ($value === null) {
+                // A term query on null is invalid in Elasticsearch: express "field is null" as a missing field
+                $esFilters[] = ['bool' => ['must_not' => [['exists' => ['field' => $field]]]]];
             } else {
                 // Simple exact match filter
                 $esFilters[] = ['term' => [$field => $value]];

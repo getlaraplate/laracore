@@ -154,6 +154,17 @@ it('translates indexed relation field filters to elasticsearch nested clauses', 
     ]);
 });
 
+it('filters a null equality as a missing field on Elasticsearch', function (): void {
+    $engine = (new ReflectionClass(ElasticsearchEngine::class))->newInstanceWithoutConstructor();
+
+    $filters = $engine->buildSearchFilters(['extended_type' => null, 'type' => 'news']);
+
+    expect($filters)->toBe([
+        ['bool' => ['must_not' => [['exists' => ['field' => 'extended_type']]]]],
+        ['term' => ['type' => 'news']],
+    ]);
+});
+
 it('translates advanced portable filters to typesense filter syntax', function (): void {
     $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
 
