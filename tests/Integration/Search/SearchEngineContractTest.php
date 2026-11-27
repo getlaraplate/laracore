@@ -14,6 +14,7 @@ use Modules\Core\Search\Schema\FieldType;
 use Modules\Core\Search\Schema\IndexType;
 use Modules\Core\Search\Schema\SchemaDefinition;
 use Modules\Core\Search\Schema\SchemaManager;
+use Modules\Core\Tests\Stubs\Search\DatabaseEngineSQLiteVectorSearchUser;
 
 it('declares the scout search signature on the core search engine contract', function (): void {
     $method = new ReflectionMethod(ISearchEngine::class, 'search');
@@ -163,6 +164,30 @@ it('filters a null equality as a missing field on Elasticsearch', function (): v
         ['bool' => ['must_not' => [['exists' => ['field' => 'extended_type']]]]],
         ['term' => ['type' => 'news']],
     ]);
+});
+
+it('skips a null equality in typesense keyword search parameters instead of failing', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    $builder = new ScoutBuilder(new DatabaseEngineSQLiteVectorSearchUser(), 'alpha');
+    $builder->where('extended_type', null);
+    $builder->where('type', 'news');
+
+    $parameters = $engine->buildSearchParameters($builder, 1, 10);
+
+    expect($parameters['filter_by'])->toBe('type:=news');
+});
+
+it('skips a null equality in typesense vector search filters instead of writing an empty one', function (): void {
+    $engine = (new ReflectionClass(TypesenseEngine::class))->newInstanceWithoutConstructor();
+    $builder = new ScoutBuilder(new DatabaseEngineSQLiteVectorSearchUser(), '*');
+    $builder->where('vector', [1.0, 0.0]);
+    $builder->where('extended_type', null);
+    $builder->where('type', 'news');
+
+    $filters = (new ReflectionMethod(TypesenseEngine::class, 'buildFiltersFromBuilder'))->invoke($engine, $builder);
+
+    expect($filters)->toBe('type:="news"')
+        ->and($engine->buildSearchFilters(['extended_type' => null, 'type' => 'news']))->toBe('type:="news"');
 });
 
 it('translates advanced portable filters to typesense filter syntax', function (): void {

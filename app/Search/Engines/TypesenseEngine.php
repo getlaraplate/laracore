@@ -151,6 +151,10 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
         $filter_strings = [];
 
         foreach ($filters as $field => $value) {
+            if ($value === null) {
+                continue;
+            }
+
             if (is_array($value)) {
                 if (count($value) === 2 && is_numeric($value[0]) && is_numeric($value[1])) {
                     $filter_strings[] = sprintf('%s:>=%s && %s:<=%s', $field, $value[0], $field, $value[1]);
@@ -502,6 +506,26 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
     }
 
     /**
+     * Typesense has no filter for a missing or null field, and Scout's own filter builder fails on a null
+     * value. A constraint on null (for example a default search filter such as `extended_type => null`) is
+     * therefore left out of the Typesense filter instead of failing the search: the search is not narrowed
+     * by it on this engine.
+     *
+     * @param  Builder<covariant Model>  $builder
+     */
+    #[Override]
+    protected function filters(Builder $builder): string
+    {
+        $filterable = clone $builder;
+        $filterable->wheres = array_values(array_filter(
+            $builder->wheres,
+            static fn (mixed $where): bool => ! is_array($where) || ($where['value'] ?? null) !== null,
+        ));
+
+        return parent::filters($filterable);
+    }
+
+    /**
      * @param  array<string, mixed>  $filter
      */
     private function buildAdvancedSearchFilter(array $filter): string
@@ -660,6 +684,10 @@ final class TypesenseEngine extends BaseTypesenseEngine implements ISearchEngine
         foreach (ScoutWheres::map($builder) as $field => $value) {
             if ($field === 'vector' || $field === 'embedding' || $field === $this->resolveVectorField($builder->model)) {
                 continue; // Skip vector fields
+            }
+
+            if ($value === null) {
+                continue;
             }
 
             $filters[] = $this->buildFilter($field, $value);

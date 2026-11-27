@@ -659,8 +659,10 @@ How a `null` default is read depends on the engine:
 
 - Elasticsearch: a `null` equality means "field missing" (`bool.must_not.exists`).
 - Database engine: a `null` equality is `IS NULL`.
-- Typesense: a `null` equality cannot be filtered (it is written `field:=`), so a model whose default
-  is `null` is not narrowed there. Extended contents are not excluded on Typesense.
+- Typesense: there is no filter for a missing or `null` field. `TypesenseEngine` skips a `null` equality
+  wherever it builds a filter (the keyword parameters handed to Scout, the vector search filter and
+  `buildSearchFilters()`) instead of failing the search, so a model whose default is `null` is searched
+  without that filter there. Extended contents are not excluded on Typesense.
 
 ## The application search registry
 
