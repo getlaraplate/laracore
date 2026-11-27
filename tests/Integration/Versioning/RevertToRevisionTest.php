@@ -230,3 +230,17 @@ it('skips a column the table lost since the revision and restores the others', f
         ->and($report->skippedColumns)->toBe(['subtitle'])
         ->and($report->isPartial())->toBeTrue();
 });
+
+it('refuses a revert while versioning is switched off for the process', function (): void {
+    [$document, $created, $current] = revert_document();
+    VersionedDocument::disableVersioning();
+
+    try {
+        expect(fn () => $document->revertToRevision($created, $current, RevertMode::Scalar))
+            ->toThrow(RevertRefusedException::class, 'Versioning is off for this table');
+    } finally {
+        VersionedDocument::enableVersioning();
+    }
+
+    expect($document->fresh()->title)->toBe('Second');
+});

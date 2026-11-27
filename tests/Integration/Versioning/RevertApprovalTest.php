@@ -142,3 +142,10 @@ it('asks approval of a revert on a model whose approval operations predate it an
         ->and($this->document->fresh()->title)->toBe('Second');
 });
 
+
+it('keeps a different revert of the same revision as a request of its own', function (): void {
+    revert_as_writer($this);
+    $this->document->revertToRevision($this->target, $this->expected, RevertMode::Scalar, force: true);
+
+    expect($this->document->modifications()->activeOnly()->where('operation', Operation::Revert->value)->count())->toBe(2);
+});

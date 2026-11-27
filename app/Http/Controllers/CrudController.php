@@ -51,6 +51,7 @@ use Modules\Core\Services\Crud\DTOs\CrudResult;
 use Modules\Core\Services\Crud\DTOs\FacetQuery;
 use Modules\Core\Versioning\Exceptions\MembershipConflictException;
 use Modules\Core\Versioning\Exceptions\MissingRevertSubjectException;
+use Modules\Core\Versioning\Exceptions\MissingVersionAnchorException;
 use Modules\Core\Versioning\Exceptions\RevertRefusedException;
 use Modules\Core\Versioning\Exceptions\RevisionConflictException;
 use Symfony\Component\HttpFoundation\Response;
@@ -642,7 +643,17 @@ class CrudController extends Controller
                 ),
                 $request,
             );
-        } catch (RevertRefusedException|MissingRevertSubjectException $ex) {
+        } catch (RevertRefusedException $ex) {
+            // The reason is the code a client acts on; the message is for people.
+            return $this->buildResponse(
+                new CrudResult(
+                    data: ['reason' => $ex->reason],
+                    error: $ex->getMessage(),
+                    statusCode: Response::HTTP_UNPROCESSABLE_ENTITY,
+                ),
+                $request,
+            );
+        } catch (MissingRevertSubjectException|MissingVersionAnchorException $ex) {
             return $this->buildResponse(
                 new CrudResult(
                     data: null,

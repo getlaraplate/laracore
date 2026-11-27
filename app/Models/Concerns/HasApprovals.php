@@ -313,8 +313,8 @@ trait HasApprovals
     }
 
     /**
-     * Turn a revert into a request waiting for approval (D62): one request per record, revision and mode, joined by
-     * whoever asks for the same revert again, its author and quorum kept. Approving it runs the revert with the
+     * Turn a revert into a request waiting for approval (D62): one request per record and revert asked (revision,
+     * expected revision, mode, force), joined by whoever asks for the same revert again, its author and quorum kept. Approving it runs the revert with the
      * expected revision it carries.
      *
      * @param  array{revision: int, expected_revision: int, mode: string, force: bool}  $request
@@ -323,7 +323,9 @@ trait HasApprovals
      */
     public function captureRevertRequest(array $request): ?Modification
     {
-        $md5 = md5(implode('|', [Operation::Revert->value, static::class, ModelKey::of($this), $request['revision'], $request['mode']]));
+        // The whole request is the key: asking again for the same revert joins it, a different one (another mode,
+        // force, or expected revision) is a request of its own, so nobody rewrites a request others voted on.
+        $md5 = md5(implode('|', [Operation::Revert->value, static::class, ModelKey::of($this), $request['revision'], $request['expected_revision'], $request['mode'], $request['force'] ? 'force' : '']));
         $existing = $this->modifications()->activeOnly()->where('operation', Operation::Revert->value)->where('md5', $md5)->first();
 
         $modification = $existing ?? new Modification();

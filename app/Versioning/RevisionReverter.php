@@ -53,7 +53,8 @@ final readonly class RevisionReverter
      */
     public function revert(Model $root, int $revision, int $expectedRevision, RevertMode $mode, bool $force): RevertReport
     {
-        throw_if($root->getVersionStrategy() === false, RevertRefusedException::class, RevertRefusedException::NOT_VERSIONED);
+        // Off for the table, or switched off for the process (`disableVersioning()`): a revert would leave no history.
+        throw_if($root->getVersionStrategy() === false || ! $root::getVersioning(), RevertRefusedException::class, RevertRefusedException::NOT_VERSIONED);
         throw_unless($this->isRevisionOf($root, $revision), RevertRefusedException::class, RevertRefusedException::NOT_A_REVISION_OF_THIS_RECORD);
 
         if (method_exists($root, 'wouldRequireApproval') && $root->wouldRequireApproval(self::approvalOperationOf($root))) {
@@ -84,7 +85,9 @@ final readonly class RevisionReverter
     {
         // The same checks as the revert itself, read-only: a request that could never be applied is not made. The
         // approval runs them again, under the lock.
-        if ($this->prepare($root, $revision, $expectedRevision, $mode, $force) === null) {
+        $plan = $this->prepare($root, $revision, $expectedRevision, $mode, $force);
+
+        if ($plan === null) {
             return new RevertReport($revision, $mode, null);
         }
 
@@ -104,7 +107,14 @@ final readonly class RevisionReverter
         // The author's own approval completed the quorum: the revert ran as the request was applied.
         $after = $root->currentRevision();
 
-        return new RevertReport($revision, $mode, $after !== $current ? $after : null);
+        return new RevertReport(
+            targetRevision: $revision,
+            mode: $mode,
+            revision: $after !== $current ? $after : null,
+            restoredRelations: array_keys($plan['links']),
+            skippedColumns: $plan['columns']['skipped'] ?? [],
+            skippedSubjects: $plan['skipped_subjects'],
+        );
     }
 
     /**
@@ -317,12 +327,22 @@ final readonly class RevisionReverter
     {
         $root->setRawAttributes(array_merge($root->getRawOriginal(), $state));
 
-        if (in_array(HasApprovals::class, class_uses_recursive($root), true)) {
+        $forced = in_array(HasApprovals::class, class_uses_recursive($root), true);
+
+        if ($forced) {
             // Whether the revert needs approval was decided before the set opened: its own writes ask nothing.
             $root->setForcedApprovalUpdate(true);
         }
 
-        $root->save();
+        try {
+            $root->save();
+        } finally {
+            // A listener that throws before the approval check would leave the flag on, and the next save of this
+            // instance would skip approval.
+            if ($forced) {
+                $root->setForcedApprovalUpdate(false);
+            }
+        }
     }
 
     /**

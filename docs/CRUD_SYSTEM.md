@@ -1680,7 +1680,7 @@ as one `Revert` version set (Core `docs/rag/MODULE.md`, *Reverting to a revision
   null when nothing changed), `mode`, `partial`, `restored_relations`, `skipped_columns`, `skipped_subjects`.
 - `202`: the model asks approval of the writer, and the revert became one request (`data.modification`,
   `data.operation` `revert`); approving it runs the revert with the expected revision it carries.
-- `409`: the record moved past `expected_revision`. `422`: the revert is refused (`not-a-revision-of-this-record`,
+- `409`: the record moved past `expected_revision`. `422`: the revert is refused, `data.reason` naming why (`not-a-revision-of-this-record`,
   `no-complete-anchor`, `incomplete-coverage`, `not-atomic`, `epoch-changed`, `unsupported-relation`, `not-versioned`)
   or a referenced record is gone without `force`. `423`: somebody else holds the record's lock.
 

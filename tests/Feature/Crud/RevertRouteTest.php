@@ -142,7 +142,8 @@ it('answers 422 with the reason of a refused revert', function (): void {
     $response = revert_route_post($this, revert_route_actor(['select', 'revert']), ['id' => $record->id, 'revision' => $other_created, 'expected_revision' => $current]);
 
     $response->assertStatus(422);
-    expect((string) $response->getContent())->toContain('The revision is not one of this record.');
+    expect((string) $response->getContent())->toContain('The revision is not one of this record.')
+        ->and($response->json('data.reason'))->toBe('not-a-revision-of-this-record');
 });
 
 it('reverts a record in the bin, which stays there', function (): void {
