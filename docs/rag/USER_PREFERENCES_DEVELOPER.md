@@ -29,7 +29,7 @@ past the limit.
 
 | Route | Effect |
 |---|---|
-| `PATCH /app/auth/user/preferences` | Body `{"preferences": {namespace: value, ...}}`. Replaces each namespace it receives, removes one sent as `null`, leaves the others. |
+| `PATCH /app/auth/user/preferences` | Body `{"preferences": {namespace: value, ...}, "lang": "it", "timezone": "Europe/Rome"}`, each key optional but at least one required. Replaces each namespace it receives, removes one sent as `null`, leaves the others. `lang` and `timezone` are the user's own columns: a value sets it, `null` clears it, a key left out is not touched. |
 | `DELETE /app/auth/user/preferences` | Clears the whole bag. |
 | `DELETE /app/auth/user/preferences/{namespace}` | Clears one namespace. A name that is not a namespace is a 404. |
 
@@ -39,6 +39,13 @@ Merging per namespace replaces the former whole-bag replacement: two devices or 
 different namespaces both survive. A namespace replaced is replaced as a whole, so a client sends its whole
 namespace, not a patch of it. Namespaces may later register a JSON Schema in Core; until one does, only the
 generic limits apply.
+
+## Language and timezone
+
+`lang` must be one of `app.available_locales`. `timezone` must be an IANA identifier (`timezone:all`):
+offsets such as `+02:00` and abbreviations such as `CET` are refused with a 422, because they ignore daylight
+saving time. Both come back in the refreshed profile, `GET /app/auth/user/profile-information`, as `lang`
+and `timezone`. See `docs/rag/TIMEZONES_DEVELOPER.md` for what the timezone is used for.
 
 ## Testing
 

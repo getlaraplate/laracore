@@ -32,6 +32,17 @@ The language of the application is part of your account. In the backoffice open 
 avatar, choose **Language**, pick one and confirm: the page reloads in that language. The choice is saved on
 the server, so the application, your other devices and the notifications and emails sent to you all use it.
 
+## Your timezone
+
+Dates are stored in UTC and shown to you in your own timezone. The first time you sign in to the backoffice
+the application reads the timezone of your browser and saves it, so you do not set anything. To change it,
+open your profile from the menu under your avatar, pick a timezone from the list and save. A timezone you
+picked yourself is never replaced by the browser. Choose a place, for example Europe/Rome, not an offset:
+a place follows daylight saving time by itself.
+
+Until a timezone is saved, dates are shown in UTC. The language and the timezone are independent: the
+language decides how a date is written, the timezone decides which hour it shows.
+
 ## The language of the content in the backoffice
 
 The backoffice keeps the language of its menus and labels apart from the language of the content you edit.

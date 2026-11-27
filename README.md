@@ -39,6 +39,7 @@ The Core Module contains all the necessary functionalities to build a new Larave
 -   [ACL system](docs/ACL_SYSTEM.md): permission and row-level access control behavior.
 -   [CRUD system](docs/CRUD_SYSTEM.md): generic CRUD pipeline and API behavior, including the facets and the aggregate route.
 -   [API access control](docs/rag/API_ACCESS_CONTROL.md): guards, the `expose_api` switch, token authentication, default roles, related-record visibility, media projection, personal tokens and service accounts.
+-   [Dates and timezones](docs/rag/TIMEZONES_DEVELOPER.md): UTC storage and API, the per-user timezone, the Filament display timezone, the profile page and `DateFormatter`. The user-facing side is in [docs/rag/USER_PREFERENCES_USER.md](docs/rag/USER_PREFERENCES_USER.md).
 -   [Module import framework](docs/IMPORT_FRAMEWORK.md): abstract command and neutral services for module-owned external importers.
 -   [Plan status](docs/PLAN_STATUS.md): the `plan-status` script, its options, the git dates and the module rules.
 
