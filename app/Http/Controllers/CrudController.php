@@ -49,6 +49,7 @@ use Modules\Core\Services\Crud\CrudService;
 use Modules\Core\Services\Crud\DomainActionDispatcher;
 use Modules\Core\Services\Crud\DTOs\CrudResult;
 use Modules\Core\Services\Crud\DTOs\FacetQuery;
+use Modules\Core\Versioning\Exceptions\MembershipConflictException;
 use Modules\Core\Versioning\Exceptions\MissingRevertSubjectException;
 use Modules\Core\Versioning\Exceptions\RevertRefusedException;
 use Modules\Core\Versioning\Exceptions\RevisionConflictException;
@@ -630,8 +631,9 @@ class CrudController extends Controller
                 ),
                 $request,
             );
-        } catch (RevisionConflictException $ex) {
-            // The record moved past the revision the client read: a revert would overwrite a change it never saw.
+        } catch (RevisionConflictException|MembershipConflictException $ex) {
+            // The record, or the related records of a relation, moved past what the client read: the write would
+            // overwrite a change it never saw.
             return $this->buildResponse(
                 new CrudResult(
                     data: null,

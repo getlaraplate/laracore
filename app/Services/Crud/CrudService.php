@@ -112,6 +112,7 @@ use Modules\Core\Support\ComputedColumnGuard;
 use Modules\Core\Support\PermissionName;
 use Modules\Core\Support\ReadableColumnGuard;
 use Modules\Core\Support\RelationGuard;
+use Modules\Core\Versioning\Exceptions\MembershipConflictException;
 use ReflectionMethod;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
@@ -992,6 +993,7 @@ class CrudService
         $changes = $requestData->changes;
         $discarded_values = $this->removeNonFillableProperties($model, $changes);
         $relations = $this->resolveSyncableRelations($model, $requestData->relations, $requestData->request);
+        $expected_relations = array_intersect_key($requestData->expectedRelations, $relations);
 
         $updated_records = new Collection();
         $captured = [];
@@ -999,7 +1001,7 @@ class CrudService
         $lock_version = $this->requestedLockVersion($requestData);
         $request = $requestData->request;
 
-        $model->getConnection()->transaction(function () use ($found_records, $updated_records, $changes, $relations, $lock_version, $request, &$found_count, &$captured): void {
+        $model->getConnection()->transaction(function () use ($found_records, $updated_records, $changes, $relations, $expected_relations, $lock_version, $request, &$found_count, &$captured): void {
             foreach ($found_records as $found_record) {
                 $found_count++;
 
@@ -1010,7 +1012,10 @@ class CrudService
                 }
 
                 // The record and its relations are one revision of it (D42).
-                $write = function () use ($found_record, $changes, $relations, $request, &$captured): bool {
+                $write = function () use ($found_record, $changes, $relations, $expected_relations, $request, &$captured): bool {
+                    // Compared before any write, the record locked by its revision scope (D40).
+                    $this->assertExpectedMembership($request, $found_record, $expected_relations);
+
                     /** @psalm-suppress InvalidArgument */
                     $mutated = (bool) $found_record->update($changes);
                     $pending = $mutated ? null : $this->pendingRequestOf($found_record);
@@ -2454,6 +2459,66 @@ class CrudService
         }
 
         return $resolved;
+    }
+
+    /**
+     * Refuses the save when a relation it syncs no longer holds the related records the client loaded, compared on the
+     * records the writer can read, order ignored (D40). A relation without an expected membership is not compared.
+     *
+     * @param  array<string, mixed>  $expected
+     *
+     * @throws MembershipConflictException
+     */
+    private function assertExpectedMembership(Request $request, Model $record, array $expected): void
+    {
+        foreach ($expected as $name => $ids) {
+            $relation = $record->{$name}();
+
+            if (! $relation instanceof BelongsToMany || ! is_array($ids)) {
+                continue;
+            }
+
+            $normalize = static function (array $values): array {
+                $strings = array_map(static fn (mixed $value): string => is_scalar($value) ? (string) $value : '', $values);
+                sort($strings);
+
+                return array_values(array_unique($strings));
+            };
+            $current = $this->readableAttachedIds($request, $record, $relation);
+
+            throw_if(
+                $normalize($ids) !== $normalize($current),
+                new MembershipConflictException($name, array_values($ids), $current),
+            );
+        }
+    }
+
+    /**
+     * The ids attached through a relation that the writer can read: what a form showed it.
+     *
+     * @param  BelongsToMany<Model, Model>  $relation
+     * @return list<int|string>
+     */
+    private function readableAttachedIds(Request $request, Model $record, BelongsToMany $relation): array
+    {
+        /** @var list<int|string> $attached */
+        $attached = $relation->newPivotQuery()->pluck($relation->getRelatedPivotKeyName())->all();
+        $related = $relation->getRelated();
+        $key = $relation->getRelatedKeyName();
+        $visible = $this->relationAuthorizer()->visibleKeysQuery($request, $record, $related, $key);
+
+        if (! $visible instanceof Builder || $attached === []) {
+            return $attached;
+        }
+
+        /** @var list<int|string> $readable */
+        $readable = $related->newQueryWithoutScopes()
+            ->whereIn($related->qualifyColumn($key), $attached)
+            ->whereIn($related->qualifyColumn($key), $visible->toBase())
+            ->pluck($key)
+            ->all();
+
+        return $readable;
     }
 
     /**
