@@ -29,6 +29,7 @@ enum CoreTables: string
     case MediaDrafts = 'core_media_drafts';
     case ImportSessions = 'core_import_sessions';
     case ImportRowErrors = 'core_import_row_errors';
+    case SearchQueryStats = 'core_search_query_stats';
 
     // Approvals: the schema came from stephenlake/laravel-approval, but the mechanism now lives in
     // Core (app/Approvals, HasApprovals, ModificationVoteService) and the package is on its way out,
