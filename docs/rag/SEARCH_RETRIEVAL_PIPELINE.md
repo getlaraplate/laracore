@@ -645,6 +645,23 @@ endpoint, without a search query. `test:perf:bench` and `perf:profile` can targe
 profile (the public API must be exposed, as `perf:crud` does with the `expose_api` setting), but none
 of the perf commands prints the response body, so the per-stage split comes from step 2.
 
+## Eligibility on every path
+
+A model that implements `ProvidesDefaultSearchFilters` declares equality filters that every search of it
+carries (CMS `Content` uses `is_extended = false` to keep extended contents out of the generic search).
+They apply on every search path: Basic mode, and every strategy of the orchestrated modes (keyword,
+vector and hybrid, so `auto` too). `EnsembleSearchService` adds them to each Scout builder before the
+request constraints, so a request filter on the same field is ANDed with the default, never replaces it.
+Callers of `AdvancedSearchService`, such as the CRUD orchestrated path and the CMS content retrieval
+provider, inherit this with no code of their own.
+
+How a `null` default is read depends on the engine:
+
+- Elasticsearch: a `null` equality means "field missing" (`bool.must_not.exists`).
+- Database engine: a `null` equality is `IS NULL`.
+- Typesense: a `null` equality cannot be filtered (it is written `field:=`), so a model whose default
+  is `null` is not narrowed there. Extended contents are not excluded on Typesense.
+
 ## What the `matching` preference does and does not affect
 
 `strict` / `balanced` / `tolerant` / `auto` resolve to granular `TextMatchOptions` and are passed

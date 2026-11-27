@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Laravel\Scout\Builder as ScoutBuilder;
 use Modules\Core\Casts\FiltersGroup;
 use Modules\Core\Casts\Sort;
+use Modules\Core\Contracts\ProvidesDefaultSearchFilters;
 use Modules\Core\Helpers\LocaleContext;
 use Modules\Core\Search\Contracts\ILocaleFilterableEngine;
 use Modules\Core\Search\Contracts\IProvidesRerankerText;
@@ -205,6 +206,12 @@ class EnsembleSearchService
 
         if ($vector !== null) {
             $builder->where('vector', $vector);
+        }
+
+        if ($model instanceof ProvidesDefaultSearchFilters) {
+            foreach ($model->defaultSearchFilters() as $field => $value) {
+                $builder->where($field, $value);
+            }
         }
 
         $this->applyRequestedLocale($builder, $model);
