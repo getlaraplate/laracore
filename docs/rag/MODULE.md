@@ -601,7 +601,7 @@ flowchart LR
 
 ### Place and geocoding
 
-`Core\Models\Place` is the canonical postal/geographic row shared across modules (CMS `Location.place_id`, ERP `Site.place_id`). It uses `HasSpatial` for a `geolocation` Point and exposes `searchDocumentGeographyFields()` so consumers can flatten the same shape into search documents. `Place::saving` keeps decimal `latitude`/`longitude` and the binary `geolocation` Point in sync; `geolocation` is excluded from version snapshots (binary WKB breaks JSON encoding on `Version`). Geocoding is delegated to `IGeocodingService` (Core), with concrete providers (`NominatimService` and `GoogleMapsService`) selected by config.
+`Core\Models\Place` is the canonical postal/geographic row shared across modules (CMS `Location.place_id`, ERP `Site.place_id`). It uses `HasSpatial` for a `geolocation` Point and exposes `searchDocumentGeographyFields()` so consumers can flatten the same shape into search documents. `Place::saving` keeps decimal `latitude`/`longitude` and the binary `geolocation` Point in sync on spatial drivers (MySQL, MariaDB, PostgreSQL): a new point set without touching the decimals (a geocoded point written through `HasPlace`) is kept and rewrites the decimals; otherwise changed decimals rebuild the point, so a version rollback or a decimal edit wins over stale geometry; `geolocation` is excluded from version snapshots (binary WKB breaks JSON encoding on `Version`). Geocoding is delegated to `IGeocodingService` (Core), with concrete providers (`NominatimService` and `GoogleMapsService`) selected by config.
 
 ```mermaid
 flowchart LR

@@ -107,7 +107,7 @@ class Place extends Model
     protected static function booted(): void
     {
         static::saving(function (Place $place): void {
-            $place->syncGeolocationFromDecimalIfNeeded();
+            $place->alignGeolocationAndDecimals();
         });
     }
 
@@ -122,11 +122,23 @@ class Place extends Model
     }
 
     /**
-     * When decimals differ from the cast geometry (e.g. after {@see Version::revertWithoutSaving} merged snapshot lat/lng with stale WKB), align {@see geolocation} before persistence.
+     * Keep decimals and geometry aligned before persistence. A new {@see geolocation} set without touching the decimals
+     * (e.g. a geocoded point written through {@see Concerns\HasPlace}) wins and rewrites {@see latitude} / {@see longitude}.
+     * Otherwise the decimals win: when they differ from the cast geometry (e.g. after {@see Version::revertWithoutSaving}
+     * merged snapshot lat/lng with stale WKB, or a plain decimal edit), {@see geolocation} is rebuilt from them.
      */
-    private function syncGeolocationFromDecimalIfNeeded(): void
+    private function alignGeolocationAndDecimals(): void
     {
         if (! $this->geometryColumnSupportsSpatialBinding()) {
+            return;
+        }
+
+        $current = $this->geolocation;
+
+        if ($current instanceof Point && $this->isDirty('geolocation') && ! $this->isDirty(['latitude', 'longitude'])) {
+            $this->setAttribute('latitude', $current->latitude);
+            $this->setAttribute('longitude', $current->longitude);
+
             return;
         }
 
@@ -139,8 +151,6 @@ class Place extends Model
 
         $lat_float = (float) $lat;
         $lng_float = (float) $lng;
-
-        $current = $this->geolocation;
 
         if ($current instanceof Point && (abs($current->latitude - $lat_float) < self::COORDINATE_EPSILON && abs($current->longitude - $lng_float) < self::COORDINATE_EPSILON)) {
             return;
