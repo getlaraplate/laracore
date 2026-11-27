@@ -43,8 +43,9 @@ final class PruneSearchQueryStatsCommand extends Command
         $deleted = SearchQueryStat::query()
             ->where('day', '<', now()->subDays($retention_days)->toDateString())
             ->delete();
+        $deleted_count = is_int($deleted) ? $deleted : 0;
 
-        $this->info("Pruned {$deleted} search registry row(s).");
+        $this->info("Pruned {$deleted_count} search registry row(s).");
 
         return self::SUCCESS;
     }

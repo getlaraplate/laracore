@@ -16,7 +16,7 @@ use Override;
  * @property string $query
  * @property string $locale
  * @property string $model
- * @property Illuminate\Support\Carbon $day
+ * @property \Illuminate\Support\Carbon $day
  * @property int $searches
  * @property int $low_result_searches
  * @property int $result_sum
