@@ -78,6 +78,15 @@ final class ActiveVersionSet
         return $this->options;
     }
 
+    /**
+     * Whether this set is a revert: the context in which a change restores what was, so nothing derived from it, such
+     * as an automatic translation, is redone (D36). It lives as long as the revert and ends with it, also on failure.
+     */
+    public function isRevert(): bool
+    {
+        return $this->options->kind === VersionSetKind::Revert;
+    }
+
     public function connectionName(): string
     {
         return $this->connection_name;
