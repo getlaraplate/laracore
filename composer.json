@@ -2,7 +2,7 @@
   "name": "getlaraplate/laracore",
   "vendor": "getlaraplate",
   "description": "Laraplate Core module: users, ACL, settings, CRUD API, search, versioning and the shared services every other module builds on.",
-  "version": "v2.2.0",
+  "version": "v2.2.1",
   "keywords": [
     "laravel",
     "laraplate",

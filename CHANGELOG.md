@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1] - 2026-11-27
+
+### 🐛 Bug Fixes
+
+- *(core)* List a license without a user as unassigned
+- *(core)* Keep a new place point on spatial drivers and align the decimals to it
+- *(core)* Clear the place decimals when its point is cleared on spatial drivers
+
 ## [2.2.0] - 2026-11-26
 
 ### 🚀 Features
