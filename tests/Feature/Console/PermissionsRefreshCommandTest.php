@@ -22,6 +22,7 @@ use Modules\Core\Tests\Fixtures\PermissionsRefreshLockableModel;
 use Modules\Core\Tests\Fixtures\PermissionsRefreshNeverVersionedModel;
 use Modules\Core\Tests\Fixtures\PermissionsRefreshPlainModel;
 use Modules\Core\Tests\Stubs\Console\ConstructorConfiguredPermissionsModel;
+use Modules\Core\Tests\Stubs\Console\DeclaredPermissionsStub;
 use Modules\Core\Tests\Stubs\Versioning\VersionedDocument;
 use Symfony\Component\Console\Application as SymfonyConsoleApplication;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -29,6 +30,7 @@ use Symfony\Component\Console\Output\BufferedOutput;
 
 afterEach(function (): void {
     HelpersCache::clearModels();
+    DeclaredPermissionsStub::$declared = [];
 });
 
 /**
@@ -62,15 +64,16 @@ function permissionNameForModel(string $model_class, ActionEnum $action): string
 
 /**
  * Stands in for the modules' permission declarations, so these tests do not depend on which
- * modules are installed or on what they declare.
+ * modules are installed or on what they declare: a real manifest whose only declaration is
+ * the stub's, so no mock of the final class is needed.
  *
- * @param  list<string>  $declared_names
+ * @param  array<class-string<Illuminate\Database\Eloquent\Model>, list<string>>  $declared_operations
  */
-function fakeDeclaredPermissions(array $declared_names): void
+function fakeDeclaredPermissions(array $declared_operations): void
 {
-    $manifest = Mockery::mock(PermissionManifest::class);
-    $manifest->shouldReceive('names')->andReturn($declared_names);
-    $manifest->shouldReceive('excludedModels')->andReturn([]);
+    DeclaredPermissionsStub::$declared = $declared_operations;
+    $manifest = new PermissionManifest();
+    new ReflectionProperty(PermissionManifest::class, 'declarations')->setValue($manifest, ['Stub' => DeclaredPermissionsStub::class]);
     app()->instance(PermissionManifest::class, $manifest);
 }
 
@@ -535,7 +538,7 @@ it('creates impersonate permission for the configured user model when missing', 
 
 it('creates the domain permissions a module declares', function (): void {
     $permission_name = PermissionName::forClass(PermissionsRefreshPlainModel::class, 'post');
-    fakeDeclaredPermissions([$permission_name]);
+    fakeDeclaredPermissions([PermissionsRefreshPlainModel::class => ['post']]);
 
     Permission::query()->where('name', $permission_name)->delete();
 
@@ -551,7 +554,7 @@ it('keeps a declared permission whose verb collides with a generic one it would 
     // `approve` is a generic verb the command drops for a model without the
     // approval trait, and at the same time a domain step a module may declare.
     $permission_name = permissionNameForModel(PermissionsRefreshPlainModel::class, ActionEnum::Approve);
-    fakeDeclaredPermissions([$permission_name]);
+    fakeDeclaredPermissions([PermissionsRefreshPlainModel::class => [ActionEnum::Approve->value]]);
 
     Permission::query()->firstOrCreate(['name' => $permission_name], ['guard_name' => 'web']);
 
@@ -598,8 +601,8 @@ it('generates no permission for a model a module excludes', function (): void {
 
 it('creates every permission for the web and the api guard with the same name', function (): void {
     $select_name = permissionNameForModel(PermissionsRefreshPlainModel::class, ActionEnum::Select);
-    $declared_name = 'default.zz_' . bin2hex(random_bytes(4)) . '.declared';
-    fakeDeclaredPermissions([$declared_name]);
+    $declared_name = PermissionName::forClass(PermissionsRefreshPlainModel::class, 'declared');
+    fakeDeclaredPermissions([PermissionsRefreshPlainModel::class => ['declared']]);
 
     HelpersCache::setModels('active', [PermissionsRefreshPlainModel::class]);
 
